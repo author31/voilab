@@ -5,6 +5,10 @@ from ipywidgets import interact, IntSlider, Layout
 from ..utils.replay_buffer_loader import ReplayBufferLoader
 
 
+from imagecodecs.numcodecs import Jpegxl
+from imagecodecs import numcodecs
+numcodecs.register_codec(Jpegxl)
+
 
 def show(dataset_path: str):
     """Interactive slider to navigate frames."""
