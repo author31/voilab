@@ -1,0 +1,89 @@
+[build-system]
+requires = ["uv_build>=0.8.13,<0.9.0"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+pythonpath = [
+  "src"
+]
+
+[project]
+name = "umi"
+version = "0.1.0" 
+description = "Dependencies for the Universal Manipulation Interface project."
+readme = "README.md"
+requires-python = ">=3.10" 
+
+dependencies = [
+    # Core dependencies
+    "click>=8.2.1",
+    "numpy>=1.24",
+    "scipy==1.11",
+    "pandas==2.1",
+    "matplotlib>=3.7",
+    "opencv-contrib-python",
+    "pyyaml==6.0",
+    "tqdm==4.65",
+    "zarr>=2.16",
+    "numcodecs==0.11",
+    "dill==0.3.7",
+    "einops==0.6.1",
+    "scikit-video",
+    "timm==0.9.7",
+    "scikit-fda==0.9",
+    "accelerate==0.24",
+    "boto3==1.33",
+    "aiohttp==3.9",
+    "aiofiles==23.2",
+
+    # PyTorch ecosystem
+    "torch==2.1.0",
+    "torchvision==0.16.0",
+
+    # ML/AI frameworks
+    "diffusers==0.18.2",
+    "gym",
+    "hydra-core==1.2.0",
+    "wandb>=0.15.8",
+
+    # Media processing
+    "av==10.0.0",
+    "imagecodecs>=2023.9.18",
+
+    # 3D visualization
+    "k3d==2.15.0",
+
+    # Database
+    "lmdb==1.4",
+
+    # Ray distributed computing
+    "ray[default]>=2.8.0",
+
+    # Performance
+    "numba==0.57",
+    "threadpoolctl==3.2",
+
+    # Hardware interfaces
+    "v4l2py==2.2",
+    "ur-rtde==1.5.6",
+
+    # Utilities
+    "atomics==1.0.2",
+    "pynput==1.7.6",
+    "fastcrc==0.2",
+    "PyExifTool==0.5",
+
+    # Robotics frameworks
+    "robomimic",
+    "free-mujoco-py",
+
+    # VCS dependencies (Git and URL)
+    "spnav @ https://github.com/cheng-chi/spnav/archive/c1c938ebe3cc542db4685e0d13850ff1abfdb943.tar.gz",
+    "robosuite @ https://github.com/cheng-chi/robosuite/archive/3f2c3116f1c0a1916e94bfa28da4d055927d1ab3.tar.gz",
+    "py-gpmf-parser @ git+https://github.com/urbste/py-gpmf-parser.git",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/real-stanford/universal_manipulation_interface"
+

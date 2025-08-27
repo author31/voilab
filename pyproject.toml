@@ -1,3 +1,7 @@
+[build-system]
+requires = ["uv_build>=0.8.13,<0.9.0"]
+build-backend = "uv_build"
+
 [project]
 name = "voilab"
 version = "0.1.0"
@@ -6,21 +10,32 @@ readme = "README.md"
 authors = [
     { name = "author31", email = "wi072815.tw@gmail.com" }
 ]
-requires-python = ">=3.13"
+requires-python = ">=3.10"
 dependencies = [
     "click>=8.2.1",
-    "imagecodecs>=2025.8.2",
+    "imagecodecs>=2023.9.18",
     "ipykernel>=6.30.1",
     "ipywidgets>=8.1.7",
-    "matplotlib>=3.10.5",
-    "numpy>=2.3.2",
+    "matplotlib>=3.7",
+    "numpy>=1.24",
     "voila>=0.5.10",
-    "zarr>=3.1.1",
+    "zarr>=2.16",
+    "umi"
+]
+
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "ipython[all]",
+    "notebook"
 ]
 
 [project.scripts]
 voilab = "voilab.cli:cli"
 
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv.sources]
+umi = { workspace = true }

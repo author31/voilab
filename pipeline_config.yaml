@@ -1,0 +1,51 @@
+video_organization:
+  instance: "umi.services.video_organization.VideoOrganizationService"
+  config:
+    input_patterns: ["*.MP4", "*.mp4"]
+  
+imu_extraction:
+  instance: "umi.services.imu_extraction.IMUExtractionService"
+  config:
+    num_workers: null  # auto-detect CPU count
+    stream_types: ["ACCL", "GYRO", "GPS5", "CORI", "IORI"]
+  
+slam_mapping:
+  instance: "umi.services.slam_mapping.SLAMMappingService"
+  config:
+    docker_image: "chicheng/orb_slam3:latest"
+    timeout_multiple: 16
+    max_lost_frames: 60
+  
+batch_slam:
+  instance: "umi.services.batch_slam.BatchSLAMService"
+  config:
+    num_workers: null  # auto-detect CPU count/2
+    retry_attempts: 3
+  
+aruco_detection:
+  instance: "umi.services.aruco_detection.ArucoDetectionService"
+  config:
+    num_workers: null
+    camera_intrinsics_path: "example/calibration/gopro_intrinsics_2_7k.json"
+    aruco_config_path: "example/calibration/aruco_config.yaml"
+  
+calibration:
+  instance: "umi.services.calibration.CalibrationService"
+  config:
+    slam_tag_calibration_timeout: 300
+    gripper_range_timeout: 300
+  
+dataset_planning:
+  instance: "umi.services.dataset_planning.DatasetPlanningService"
+  config:
+    tcp_offset: [0.0, 0.0, 0.0]
+    nominal_z: 0.0
+    min_episode_length: 10
+  
+replay_buffer:
+  instance: "umi.services.replay_buffer.ReplayBufferService"
+  config:
+    output_resolution: [256, 256]
+    output_fov: 90
+    compression_level: 6
+    num_workers: 4
