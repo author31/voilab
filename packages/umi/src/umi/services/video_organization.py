@@ -15,12 +15,15 @@ class VideoOrganizationService(BaseService):
     
     def __init__(self, config: dict):
         super().__init__(config)
+        self.session_dir = self.config.get('session_dir')
         self.input_patterns = self.config.get('input_patterns', ['*.MP4', '*.mp4'])
 
-    def execute(self, session_dir: str, output_dir: str) -> dict:
-        session = Path(session_dir).absolute()
-        output_dir = Path().absolute()
+    def execute(self) -> dict:
+        assert self.session_dir, "Missing session_dir in pipeline configuration."
+
+        session = Path(self.session_dir).absolute()
         input_dir = session.joinpath('raw_videos')
+        output_dir = session.joinpath('demos')
         output_dir.mkdir(parents=True, exist_ok=True)
 
         result_summary = {

@@ -1,0 +1,19 @@
+00_process_video:
+  instance: "umi.services.video_organization.VideoOrganizationService"
+  config:
+    session_dir: "/home/hcis-s17/author_workdir/voilab/example_demo_session/"
+    input_patterns: ["*.MP4", "*.mp4"]
+  
+01_extract_gopro_imu:
+  instance: "umi.services.imu_extraction.IMUExtractionService"
+  config:
+    num_workers: null
+    stream_types: ["ACCL", "GYRO", "GPS5", "GPSP", "GPSU", "GPSF", "GRAV", "MAGN", "CORI", "IORI", "TMPC"]
+
+02_create_map:
+  instance: "umi.services.slam_mapping.SLAMMappingService"
+  inherit_config: true
+  config:
+    docker_image: "chicheng/orb_slam3:latest"
+    timeout_multiple: 16
+    max_lost_frames: 60

@@ -1,83 +1,96 @@
-from pathlib import Path
 import json
-import subprocess
-from typing import List, Dict, Any
+from pathlib import Path
+
+from py_gpmf_parser.gopro_telemetry_extractor import GoProTelemetryExtractor
 
 from .base_service import BaseService
 
+SECS_TO_MS = 1e3
 
 class IMUExtractionService(BaseService):
     """Service for extracting IMU data from GoPro videos."""
-    
+
     def __init__(self, config: dict):
         super().__init__(config)
+        self.session_dir = self.config.get('session_dir')
         self.num_workers = self.config.get('num_workers') or self._get_num_workers()
-        self.stream_types = self.config.get('stream_types', ['ACCL', 'GYRO', 'GPS5', 'CORI', 'IORI'])
-    
-    def execute(self, input_dir: str, output_dir: str) -> dict:
+        self.stream_types = self.config.get(
+            'stream_types', 
+            ["ACCL", "GYRO", "GPS5", "GPSP", "GPSU", "GPSF", "GRAV", "MAGN", "CORI", "IORI", "TMPC"]
+        )
+
+    def execute(self) -> dict:
         """
         Extract IMU data from videos in input directory.
-        
+
         Args:
             input_dir: Directory containing organized demo videos
             output_dir: Directory for extracted IMU data
-            
+
         Returns:
             dict: Extraction results with paths to IMU files
         """
-        input_path = Path(input_dir)
-        output_path = Path(output_dir)
-        output_path = self._ensure_output_dir(output_dir)
-        
+        assert self.session_dir, "Missing session_dir from the configuration."
+        input_path = Path(self.session_dir) / "demos"
+
         results = {"extracted": [], "failed": []}
-        
+
         # Find all demo directories
         demo_dirs = [d for d in input_path.iterdir() if d.is_dir()]
-        
+
         for demo_dir in demo_dirs:
             # Find video files
-            video_files = list(demo_dir.glob('*.MP4')) + list(demo_dir.glob('*.mp4'))
-            
-            for video_file in video_files:
-                try:
-                    imu_file = self._extract_imu_from_video(video_file, output_path)
-                    if imu_file:
-                        results["extracted"].append({
-                            "video": str(video_file),
-                            "imu_file": str(imu_file),
-                            "demo": demo_dir.name
-                        })
-                except Exception as e:
-                    results["failed"].append({
-                        "video": str(video_file),
-                        "error": str(e)
+            try:
+                imu_file = self._extract_imu_from_video(demo_dir)
+                if imu_file:
+                    results["extracted"].append({
+                        "imu_file": str(imu_file),
+                        "demo": demo_dir.name
                     })
-        
+            except Exception as e:
+                results["failed"].append({
+                    "path": str(demo_dir),
+                    "error": str(e)
+                })
+
         return results
-    
-    def _extract_imu_from_video(self, video_file: Path, output_dir: Path) -> Path:
-        """Extract IMU data from a single video file."""
-        # Use py_gpmf_parser or ffmpeg to extract IMU data
-        imu_file = output_dir / f"{video_file.stem}_imu.json"
-        
-        # This would use the actual IMU extraction logic
-        # For now, create a placeholder
-        imu_data = {
-            "video_file": str(video_file),
-            "streams": self.stream_types,
-            "data": {}  # Actual IMU data would go here
-        }
-        
-        with open(imu_file, 'w') as f:
-            json.dump(imu_data, f, indent=2)
-        
-        return imu_file
-    
-    def validate_output(self, output_dir: str) -> bool:
-        """Validate IMU extraction results."""
-        output_path = Path(output_dir)
-        if not output_path.exists():
+
+    def _extract_imu_from_video(self, video_dir: str | Path):
+        """Extract IMU data from a single video directory using py_gpmf_parser."""
+        src = Path(video_dir).absolute()
+        video_path = src / 'raw_video.mp4'
+        output_path = src / 'imu_data.json'
+
+        if not video_path.exists():
+            raise FileNotFoundError(f"raw_video.mp4 not found in {video_dir}")
+
+        extractor = GoProTelemetryExtractor(str(video_path))
+        try:
+            extractor.open_source()
+
+            output = {
+                "1": {
+                    "streams": {},
+                },
+                "frames/second": 0.0 # TODO: update
+            }
+
+            for stream in self.stream_types:
+                payload = extractor.extract_data(stream)
+                if payload and len(payload[0]) > 0:
+                    output["1"]["streams"][stream] = {
+                        "samples": [{"value": data.tolist(), "cts": (ts*SECS_TO_MS).tolist()} for data, ts in zip(*payload)]
+                    }
+
+            with open(output_path, 'w') as f:
+                json.dump(output, f, indent=2)
+
+            return True
+
+        except Exception as e:
+            print(f"Error processing {video_dir}: {str(e)}")
             return False
-        
-        imu_files = list(output_path.glob('*_imu.json'))
-        return len(imu_files) > 0
+
+        finally:
+            extractor.close_source()
+

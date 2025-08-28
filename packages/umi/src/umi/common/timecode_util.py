@@ -4,19 +4,25 @@ import datetime
 import av
 
 
-def timecode_to_seconds(timecode: str, frame_rate):
-    int_frame_rate = round(frame_rate)
-
-    # Split timecode into parts
-    h, m, rest = timecode.split(':')
-    if ';' in rest:
-        s, f = rest.split(';')
-    else:
-        s, f = rest.split('.')
-    h, m, s, f = map(int, [h, m, s, f])
-
-    frames = (3600 * h + 60 * m + s) * int_frame_rate + f
-    return frames / frame_rate
+def timecode_to_seconds(timecode: str, frame_rate: float) -> float:
+    # Validate and parse timecode
+    try:
+        parts = timecode.split(':')
+        if len(parts) == 4:
+            # Drop-frame timecode (HH:MM:SS:FF)
+            h, m, s, f = map(int, parts)
+        elif len(parts) == 3 and ';' in parts[2]:
+            # Non-drop-frame timecode (HH:MM:SS;FF)
+            h, m, rest = parts
+            h, m, s, f = map(int, [h, m, *rest.split(';')])
+        else:
+            raise ValueError("Invalid timecode format. Expected 'HH:MM:SS:FF' or 'HH:MM:SS;FF'.")
+    except ValueError as e:
+        raise ValueError(f"Failed to parse timecode '{timecode}': {str(e)}")
+        
+    # Calculate total frames (simplified, no drop-frame adjustment here)
+    total_frames = (3600 * h + 60 * m + s) * round(frame_rate) + f
+    return total_frames / frame_rate
 
 
 def stream_get_start_datetime(stream: av.stream.Stream) -> datetime.datetime:

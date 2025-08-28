@@ -7,9 +7,9 @@ imu_extraction:
   instance: "umi.services.imu_extraction.IMUExtractionService"
   config:
     num_workers: null  # auto-detect CPU count
-    stream_types: ["ACCL", "GYRO", "GPS5", "CORI", "IORI"]
+    stream_types: ["ACCL", "GYRO", "GPS5", "GPSP", "GPSU", "GPSF", "GRAV", "MAGN", "CORI", "IORI", "TMPC"]
   
-slam_mapping:
+create_map:
   instance: "umi.services.slam_mapping.SLAMMappingService"
   config:
     docker_image: "chicheng/orb_slam3:latest"

@@ -1,0 +1,86 @@
+# Enhanced UMI Pipeline Configuration with Configuration Propagation
+# This configuration demonstrates the new YAML syntax for configuration inheritance
+
+# Stage 1: Video Organization (First stage - no inheritance)
+video_organization:
+  instance: "umi.services.video_organization.VideoOrganizationService"
+  inherit_config: false  # First stage, no inheritance needed
+  config:
+    input_patterns: ["*.MP4", "*.mp4"]
+    output_dir: "organized_videos"
+
+# Stage 2: IMU Extraction (Inherits from video_organization)
+imu_extraction:
+  instance: "umi.services.imu_extraction.IMUExtractionService"
+  inherit_config: true  # Inherit from previous stages (default: true)
+  config:
+    num_workers: null  # auto-detect CPU count
+    stream_types: ["ACCL", "GYRO", "GPS5", "GPSP", "GPSU", "GPSF", "GRAV", "MAGN", "CORI", "IORI", "TMPC"]
+  config_override:  # Override specific inherited values
+    output_dir: "imu_data"  # Override the output_dir from video_organization
+
+# Stage 3: SLAM Mapping (Inherits from all previous stages)
+create_map:
+  instance: "umi.services.slam_mapping.SLAMMappingService"
+  inherit_config: true
+  config:
+    docker_image: "chicheng/orb_slam3:latest"
+    timeout_multiple: 16
+    max_lost_frames: 60
+  config_exclude:  # Exclude these keys from inheritance
+    - "input_patterns"  # Don't need video patterns for SLAM
+
+# Stage 4: Batch SLAM (Inherits configurations)
+batch_slam:
+  instance: "umi.services.batch_slam.BatchSLAMService"
+  inherit_config: true
+  config:
+    num_workers: null  # auto-detect CPU count/2
+    retry_attempts: 3
+  config_override:
+    timeout_multiple: 20  # Override timeout from create_map stage
+
+# Stage 5: ArUco Detection (Inherits but overrides specific paths)
+aruco_detection:
+  instance: "umi.services.aruco_detection.ArucoDetectionService"
+  inherit_config: true
+  config:
+    num_workers: null
+    camera_intrinsics_path: "example/calibration/gopro_intrinsics_2_7k.json"
+    aruco_config_path: "example/calibration/aruco_config.yaml"
+  config_exclude:
+    - "docker_image"  # Don't need Docker config for ArUco detection
+
+# Stage 6: Calibration (Inherits common settings)
+calibration:
+  instance: "umi.services.calibration.CalibrationService"
+  inherit_config: true
+  config:
+    slam_tag_calibration_timeout: 300
+    gripper_range_timeout: 300
+  config_override:
+    output_dir: "calibration_results"  # Ensure consistent output directory
+
+# Stage 7: Dataset Planning (Inherits global settings)
+dataset_planning:
+  instance: "umi.services.dataset_planning.DatasetPlanningService"
+  inherit_config: true
+  config:
+    tcp_offset: [0.0, 0.0, 0.0]
+    nominal_z: 0.0
+    min_episode_length: 10
+  config_exclude:
+    - "docker_image"
+    - "max_lost_frames"
+
+# Stage 8: Replay Buffer (Final stage - inherits all previous configs)
+replay_buffer:
+  instance: "umi.services.replay_buffer.ReplayBufferService"
+  inherit_config: true
+  config:
+    output_resolution: [256, 256]
+    output_fov: 90
+    compression_level: 6
+    num_workers: 4
+  config_override:
+    output_dir: "final_replay_buffer"  # Final output directory
