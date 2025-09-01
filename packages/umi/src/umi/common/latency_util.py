@@ -2,18 +2,23 @@ import numpy as np
 from scipy.interpolate import interp1d
 import scipy.signal as ss
 
+
 def regular_sample(x, t, t_samples):
     spline = interp1d(x=t, y=x, bounds_error=False, fill_value=(x[0], x[-1]))
     result = spline(t_samples)
     return result
 
+
 def get_latency(
-        x_target, t_target, 
-        x_actual, t_actual, 
-        t_start=None, t_end=None,
-        resample_dt=1/1000,
-        force_positive=False
-        ):
+    x_target,
+    t_target,
+    x_actual,
+    t_actual,
+    t_start=None,
+    t_end=None,
+    resample_dt=1 / 1000,
+    force_positive=False,
+):
     assert len(x_target) == len(t_target)
     assert len(x_actual) == len(t_actual)
     if t_start is None:
@@ -41,13 +46,13 @@ def get_latency(
         latency = t_lags[np.argmax(correlation[t_lags >= 0])]
     else:
         latency = t_lags[np.argmax(correlation)]
-    
+
     info = {
-        't_samples': t_samples,
-        'x_target': target_samples,
-        'x_actual': actual_samples,
-        'correlation': correlation,
-        'lags': t_lags
+        "t_samples": t_samples,
+        "x_target": target_samples,
+        "x_actual": actual_samples,
+        "correlation": correlation,
+        "lags": t_lags,
     }
 
     return latency, info

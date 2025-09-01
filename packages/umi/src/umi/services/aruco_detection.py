@@ -1,163 +1,139 @@
-from pathlib import Path
 import json
+import multiprocessing
+import pickle
+import concurrent.futures
+from pathlib import Path
+import av
 import cv2
 import numpy as np
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Dict, Any, List, Tuple
-
+import yaml
+from loguru import logger
+from tqdm import tqdm
+from ..common.cv_util import (
+    convert_fisheye_intrinsics_resolution,
+    detect_localize_aruco_tags,
+    draw_predefined_mask,
+    parse_aruco_config,
+    parse_fisheye_intrinsics,
+)
 from .base_service import BaseService
 
 
 class ArucoDetectionService(BaseService):
     """Service for detecting ArUco markers in video frames."""
-    
+
     def __init__(self, config: dict):
         super().__init__(config)
-        self.num_workers = self.config.get('num_workers') or self._get_num_workers()
-        self.camera_intrinsics_path = self.config.get('camera_intrinsics_path')
-        self.aruco_config_path = self.config.get('aruco_config_path')
-        
-        self.camera_matrix, self.dist_coeffs = self._load_camera_intrinsics()
-        self.aruco_dict, self.aruco_params = self._load_aruco_config()
-    
-    def execute(self, input_dir: str, output_dir: str) -> dict:
-        """
-        Execute ArUco marker detection service.
-        
-        Args:
-            input_dir: Directory containing videos
-            output_dir: Directory for detection results
-            
-        Returns:
-            dict: Detection results with marker positions
-        """
-        input_path = Path(input_dir)
-        output_path = self._ensure_output_dir(output_dir)
-        
-        # Find all video files
-        video_files = []
-        for pattern in ['*.MP4', '*.mp4', '*.avi', '*.mov']:
-            video_files.extend(input_path.rglob(pattern))
-        
-        results = {"detections": [], "failed": []}
-        
-        # Process videos in parallel
-        with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
-            future_to_video = {
-                executor.submit(self._detect_in_video, video_file, output_path): video_file
-                for video_file in video_files
-            }
-            
-            for future in as_completed(future_to_video):
-                video_file = future_to_video[future]
+        self.session_dir = self.config.get("session_dir")
+        self.num_workers = self.config.get(
+            "num_workers", multiprocessing.cpu_count() // 2
+        )
+        self.camera_intrinsics_path = self.config.get("camera_intrinsics_path")
+        self.aruco_config_path = self.config.get("aruco_config_path")
+
+    def execute(self) -> dict:
+        assert self.session_dir, "Missing session_dir from the configuration"
+
+        cv2.setNumThreads(self.num_workers)
+        input_path = Path(self.session_dir) / "demos"
+        input_video_dirs = [x.parent for x in input_path.glob("*/raw_video.mp4")]
+        logger.info(f"Found {len(input_video_dirs)} video dirs")
+        with (
+            tqdm(total=len(input_video_dirs)) as pbar,
+            concurrent.futures.ThreadPoolExecutor(
+                max_workers=self.num_workers
+            ) as executor,
+        ):
+            futures = set()
+            for video_dir in tqdm(input_video_dirs):
+                video_path = video_dir / "raw_video.mp4"
+                pkl_path = video_dir / "tag_detection.pkl"
+                if pkl_path.is_file():
+                    logger.info(
+                        f"tag_detection.pkl already exists, skipping {video_dir.name}"
+                    )
+                    continue
+                else:
+                    if len(futures) >= self.num_workers:
+                        completed, futures = concurrent.futures.wait(
+                            futures, return_when=concurrent.futures.FIRST_COMPLETED
+                        )
+                        pbar.update(len(completed))
+                    futures.add(
+                        executor.submit(self.detect_aruco, video_path, pkl_path)
+                    )
+            completed, futures = concurrent.futures.wait(futures)
+            pbar.update(len(completed))
+            for future in completed:
                 try:
-                    result = future.result()
-                    if result:
-                        results["detections"].append(result)
+                    future.result()
                 except Exception as e:
-                    results["failed"].append({
-                        "video": str(video_file),
-                        "error": str(e)
-                    })
-        
-        return results
-    
-    def _load_camera_intrinsics(self) -> Tuple[np.ndarray, np.ndarray]:
-        """Load camera intrinsics from file."""
-        if self.camera_intrinsics_path and Path(self.camera_intrinsics_path).exists():
-            with open(self.camera_intrinsics_path, 'r') as f:
-                calib = json.load(f)
-            
-            camera_matrix = np.array(calib.get('camera_matrix', [[1,0,0],[0,1,0],[0,0,1]]))
-            dist_coeffs = np.array(calib.get('dist_coeffs', [0,0,0,0,0]))
-            return camera_matrix, dist_coeffs
-        
-        # Default values
-        return np.eye(3), np.zeros(5)
-    
-    def _load_aruco_config(self) -> Tuple[Any, Any]:
-        """Load ArUco configuration."""
-        if self.aruco_config_path and Path(self.aruco_config_path).exists():
-            with open(self.aruco_config_path, 'r') as f:
-                config = json.load(f)
-        else:
-            config = {}
-        
-        # Default ArUco dictionary
-        aruco_dict = cv2.aruco.Dictionary_get(cv2.aruco.DICT_6X6_250)
-        aruco_params = cv2.aruco.DetectorParameters_create()
-        
-        # Apply custom parameters if provided
-        if 'parameters' in config:
-            for key, value in config['parameters'].items():
-                if hasattr(aruco_params, key):
-                    setattr(aruco_params, key, value)
-        
-        return aruco_dict, aruco_params
-    
-    def _detect_in_video(self, video_file: Path, output_dir: Path) -> Dict[str, Any]:
-        """Detect ArUco markers in a single video."""
-        detection_file = output_dir / f"{video_file.stem}_aruco.json"
-        
-        # This would implement actual ArUco detection
-        # For now, create placeholder detection results
-        
-        cap = cv2.VideoCapture(str(video_file))
-        if not cap.isOpened():
-            raise ValueError(f"Cannot open video: {video_file}")
-        
-        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        fps = cap.get(cv2.CAP_PROP_FPS)
-        
-        # Sample every 30th frame for efficiency
-        detections = []
-        frame_idx = 0
-        
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                break
-            
-            if frame_idx % 30 == 0:
-                # Detect markers
-                corners, ids, rejected = cv2.aruco.detectMarkers(
-                    frame, self.aruco_dict, parameters=self.aruco_params
-                )
-                
-                if ids is not None:
-                    detections.append({
-                        "frame": frame_idx,
-                        "timestamp": frame_idx / fps,
-                        "markers": [
-                            {
-                                "id": int(ids[i][0]),
-                                "corners": corners[i].tolist()
-                            }
-                            for i in range(len(ids))
-                        ]
-                    })
-            
-            frame_idx += 1
-        
-        cap.release()
-        
-        # Save detection results
-        result = {
-            "video_file": str(video_file),
-            "total_frames": frame_count,
-            "detections": detections
+                    logger.error(f"Error in detect_aruco: {e}")
+                    raise
+
+        processed_videos = []
+        skipped_videos = []
+        for video_dir in input_video_dirs:
+            pkl_path = video_dir / "tag_detection.pkl"
+            video_name = video_dir.name
+            if pkl_path.is_file():
+                skipped_videos.append(video_name)
+            else:
+                processed_videos.append(video_name)
+
+        return {
+            "total_videos_found": len(input_video_dirs),
+            "videos_processed": len(processed_videos),
+            "videos_skipped": len(skipped_videos),
+            "processed_video_names": processed_videos,
+            "skipped_video_names": skipped_videos,
+            "detection_results_dir": str(input_path),
         }
-        
-        with open(detection_file, 'w') as f:
-            json.dump(result, f, indent=2)
-        
-        return result
-    
-    def validate_output(self, output_dir: str) -> bool:
-        """Validate ArUco detection results."""
-        output_path = Path(output_dir)
-        if not output_path.exists():
-            return False
-        
-        detection_files = list(output_path.glob('*_aruco.json'))
-        return len(detection_files) > 0
+
+    def detect_aruco(self, video_path, tag_detection_dest):
+        assert self.camera_intrinsics_path, (
+            "Missing camera_intrinsics_path from the configuration"
+        )
+        assert self.aruco_config_path, (
+            "Missing aruco_config_path from the configuration"
+        )
+
+        aruco_config = parse_aruco_config(
+            yaml.safe_load(open(self.aruco_config_path, "r"))
+        )
+        aruco_dict = aruco_config["aruco_dict"]
+        marker_size_map = aruco_config["marker_size_map"]
+        raw_fisheye_intr = parse_fisheye_intrinsics(
+            json.load(open(self.camera_intrinsics_path, "r"))
+        )
+        results = []
+        with av.open(str(video_path)) as in_container:
+            in_stream = in_container.streams.video[0]
+            in_stream.thread_type = "AUTO"
+            in_stream.thread_count = self.num_workers
+            in_res = np.array([in_stream.height, in_stream.width])[::(-1)]
+            fisheye_intr = convert_fisheye_intrinsics_resolution(
+                opencv_intr_dict=raw_fisheye_intr, target_resolution=in_res
+            )
+            for i, frame in tqdm(
+                enumerate(in_container.decode(in_stream)), total=in_stream.frames
+            ):
+                img = frame.to_ndarray(format="rgb24")
+                frame_cts_sec = frame.pts * in_stream.time_base
+                img = draw_predefined_mask(
+                    img, color=(0, 0, 0), mirror=True, gripper=False, finger=False
+                )
+                tag_dict = detect_localize_aruco_tags(
+                    img=img,
+                    aruco_dict=aruco_dict,
+                    marker_size_map=marker_size_map,
+                    fisheye_intr_dict=fisheye_intr,
+                    refine_subpix=True,
+                )
+                result = {
+                    "frame_idx": i,
+                    "time": float(frame_cts_sec),
+                    "tag_dict": tag_dict,
+                }
+                results.append(result)
+        pickle.dump(results, open(str(tag_detection_dest), "wb"))

@@ -5,23 +5,22 @@ import scipy.spatial.transform as st
 
 def get_interp1d(t, x):
     gripper_interp = si.interp1d(
-        t, x, 
-        axis=0, bounds_error=False, 
-        fill_value=(x[0], x[-1]))
+        t, x, axis=0, bounds_error=False, fill_value=(x[0], x[-1])
+    )
     return gripper_interp
 
 
 class PoseInterpolator:
     def __init__(self, t, x):
-        pos = x[:,:3]
-        rot = st.Rotation.from_rotvec(x[:,3:])
+        pos = x[:, :3]
+        rot = st.Rotation.from_rotvec(x[:, 3:])
         self.pos_interp = get_interp1d(t, pos)
         self.rot_interp = st.Slerp(t, rot)
-    
+
     @property
     def x(self):
         return self.pos_interp.x
-    
+
     def __call__(self, t):
         min_t = self.pos_interp.x[0]
         max_t = self.pos_interp.x[-1]
@@ -33,9 +32,8 @@ class PoseInterpolator:
         pose = np.concatenate([pos, rvec], axis=-1)
         return pose
 
-def get_gripper_calibration_interpolator(
-        aruco_measured_width, 
-        aruco_actual_width):
+
+def get_gripper_calibration_interpolator(aruco_measured_width, aruco_actual_width):
     """
     Assumes the minimum width in aruco_actual_width
     is measured when the gripper is fully closed

@@ -1,9 +1,11 @@
 import click
 from umi.pipeline_executor import PipelineExecutor
 
+
 @click.group()
 def cli():
     pass
+
 
 @cli.command()
 @click.argument("config_path")

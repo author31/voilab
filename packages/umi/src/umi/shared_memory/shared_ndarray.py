@@ -4,11 +4,10 @@ import multiprocessing
 import multiprocessing.synchronize
 from multiprocessing.managers import SharedMemoryManager
 from multiprocessing.shared_memory import SharedMemory
-from typing import Any, TYPE_CHECKING, Generic, Optional, Tuple, TypeVar, Union
+from typing import Generic, Optional, Tuple, TypeVar, Union
 
 import numpy as np
 import numpy.typing as npt
-from umi.common.nested_dict_util import (nested_dict_check, nested_dict_map)
 
 
 SharedMemoryLike = Union[str, SharedMemory]  # shared memory or name of shared memory
@@ -77,7 +76,8 @@ class SharedNDArray(Generic[SharedT]):
     lock: Optional[multiprocessing.synchronize.Lock]
 
     def __init__(
-        self, shm: SharedMemoryLike, shape: Tuple[int, ...], dtype: npt.DTypeLike):
+        self, shm: SharedMemoryLike, shape: Tuple[int, ...], dtype: npt.DTypeLike
+    ):
         """Initialize a SharedNDArray object from existing shared memory, object shape, and dtype.
         To initialize a SharedNDArray object from a memory manager and data or shape, use the `from_array()
         or `from_shape()` classmethods.
@@ -138,7 +138,8 @@ class SharedNDArray(Generic[SharedT]):
 
     @classmethod
     def create_from_shape(
-        cls, mem_mgr: SharedMemoryManager, shape: Tuple, dtype: npt.DTypeLike) -> SharedNDArray:
+        cls, mem_mgr: SharedMemoryManager, shape: Tuple, dtype: npt.DTypeLike
+    ) -> SharedNDArray:
         """Create a SharedNDArray directly from a SharedMemoryManager
         Parameters
         ----------
@@ -157,7 +158,6 @@ class SharedNDArray(Generic[SharedT]):
     @property
     def shape(self) -> Tuple[int, ...]:
         return self._shape
-
 
     def get(self) -> npt.NDArray[SharedT]:
         """Get a numpy array with access to the shared memory"""
