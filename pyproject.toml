@@ -10,7 +10,7 @@ readme = "README.md"
 authors = [
     { name = "author31", email = "wi072815.tw@gmail.com" }
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.10, <3.13"
 dependencies = [
     "click>=8.2.1",
     "imagecodecs>=2023.9.18",
