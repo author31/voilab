@@ -28,7 +28,8 @@ dependencies = [
 dev = [
     "pytest",
     "ipython[all]",
-    "notebook"
+    "notebook",
+    "plotly>=6.3.0",
 ]
 
 [project.scripts]

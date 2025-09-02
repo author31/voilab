@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.10"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'darwin'",
@@ -1085,7 +1085,6 @@ dependencies = [
     { name = "numpy" },
     { name = "packaging" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/5e/a3/7213833216238e7dd7ef9f9a3a66bfb1ae24235e7fd32aad75afa3e78f3f/faiss_cpu-1.8.0.post1.tar.gz", hash = "sha256:5686af34414678c3d49c4fa8d774df7156e9cb48d7029071e56230e74b01cc13", size = 63668, upload-time = "2024-06-24T05:58:28.155Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a3/6c/025d4b55e81c23b63ce093880afa5944f7f5cdc1a93e7a10b0f67fcc26b5/faiss_cpu-1.8.0.post1-cp310-cp310-macosx_10_14_x86_64.whl", hash = "sha256:fd84721eb599aa1da19b1b36345bb8705a60bb1d2887bbbc395a29e3d36a1a62", size = 7345861, upload-time = "2024-06-26T04:27:50.127Z" },
     { url = "https://files.pythonhosted.org/packages/1f/22/231e1b30cf7d90da6a59bf6169c509ae62d3c3b1e9a88b702c267cd25e41/faiss_cpu-1.8.0.post1-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:b78ff9079d15fd0f156bf5dd8a2975a8abffac1854a86ece263eec1500a2e836", size = 5979513, upload-time = "2024-06-24T05:57:40.993Z" },
@@ -3240,6 +3239,15 @@ wheels = [
 ]
 
 [[package]]
+name = "narwhals"
+version = "2.3.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/39/30/7a55d6b4345f0fa27e762754a30ca7d5ba52ee53a2f4878a9d5e641b1d5b/narwhals-2.3.0.tar.gz", hash = "sha256:b66bc4ab7b6746354f60c4b3941e3ce60c066588c35360e2dc6c063489000a16", size = 552774, upload-time = "2025-09-01T08:29:27.502Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7d/81/1cf7a468ef2f8e88266d5c3e5ab026a045aa76150e6640bfe9c5450a8c11/narwhals-2.3.0-py3-none-any.whl", hash = "sha256:5507b1a9a9c2b1c55a627fdf6cf722fef2e23498bd14362a332c8848a311c321", size = 404361, upload-time = "2025-09-01T08:29:25.863Z" },
+]
+
+[[package]]
 name = "nbclient"
 version = "0.10.2"
 source = { registry = "https://pypi.org/simple" }
@@ -3975,6 +3983,19 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/d3/e3/aa14d6b2c379fbb005993514988d956f1b9fdccd9cbe78ec0dbe5fb79bf5/platformdirs-3.11.0.tar.gz", hash = "sha256:cf8ee52a3afdb965072dcc652433e0c7e3e40cf5ea1477cd4b3b1d2eb75495b3", size = 19914, upload-time = "2023-10-02T15:16:30.552Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/56/29/3ec311dc18804409ecf0d2b09caa976f3ae6215559306b5b530004e11156/platformdirs-3.11.0-py3-none-any.whl", hash = "sha256:e9d171d00af68be50e9202731309c4e658fd8bc76f55c11c7dd760d023bda68e", size = 17579, upload-time = "2023-10-02T15:16:29.336Z" },
+]
+
+[[package]]
+name = "plotly"
+version = "6.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "narwhals" },
+    { name = "packaging" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a0/64/850de5076f4436410e1ce4f6a69f4313ef6215dfea155f3f6559335cad29/plotly-6.3.0.tar.gz", hash = "sha256:8840a184d18ccae0f9189c2b9a2943923fd5cae7717b723f36eef78f444e5a73", size = 6923926, upload-time = "2025-08-12T20:22:14.127Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/95/a9/12e2dc726ba1ba775a2c6922d5d5b4488ad60bdab0888c337c194c8e6de8/plotly-6.3.0-py3-none-any.whl", hash = "sha256:7ad806edce9d3cdd882eaebaf97c0c9e252043ed1ed3d382c3e3520ec07806d4", size = 9791257, upload-time = "2025-08-12T20:22:09.205Z" },
 ]
 
 [[package]]
@@ -6239,6 +6260,7 @@ dev = [
     { name = "ipython", version = "8.37.0", source = { registry = "https://pypi.org/simple" }, extra = ["all"], marker = "python_full_version < '3.11'" },
     { name = "ipython", version = "9.4.0", source = { registry = "https://pypi.org/simple" }, extra = ["all"], marker = "python_full_version >= '3.11'" },
     { name = "notebook" },
+    { name = "plotly" },
     { name = "pytest" },
 ]
 
@@ -6252,6 +6274,7 @@ requires-dist = [
     { name = "matplotlib", specifier = ">=3.7" },
     { name = "notebook", marker = "extra == 'dev'" },
     { name = "numpy", specifier = ">=1.24" },
+    { name = "plotly", marker = "extra == 'dev'", specifier = ">=6.3.0" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "umi", editable = "packages/umi" },
     { name = "voila", specifier = ">=0.5.10" },
