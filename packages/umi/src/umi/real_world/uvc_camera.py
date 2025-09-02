@@ -64,9 +64,7 @@ class UvcCamera(mp.Process):
 
         vis_ring_buffer = SharedMemoryRingBuffer.create_from_examples(
             shm_manager=shm_manager,
-            examples=examples
-            if vis_transform is None
-            else vis_transform(dict(examples)),
+            examples=examples if vis_transform is None else vis_transform(dict(examples)),
             get_max_k=1,
             get_time_budget=0.2,
             put_desired_frequency=capture_fps,
@@ -140,9 +138,7 @@ class UvcCamera(mp.Process):
         self.put_start_time = put_start_time
         shape = self.resolution[::-1]
         data_example = np.empty(shape=shape + (3,), dtype=np.uint8)
-        self.video_recorder.start(
-            shm_manager=self.shm_manager, data_example=data_example
-        )
+        self.video_recorder.start(shm_manager=self.shm_manager, data_example=data_example)
         # must start video recorder first to create share memories
         super().start()
         if wait:
@@ -191,9 +187,7 @@ class UvcCamera(mp.Process):
         self.command_queue.put({"cmd": Command.STOP_RECORDING.value})
 
     def restart_put(self, start_time):
-        self.command_queue.put(
-            {"cmd": Command.RESTART_PUT.value, "put_start_time": start_time}
-        )
+        self.command_queue.put({"cmd": Command.RESTART_PUT.value, "put_start_time": start_time})
 
     # ========= interval API ===========
     def run(self):
@@ -316,9 +310,7 @@ class UvcCamera(mp.Process):
                         start_time = command["recording_start_time"]
                         if start_time < 0:
                             start_time = None
-                        self.video_recorder.start_recording(
-                            video_path, start_time=start_time
-                        )
+                        self.video_recorder.start_recording(video_path, start_time=start_time)
                     elif cmd == Command.STOP_RECORDING.value:
                         self.video_recorder.stop_recording()
 

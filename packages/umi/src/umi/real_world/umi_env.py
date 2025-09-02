@@ -189,17 +189,11 @@ class UmiEnv:
             resolution.append(res)
             capture_fps.append(fps)
             cap_buffer_size.append(buf)
-            video_recorder.append(
-                VideoRecorder.create_hevc_nvenc(
-                    fps=fps, input_pix_fmt="bgr24", bit_rate=bit_rate
-                )
-            )
+            video_recorder.append(VideoRecorder.create_hevc_nvenc(fps=fps, input_pix_fmt="bgr24", bit_rate=bit_rate))
 
             def vis_tf(data, input_res=res):
                 img = data["color"]
-                f = get_image_transform(
-                    input_res=input_res, output_res=(rw, rh), bgr_to_rgb=False
-                )
+                f = get_image_transform(input_res=input_res, output_res=(rw, rh), bgr_to_rgb=False)
                 img = f(img)
                 data["color"] = img
                 return data
@@ -225,9 +219,7 @@ class UmiEnv:
 
         multi_cam_vis = None
         if enable_multi_cam_vis:
-            multi_cam_vis = MultiCameraVisualizer(
-                camera=camera, row=row, col=col, rgb_to_bgr=False
-            )
+            multi_cam_vis = MultiCameraVisualizer(camera=camera, row=row, col=col, rgb_to_bgr=False)
 
         cube_diag = np.linalg.norm([1, 1, 1])
         j_init = np.array([0, -90, -90, -90, 90, 0]) / 180 * np.pi
@@ -367,11 +359,7 @@ class UmiEnv:
 
         # get data
         # 60 Hz, camera_calibrated_timestamp
-        k = math.ceil(
-            self.camera_obs_horizon
-            * self.camera_down_sample_steps
-            * (60 / self.frequency)
-        )
+        k = math.ceil(self.camera_obs_horizon * self.camera_down_sample_steps * (60 / self.frequency))
         self.last_camera_data = self.camera.get(k=k, out=self.last_camera_data)
 
         # 125/500 hz, robot_receive_timestamp
@@ -386,9 +374,7 @@ class UmiEnv:
 
         # align camera obs timestamps
         camera_obs_timestamps = last_timestamp - (
-            np.arange(self.camera_obs_horizon)[::-1]
-            * self.camera_down_sample_steps
-            * dt
+            np.arange(self.camera_obs_horizon)[::-1] * self.camera_down_sample_steps * dt
         )
         camera_obs = dict()
         for camera_idx, value in self.last_camera_data.items():
@@ -400,9 +386,7 @@ class UmiEnv:
             # remap key
             if camera_idx == 0 and self.mirror_crop:
                 camera_obs["camera0_rgb"] = value["color"][..., :3][this_idxs]
-                camera_obs["camera0_rgb_mirror_crop"] = value["color"][..., 3:][
-                    this_idxs
-                ]
+                camera_obs["camera0_rgb_mirror_crop"] = value["color"][..., 3:][this_idxs]
             else:
                 camera_obs[f"camera{camera_idx}_rgb"] = value["color"][this_idxs]
 
@@ -421,17 +405,13 @@ class UmiEnv:
 
         # align gripper obs
         gripper_obs_timestamps = last_timestamp - (
-            np.arange(self.gripper_obs_horizon)[::-1]
-            * self.gripper_down_sample_steps
-            * dt
+            np.arange(self.gripper_obs_horizon)[::-1] * self.gripper_down_sample_steps * dt
         )
         gripper_interpolator = get_interp1d(
             t=last_gripper_data["gripper_timestamp"],
             x=last_gripper_data["gripper_position"][..., None],
         )
-        gripper_obs = {
-            "robot0_gripper_width": gripper_interpolator(gripper_obs_timestamps)
-        }
+        gripper_obs = {"robot0_gripper_width": gripper_interpolator(gripper_obs_timestamps)}
 
         # accumulate obs
         if self.obs_accumulator is not None:
@@ -444,11 +424,7 @@ class UmiEnv:
                 timestamps=last_robot_data["robot_timestamp"],
             )
             self.obs_accumulator.put(
-                data={
-                    "robot0_gripper_width": last_gripper_data["gripper_position"][
-                        ..., None
-                    ]
-                },
+                data={"robot0_gripper_width": last_gripper_data["gripper_position"][..., None]},
                 timestamps=last_gripper_data["gripper_timestamp"],
             )
 
@@ -460,9 +436,7 @@ class UmiEnv:
 
         return obs_data
 
-    def exec_actions(
-        self, actions: np.ndarray, timestamps: np.ndarray, compensate_latency=False
-    ):
+    def exec_actions(self, actions: np.ndarray, timestamps: np.ndarray, compensate_latency=False):
         assert self.is_ready
         if not isinstance(actions, np.ndarray):
             actions = np.array(actions)
@@ -482,12 +456,8 @@ class UmiEnv:
         for i in range(len(new_actions)):
             r_actions = new_actions[i, :6]
             g_actions = new_actions[i, 6:]
-            self.robot.schedule_waypoint(
-                pose=r_actions, target_time=new_timestamps[i] - r_latency
-            )
-            self.gripper.schedule_waypoint(
-                pos=g_actions, target_time=new_timestamps[i] - g_latency
-            )
+            self.robot.schedule_waypoint(pose=r_actions, target_time=new_timestamps[i] - r_latency)
+            self.gripper.schedule_waypoint(pos=g_actions, target_time=new_timestamps[i] - g_latency)
 
         # record actions
         if self.action_accumulator is not None:
@@ -520,9 +490,7 @@ class UmiEnv:
 
         # create accumulators
         self.obs_accumulator = ObsAccumulator()
-        self.action_accumulator = TimestampActionAccumulator(
-            start_time=start_time, dt=1 / self.frequency
-        )
+        self.action_accumulator = TimestampActionAccumulator(start_time=start_time, dt=1 / self.frequency)
         print(f"Episode {episode_id} started!")
 
     def end_episode(self):
@@ -549,10 +517,7 @@ class UmiEnv:
             action_timestamps = self.action_accumulator.timestamps
             n_steps = 0
             if np.sum(self.action_accumulator.timestamps <= end_time) > 0:
-                n_steps = (
-                    np.nonzero(self.action_accumulator.timestamps <= end_time)[0][-1]
-                    + 1
-                )
+                n_steps = np.nonzero(self.action_accumulator.timestamps <= end_time)[0][-1] + 1
 
             if n_steps > 0:
                 timestamps = action_timestamps[:n_steps]

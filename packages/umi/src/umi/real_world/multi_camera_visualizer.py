@@ -65,9 +65,7 @@ class MultiCameraVisualizer(mp.Process):
             oh = H * self.row
             ow = W * self.col
             if vis_img is None:
-                vis_img = np.full(
-                    (oh, ow, 3), fill_value=self.fill_value, dtype=np.uint8
-                )
+                vis_img = np.full((oh, ow, 3), fill_value=self.fill_value, dtype=np.uint8)
             for row in range(self.row):
                 for col in range(self.col):
                     idx = col + row * self.col
@@ -77,9 +75,7 @@ class MultiCameraVisualizer(mp.Process):
                     w_end = w_start + W
                     if idx < N:
                         # opencv uses bgr
-                        vis_img[h_start:h_end, w_start:w_end] = color[
-                            idx, :, :, channel_slice
-                        ]
+                        vis_img[h_start:h_end, w_start:w_end] = color[idx, :, :, channel_slice]
             cv2.imshow(self.window_name, vis_img)
             cv2.pollKey()
             time.sleep(1 / self.vis_fps)

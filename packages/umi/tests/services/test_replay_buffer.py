@@ -67,12 +67,8 @@ class TestReplayBufferService:
             (demo_dir / "demo1.MP4").write_text(b"mock video data")
 
             # Create supporting files
-            (input_dir / "slam_tag_calibration.json").write_text(
-                json.dumps({"tags": {}})
-            )
-            (input_dir / "gripper_range_calibration.json").write_text(
-                json.dumps({"range": {}})
-            )
+            (input_dir / "slam_tag_calibration.json").write_text(json.dumps({"tags": {}}))
+            (input_dir / "gripper_range_calibration.json").write_text(json.dumps({"range": {}}))
             (input_dir / "demo1_trajectory.txt").write_text("trajectory")
             (input_dir / "demo1_aruco.json").write_text(json.dumps({"detections": []}))
 
@@ -117,17 +113,11 @@ class TestReplayBufferService:
                 demo_dir.mkdir()
                 (demo_dir / f"{demo}.MP4").write_text(b"mock video data")
                 (input_dir / f"{demo}_trajectory.txt").write_text("trajectory")
-                (input_dir / f"{demo}_aruco.json").write_text(
-                    json.dumps({"detections": []})
-                )
+                (input_dir / f"{demo}_aruco.json").write_text(json.dumps({"detections": []}))
 
             # Create calibration files
-            (input_dir / "slam_tag_calibration.json").write_text(
-                json.dumps({"tags": {}})
-            )
-            (input_dir / "gripper_range_calibration.json").write_text(
-                json.dumps({"range": {}})
-            )
+            (input_dir / "slam_tag_calibration.json").write_text(json.dumps({"tags": {}}))
+            (input_dir / "gripper_range_calibration.json").write_text(json.dumps({"range": {}}))
 
             output_dir = tmpdir / "output"
 
@@ -183,9 +173,7 @@ class TestReplayBufferService:
                 "total_frames": 300,
                 "episodes": [{"demo_name": "demo1"}, {"demo_name": "demo2"}],
             }
-            (output_dir / "replay_buffer_summary.json").write_text(
-                json.dumps(summary_data)
-            )
+            (output_dir / "replay_buffer_summary.json").write_text(json.dumps(summary_data))
 
             service = ReplayBufferService({})
             assert service.validate_replay_buffer(str(output_dir)) is True
@@ -205,9 +193,7 @@ class TestReplayBufferService:
             # Empty summary
             output_dir = tmpdir / "output"
             output_dir.mkdir()
-            (output_dir / "replay_buffer_summary.json").write_text(
-                json.dumps({"total_episodes": 0})
-            )
+            (output_dir / "replay_buffer_summary.json").write_text(json.dumps({"total_episodes": 0}))
 
             assert service.validate_replay_buffer(str(output_dir)) is False
 
@@ -326,11 +312,7 @@ class TestReplayBufferService:
             input_dir.mkdir()
 
             # Create mock dataset plan
-            dataset_plan = {
-                "episodes": [
-                    {"demo_name": "demo1", "frame_count": 10, "duration": 0.33}
-                ]
-            }
+            dataset_plan = {"episodes": [{"demo_name": "demo1", "frame_count": 10, "duration": 0.33}]}
             (input_dir / "dataset_plan.json").write_text(json.dumps(dataset_plan))
 
             demo_dir = input_dir / "demo1"
@@ -338,12 +320,8 @@ class TestReplayBufferService:
             (demo_dir / "demo1.MP4").write_text(b"mock video data")
 
             # Create supporting files
-            (input_dir / "slam_tag_calibration.json").write_text(
-                json.dumps({"tags": {}})
-            )
-            (input_dir / "gripper_range_calibration.json").write_text(
-                json.dumps({"range": {}})
-            )
+            (input_dir / "slam_tag_calibration.json").write_text(json.dumps({"tags": {}}))
+            (input_dir / "gripper_range_calibration.json").write_text(json.dumps({"range": {}}))
             (input_dir / "demo1_trajectory.txt").write_text("trajectory")
             (input_dir / "demo1_aruco.json").write_text(json.dumps({"detections": []}))
 

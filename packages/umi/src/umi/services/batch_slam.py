@@ -36,8 +36,7 @@ class BatchSLAMService(BaseService):
         # Process demos in parallel
         with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
             future_to_demo = {
-                executor.submit(self._process_demo, demo_dir, output_path): demo_dir
-                for demo_dir in demo_dirs
+                executor.submit(self._process_demo, demo_dir, output_path): demo_dir for demo_dir in demo_dirs
             }
 
             for future in as_completed(future_to_demo):
@@ -67,9 +66,7 @@ class BatchSLAMService(BaseService):
         # Retry logic for processing
         for attempt in range(self.retry_attempts):
             try:
-                result = self._run_batch_slam(
-                    video_files[0], map_files, batch_output_dir
-                )
+                result = self._run_batch_slam(video_files[0], map_files, batch_output_dir)
                 if result:
                     return {
                         "demo": demo_name,
@@ -82,9 +79,7 @@ class BatchSLAMService(BaseService):
 
         return None
 
-    def _run_batch_slam(
-        self, video_file: Path, map_files: List[Path], output_dir: Path
-    ) -> bool:
+    def _run_batch_slam(self, video_file: Path, map_files: List[Path], output_dir: Path) -> bool:
         """Run batch SLAM processing."""
         # This would implement actual batch SLAM processing
         # For now, create placeholder outputs

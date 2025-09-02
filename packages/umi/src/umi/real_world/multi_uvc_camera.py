@@ -25,9 +25,7 @@ class MultiUvcCamera:
         cap_buffer_size=1,
         transform: Optional[Union[Callable[[Dict], Dict], List[Callable]]] = None,
         vis_transform: Optional[Union[Callable[[Dict], Dict], List[Callable]]] = None,
-        recording_transform: Optional[
-            Union[Callable[[Dict], Dict], List[Callable]]
-        ] = None,
+        recording_transform: Optional[Union[Callable[[Dict], Dict], List[Callable]]] = None,
         video_recorder: Optional[Union[VideoRecorder, List[VideoRecorder]]] = None,
         verbose=False,
     ):

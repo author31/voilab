@@ -213,9 +213,7 @@ class TestBatchSLAMService:
         service._run_batch_slam = mock_run_batch_slam.__get__(service, BatchSLAMService)
 
         try:
-            result = service._run_batch_slam(
-                Path("test.mp4"), [Path("map.bin")], Path("/tmp")
-            )
+            result = service._run_batch_slam(Path("test.mp4"), [Path("map.bin")], Path("/tmp"))
             assert result is True
         finally:
             # Restore original method

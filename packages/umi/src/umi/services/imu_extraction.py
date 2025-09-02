@@ -56,9 +56,7 @@ class IMUExtractionService(BaseService):
             try:
                 imu_file = self._extract_imu_from_video(demo_dir)
                 if imu_file:
-                    results["extracted"].append(
-                        {"imu_file": str(imu_file), "demo": demo_dir.name}
-                    )
+                    results["extracted"].append({"imu_file": str(imu_file), "demo": demo_dir.name})
             except Exception as e:
                 results["failed"].append({"path": str(demo_dir), "error": str(e)})
 
@@ -89,8 +87,7 @@ class IMUExtractionService(BaseService):
                 if payload and len(payload[0]) > 0:
                     output["1"]["streams"][stream] = {
                         "samples": [
-                            {"value": data.tolist(), "cts": (ts * SECS_TO_MS).tolist()}
-                            for data, ts in zip(*payload)
+                            {"value": data.tolist(), "cts": (ts * SECS_TO_MS).tolist()} for data, ts in zip(*payload)
                         ]
                     }
 

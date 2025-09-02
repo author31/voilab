@@ -25,9 +25,7 @@ class ArucoDetectionService(BaseService):
     def __init__(self, config: dict):
         super().__init__(config)
         self.session_dir = self.config.get("session_dir")
-        self.num_workers = self.config.get(
-            "num_workers", multiprocessing.cpu_count() // 2
-        )
+        self.num_workers = self.config.get("num_workers", multiprocessing.cpu_count() // 2)
         self.camera_intrinsics_path = self.config.get("camera_intrinsics_path")
         self.aruco_config_path = self.config.get("aruco_config_path")
 
@@ -40,18 +38,14 @@ class ArucoDetectionService(BaseService):
         logger.info(f"Found {len(input_video_dirs)} video dirs")
         with (
             tqdm(total=len(input_video_dirs)) as pbar,
-            concurrent.futures.ThreadPoolExecutor(
-                max_workers=self.num_workers
-            ) as executor,
+            concurrent.futures.ThreadPoolExecutor(max_workers=self.num_workers) as executor,
         ):
             futures = set()
             for video_dir in tqdm(input_video_dirs):
                 video_path = video_dir / "raw_video.mp4"
                 pkl_path = video_dir / "tag_detection.pkl"
                 if pkl_path.is_file():
-                    logger.info(
-                        f"tag_detection.pkl already exists, skipping {video_dir.name}"
-                    )
+                    logger.info(f"tag_detection.pkl already exists, skipping {video_dir.name}")
                     continue
                 else:
                     if len(futures) >= self.num_workers:
@@ -59,9 +53,7 @@ class ArucoDetectionService(BaseService):
                             futures, return_when=concurrent.futures.FIRST_COMPLETED
                         )
                         pbar.update(len(completed))
-                    futures.add(
-                        executor.submit(self.detect_aruco, video_path, pkl_path)
-                    )
+                    futures.add(executor.submit(self.detect_aruco, video_path, pkl_path))
             completed, futures = concurrent.futures.wait(futures)
             pbar.update(len(completed))
             for future in completed:
@@ -91,21 +83,13 @@ class ArucoDetectionService(BaseService):
         }
 
     def detect_aruco(self, video_path, tag_detection_dest):
-        assert self.camera_intrinsics_path, (
-            "Missing camera_intrinsics_path from the configuration"
-        )
-        assert self.aruco_config_path, (
-            "Missing aruco_config_path from the configuration"
-        )
+        assert self.camera_intrinsics_path, "Missing camera_intrinsics_path from the configuration"
+        assert self.aruco_config_path, "Missing aruco_config_path from the configuration"
 
-        aruco_config = parse_aruco_config(
-            yaml.safe_load(open(self.aruco_config_path, "r"))
-        )
+        aruco_config = parse_aruco_config(yaml.safe_load(open(self.aruco_config_path, "r")))
         aruco_dict = aruco_config["aruco_dict"]
         marker_size_map = aruco_config["marker_size_map"]
-        raw_fisheye_intr = parse_fisheye_intrinsics(
-            json.load(open(self.camera_intrinsics_path, "r"))
-        )
+        raw_fisheye_intr = parse_fisheye_intrinsics(json.load(open(self.camera_intrinsics_path, "r")))
         results = []
         with av.open(str(video_path)) as in_container:
             in_stream = in_container.streams.video[0]
@@ -115,14 +99,10 @@ class ArucoDetectionService(BaseService):
             fisheye_intr = convert_fisheye_intrinsics_resolution(
                 opencv_intr_dict=raw_fisheye_intr, target_resolution=in_res
             )
-            for i, frame in tqdm(
-                enumerate(in_container.decode(in_stream)), total=in_stream.frames
-            ):
+            for i, frame in tqdm(enumerate(in_container.decode(in_stream)), total=in_stream.frames):
                 img = frame.to_ndarray(format="rgb24")
                 frame_cts_sec = frame.pts * in_stream.time_base
-                img = draw_predefined_mask(
-                    img, color=(0, 0, 0), mirror=True, gripper=False, finger=False
-                )
+                img = draw_predefined_mask(img, color=(0, 0, 0), mirror=True, gripper=False, finger=False)
                 tag_dict = detect_localize_aruco_tags(
                     img=img,
                     aruco_dict=aruco_dict,

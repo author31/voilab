@@ -104,9 +104,7 @@ class RTDEInterpolationController(mp.Process):
             "duration": 0.0,
             "target_time": 0.0,
         }
-        input_queue = SharedMemoryQueue.create_from_examples(
-            shm_manager=shm_manager, examples=example, buffer_size=256
-        )
+        input_queue = SharedMemoryQueue.create_from_examples(shm_manager=shm_manager, examples=example, buffer_size=256)
 
         # build ring buffer
         if receive_keys is None:
@@ -145,9 +143,7 @@ class RTDEInterpolationController(mp.Process):
         if wait:
             self.start_wait()
         if self.verbose:
-            print(
-                f"[RTDEPositionalController] Controller process spawned at {self.pid}"
-            )
+            print(f"[RTDEPositionalController] Controller process spawned at {self.pid}")
 
     def stop(self, wait=True):
         message = {"cmd": Command.STOP.value}
@@ -355,9 +351,7 @@ class RTDEInterpolationController(mp.Process):
                 iter_idx += 1
 
                 if self.verbose:
-                    print(
-                        f"[RTDEPositionalController] Actual frequency {1 / (time.monotonic() - t_now)}"
-                    )
+                    print(f"[RTDEPositionalController] Actual frequency {1 / (time.monotonic() - t_now)}")
 
         finally:
             # manditory cleanup

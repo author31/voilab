@@ -60,12 +60,8 @@ class TestDatasetPlanningService:
             (input_dir / "dataset_plan.json").write_text(json.dumps(dataset_plan))
 
             # Create supporting files
-            (input_dir / "slam_tag_calibration.json").write_text(
-                json.dumps({"tags": {}})
-            )
-            (input_dir / "gripper_range_calibration.json").write_text(
-                json.dumps({"range": {}})
-            )
+            (input_dir / "slam_tag_calibration.json").write_text(json.dumps({"tags": {}}))
+            (input_dir / "gripper_range_calibration.json").write_text(json.dumps({"range": {}}))
             (input_dir / "demo1_trajectory.txt").write_text("trajectory data")
             (input_dir / "demo1_aruco.json").write_text(json.dumps({"detections": []}))
 
@@ -107,9 +103,7 @@ class TestDatasetPlanningService:
             # Create supporting files
             for demo in ["demo1", "demo2", "demo3"]:
                 (input_dir / f"{demo}_trajectory.txt").write_text("trajectory")
-                (input_dir / f"{demo}_aruco.json").write_text(
-                    json.dumps({"detections": []})
-                )
+                (input_dir / f"{demo}_aruco.json").write_text(json.dumps({"detections": []}))
 
             output_dir = tmpdir / "output"
 
@@ -140,9 +134,7 @@ class TestDatasetPlanningService:
             # Create supporting files
             for demo in ["long_demo", "short_demo"]:
                 (input_dir / f"{demo}_trajectory.txt").write_text("trajectory")
-                (input_dir / f"{demo}_aruco.json").write_text(
-                    json.dumps({"detections": []})
-                )
+                (input_dir / f"{demo}_aruco.json").write_text(json.dumps({"detections": []}))
 
             output_dir = tmpdir / "output"
 
@@ -165,9 +157,7 @@ class TestDatasetPlanningService:
             gripper_data = {"range": {"x": [-0.5, 0.5]}}
 
             (input_dir / "slam_tag_calibration.json").write_text(json.dumps(slam_data))
-            (input_dir / "gripper_range_calibration.json").write_text(
-                json.dumps(gripper_data)
-            )
+            (input_dir / "gripper_range_calibration.json").write_text(json.dumps(gripper_data))
 
             service = DatasetPlanningService({})
             calibrations = service._load_calibrations(input_dir)
@@ -208,9 +198,7 @@ class TestDatasetPlanningService:
 
             # Create mock detection files
             for demo in ["demo1", "demo2"]:
-                (input_dir / f"{demo}_aruco.json").write_text(
-                    json.dumps({"detections": [{"frame": 0, "markers": []}]})
-                )
+                (input_dir / f"{demo}_aruco.json").write_text(json.dumps({"detections": [{"frame": 0, "markers": []}]}))
 
             service = DatasetPlanningService({})
             detections = service._load_aruco_detections(input_dir)
@@ -265,9 +253,7 @@ class TestDatasetPlanningService:
             trajectories = {"demo1": str(input_dir / "demo1_trajectory.txt")}
             detections = {"demo1": {"total_frames": 100, "detections": []}}
 
-            service = DatasetPlanningService(
-                {"tcp_offset": [0.1, 0.2, 0.3], "nominal_z": 0.5}
-            )
+            service = DatasetPlanningService({"tcp_offset": [0.1, 0.2, 0.3], "nominal_z": 0.5})
 
             plan = service._create_dataset_plan(calibrations, trajectories, detections)
 
@@ -306,9 +292,7 @@ class TestDatasetPlanningService:
             # Create supporting files
             for demo in ["short", "long", "medium"]:
                 (input_dir / f"{demo}_trajectory.txt").write_text("trajectory")
-                (input_dir / f"{demo}_aruco.json").write_text(
-                    json.dumps({"detections": []})
-                )
+                (input_dir / f"{demo}_aruco.json").write_text(json.dumps({"detections": []}))
 
             output_dir = tmpdir / "output"
 

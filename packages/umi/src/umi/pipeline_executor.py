@@ -12,6 +12,7 @@ from .services.base_service import BaseService
 
 class PipelineExecutor:
     """Pipeline executor for UMI services."""
+
     def __init__(self, config_path: str):
         """Initialize the pipeline executor.
 
@@ -24,9 +25,7 @@ class PipelineExecutor:
 
         self._load_config()
 
-    def _merge_configs(
-        self, base_config: Dict[str, Any], override_config: Dict[str, Any]
-    ) -> Dict[str, Any]:
+    def _merge_configs(self, base_config: Dict[str, Any], override_config: Dict[str, Any]) -> Dict[str, Any]:
         """Deep merge two configuration dictionaries.
 
         Args:
@@ -39,20 +38,14 @@ class PipelineExecutor:
         result = copy.deepcopy(base_config)
 
         for key, value in override_config.items():
-            if (
-                key in result
-                and isinstance(result[key], dict)
-                and isinstance(value, dict)
-            ):
+            if key in result and isinstance(result[key], dict) and isinstance(value, dict):
                 result[key] = self._merge_configs(result[key], value)
             else:
                 result[key] = copy.deepcopy(value)
 
         return result
 
-    def _filter_config(
-        self, config: Dict[str, Any], exclude_keys: list
-    ) -> Dict[str, Any]:
+    def _filter_config(self, config: Dict[str, Any], exclude_keys: list) -> Dict[str, Any]:
         """Filter out specified keys from configuration.
 
         Args:
@@ -86,9 +79,7 @@ class PipelineExecutor:
         logger.info(f"Configuration for stage '{stage_name}':")
 
         if not inherited_config:
-            logger.info(
-                "  No inherited configuration (first stage or inherit_config=false)"
-            )
+            logger.info("  No inherited configuration (first stage or inherit_config=false)")
         else:
             inherited_keys = set(inherited_config.keys())
             local_keys = set(stage_config.keys())
@@ -104,7 +95,6 @@ class PipelineExecutor:
             logger.info(
                 f"Inherited {len(inherited_config)} keys, added {len(new_keys)} keys, overrode {len(overridden_keys)} keys"
             )
-
 
     def _load_config(self) -> None:
         """Load and parse the YAML configuration file."""
@@ -138,9 +128,7 @@ class PipelineExecutor:
         except (ValueError, ImportError, AttributeError) as e:
             raise ImportError(f"Cannot import class {class_path}: {e}")
 
-    def load_service(
-        self, stage_name: str, propagated_config: Dict[str, Any] = None
-    ) -> BaseService:
+    def load_service(self, stage_name: str, propagated_config: Dict[str, Any] = None) -> BaseService:
         """Load and instantiate a service for a given stage.
 
         Args:
@@ -180,18 +168,14 @@ class PipelineExecutor:
             effective_config = self._merge_configs(local_config, config_override)
 
         # Log configuration details
-        self._log_config_diff(
-            stage_name, propagated_config or {}, local_config, effective_config
-        )
+        self._log_config_diff(stage_name, propagated_config or {}, local_config, effective_config)
 
         try:
             service_class = self._import_class(class_path)
             service_instance = service_class(effective_config)
 
             if not isinstance(service_instance, BaseService):
-                raise TypeError(
-                    f"Service {class_path} does not inherit from BaseService"
-                )
+                raise TypeError(f"Service {class_path} does not inherit from BaseService")
 
             self.services[stage_name] = service_instance
             logger.info(f"Loaded service for stage '{stage_name}': {class_path}")
@@ -220,9 +204,7 @@ class PipelineExecutor:
         """
         return list(self.config.keys())
 
-    def execute_stage(
-        self, stage_name: str, propagated_config: Dict[str, Any] = None, *args, **kwargs
-    ):
+    def execute_stage(self, stage_name: str, propagated_config: Dict[str, Any] = None, *args, **kwargs):
         """Execute a specific pipeline stage.
 
         Args:
@@ -274,23 +256,17 @@ class PipelineExecutor:
         propagated_config = {}
 
         logger.info(f"Starting pipeline execution with {len(stages)} stages")
-        logger.info(
-            "Configuration propagation enabled - configs from previous stages will be passed forward"
-        )
+        logger.info("Configuration propagation enabled - configs from previous stages will be passed forward")
 
         for i, stage_name in enumerate(stages, 1):
             stage_config = self.config[stage_name]
             inherit_config = stage_config.get("inherit_config", True)
 
-            logger.info(
-                f"Stage {i}/{len(stages)}: {stage_name} (inherit_config: {inherit_config})"
-            )
+            logger.info(f"Stage {i}/{len(stages)}: {stage_name} (inherit_config: {inherit_config})")
 
             try:
                 # Load service with propagated configuration
-                service_instance = self.load_service(
-                    stage_name, propagated_config if inherit_config else {}
-                )
+                service_instance = self.load_service(stage_name, propagated_config if inherit_config else {})
 
                 # Get the effective configuration used for this stage
                 stage_effective_config = service_instance.config
@@ -299,22 +275,14 @@ class PipelineExecutor:
                 result = service_instance.execute(*args, **kwargs)
                 results[stage_name] = result
 
-                logger.info(
-                    f"Stage {i}/{len(stages)}: {stage_name} completed"
-                )
+                logger.info(f"Stage {i}/{len(stages)}: {stage_name} completed")
 
                 # Update propagated configuration for next stages
                 if inherit_config:
-                    propagated_config = self._merge_configs(
-                        propagated_config, stage_effective_config
-                    )
-                    logger.info(
-                        f"Updated propagated configuration with {len(stage_effective_config)} keys"
-                    )
+                    propagated_config = self._merge_configs(propagated_config, stage_effective_config)
+                    logger.info(f"Updated propagated configuration with {len(stage_effective_config)} keys")
                 else:
-                    logger.info(
-                        "Skipped configuration propagation for this stage"
-                    )
+                    logger.info("Skipped configuration propagation for this stage")
 
             except Exception as e:
                 logger.error(f"Pipeline failed at stage '{stage_name}': {e}")
@@ -343,17 +311,13 @@ class PipelineExecutor:
                 stage_config = self.config[stage_name]
                 inherit_config = stage_config.get("inherit_config", True)
 
-                self.load_service(
-                    stage_name, propagated_config if inherit_config else {}
-                )
+                self.load_service(stage_name, propagated_config if inherit_config else {})
                 validation_results[stage_name] = True
 
                 # Update propagated configuration for validation
                 if inherit_config and stage_name in self.services:
                     stage_effective_config = self.services[stage_name].config
-                    propagated_config = self._merge_configs(
-                        propagated_config, stage_effective_config
-                    )
+                    propagated_config = self._merge_configs(propagated_config, stage_effective_config)
 
             except Exception as e:
                 validation_results[stage_name] = False

@@ -214,9 +214,7 @@ class TestArucoDetectionService:
             output_dir.mkdir()
             (output_dir / "test_aruco.json").write_text('{"test": true}')
 
-            service = ArucoDetectionService(
-                {"camera_intrinsics_path": None, "aruco_config_path": None}
-            )
+            service = ArucoDetectionService({"camera_intrinsics_path": None, "aruco_config_path": None})
             assert service.validate_detections(str(output_dir)) is True
 
     def test_validate_detections_failure(self):
@@ -228,9 +226,7 @@ class TestArucoDetectionService:
             empty_dir = tmpdir / "empty"
             empty_dir.mkdir()
 
-            service = ArucoDetectionService(
-                {"camera_intrinsics_path": None, "aruco_config_path": None}
-            )
+            service = ArucoDetectionService({"camera_intrinsics_path": None, "aruco_config_path": None})
             assert service.validate_detections(str(empty_dir)) is False
 
     def test_num_workers_auto_detection(self):

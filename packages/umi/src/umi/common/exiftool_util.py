@@ -1,9 +1,7 @@
 from exiftool import ExifToolHelper
 
 
-def get_videos_metadata(
-    video_paths, keys=["QuickTime:CameraSerialNumber", "QuickTime:Model"]
-):
+def get_videos_metadata(video_paths, keys=["QuickTime:CameraSerialNumber", "QuickTime:Model"]):
     results = dict()
     with ExifToolHelper() as et:
         for meta in et.get_metadata(video_paths):

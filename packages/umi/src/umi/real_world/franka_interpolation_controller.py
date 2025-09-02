@@ -24,9 +24,7 @@ tx_flangerot90_tip = np.identity(4)
 tx_flangerot90_tip[:3, 3] = np.array([-0.0336, 0, 0.247])
 
 tx_flangerot45_flangerot90 = np.identity(4)
-tx_flangerot45_flangerot90[:3, :3] = st.Rotation.from_euler(
-    "x", [np.pi / 2]
-).as_matrix()
+tx_flangerot45_flangerot90[:3, :3] = st.Rotation.from_euler("x", [np.pi / 2]).as_matrix()
 
 tx_flange_flangerot45 = np.identity(4)
 tx_flange_flangerot45[:3, :3] = st.Rotation.from_euler("z", [np.pi / 4]).as_matrix()
@@ -125,9 +123,7 @@ class FrankaInterpolationController(mp.Process):
             "duration": 0.0,
             "target_time": 0.0,
         }
-        input_queue = SharedMemoryQueue.create_from_examples(
-            shm_manager=shm_manager, examples=example, buffer_size=256
-        )
+        input_queue = SharedMemoryQueue.create_from_examples(shm_manager=shm_manager, examples=example, buffer_size=256)
 
         # build ring buffer
         receive_keys = [
@@ -163,9 +159,7 @@ class FrankaInterpolationController(mp.Process):
         if wait:
             self.start_wait()
         if self.verbose:
-            print(
-                f"[FrankaPositionalController] Controller process spawned at {self.pid}"
-            )
+            print(f"[FrankaPositionalController] Controller process spawned at {self.pid}")
 
     def stop(self, wait=True):
         message = {"cmd": Command.STOP.value}
@@ -356,9 +350,7 @@ class FrankaInterpolationController(mp.Process):
                 iter_idx += 1
 
                 if self.verbose:
-                    print(
-                        f"[FrankaPositionalController] Actual frequency {1 / (time.monotonic() - t_now)}"
-                    )
+                    print(f"[FrankaPositionalController] Actual frequency {1 / (time.monotonic() - t_now)}")
 
         finally:
             # manditory cleanup
@@ -369,6 +361,4 @@ class FrankaInterpolationController(mp.Process):
             self.ready_event.set()
 
             if self.verbose:
-                print(
-                    f"[FrankaPositionalController] Disconnected from robot: {self.robot_ip}"
-                )
+                print(f"[FrankaPositionalController] Disconnected from robot: {self.robot_ip}")

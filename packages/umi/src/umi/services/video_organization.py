@@ -43,11 +43,7 @@ class VideoOrganizationService(BaseService):
         mapping_vid_path = input_dir / "mapping.mp4"
         if not mapping_vid_path.exists() and not mapping_vid_path.is_symlink():
             largest_file = max(
-                (
-                    p
-                    for pattern in self.input_patterns
-                    for p in input_dir.glob(f"**/{pattern}")
-                ),
+                (p for pattern in self.input_patterns for p in input_dir.glob(f"**/{pattern}")),
                 key=lambda p: p.stat().st_size,
                 default=None,
             )
@@ -70,10 +66,7 @@ class VideoOrganizationService(BaseService):
                         meta = list(et.get_metadata(str(mp4_path)))[0]
                         cam_serial = meta["QuickTime:CameraSerialNumber"]
 
-                        if (
-                            cam_serial not in serial_start_dict
-                            or start_date < serial_start_dict[cam_serial]
-                        ):
+                        if cam_serial not in serial_start_dict or start_date < serial_start_dict[cam_serial]:
                             serial_start_dict[cam_serial] = start_date
                             serial_path_dict[cam_serial] = mp4_path
 
@@ -82,11 +75,7 @@ class VideoOrganizationService(BaseService):
                 result_summary["gripper_calibration"][serial] = path.name
 
         # --- 4. Organize videos into demo directories ---
-        input_mp4_paths = [
-            p
-            for pattern in self.input_patterns
-            for p in input_dir.glob(f"**/{pattern}")
-        ]
+        input_mp4_paths = [p for pattern in self.input_patterns for p in input_dir.glob(f"**/{pattern}")]
 
         with ExifToolHelper() as et:
             for mp4_path in input_mp4_paths:
@@ -100,9 +89,7 @@ class VideoOrganizationService(BaseService):
                 # Naming logic
                 if mp4_path.name.startswith("mapping"):
                     out_dname = "mapping"
-                elif mp4_path.name.startswith(
-                    "gripper_cal"
-                ) or mp4_path.parent.name.startswith("gripper_cal"):
+                elif mp4_path.name.startswith("gripper_cal") or mp4_path.parent.name.startswith("gripper_cal"):
                     out_dname = f"gripper_calibration_{cam_serial}_{start_date.strftime('%Y.%m.%d_%H.%M.%S.%f')}"
                 else:
                     out_dname = f"demo_{cam_serial}_{start_date.strftime('%Y.%m.%d_%H.%M.%S.%f')}"
@@ -113,9 +100,7 @@ class VideoOrganizationService(BaseService):
                 # Move video and create symlink
                 out_video_path = this_out_dir / "raw_video.mp4"
                 shutil.move(mp4_path, out_video_path)
-                dots = os.path.join(
-                    *[".."] * len(mp4_path.parent.relative_to(session).parts)
-                )
+                dots = os.path.join(*[".."] * len(mp4_path.parent.relative_to(session).parts))
                 rel_path = str(out_video_path.relative_to(session))
                 mp4_path.symlink_to(os.path.join(dots, rel_path))
 

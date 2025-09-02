@@ -36,6 +36,7 @@ dependencies = [
     "boto3==1.33",
     "aiohttp==3.9",
     "aiofiles==23.2",
+    "loguru>=0.7.3",
 
     # PyTorch ecosystem
     "torch==2.1.0",
@@ -86,4 +87,7 @@ dependencies = [
 
 [project.urls]
 "Homepage" = "https://github.com/real-stanford/universal_manipulation_interface"
+
+[project.scripts]
+umi = "umi.cli:cli"
 

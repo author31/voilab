@@ -4,9 +4,7 @@ import scipy.spatial.transform as st
 
 
 def get_interp1d(t, x):
-    gripper_interp = si.interp1d(
-        t, x, axis=0, bounds_error=False, fill_value=(x[0], x[-1])
-    )
+    gripper_interp = si.interp1d(t, x, axis=0, bounds_error=False, fill_value=(x[0], x[-1]))
     return gripper_interp
 
 

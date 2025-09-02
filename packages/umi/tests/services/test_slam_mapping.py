@@ -216,9 +216,7 @@ class TestSLAMMappingService:
 
         # Temporarily replace method
         original_method = service._run_docker_slam
-        service._run_docker_slam = mock_run_docker_slam.__get__(
-            service, SLAMMappingService
-        )
+        service._run_docker_slam = mock_run_docker_slam.__get__(service, SLAMMappingService)
 
         try:
             result = service._run_docker_slam(Path("test.mp4"), Path("/tmp"))

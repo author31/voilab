@@ -76,10 +76,7 @@ class ProgressService(BaseService):
 
     def is_stage_completed(self, stage_name: str) -> bool:
         """Check if stage is completed."""
-        return (
-            stage_name in self._progress["stages"]
-            and self._progress["stages"][stage_name]["status"] == "completed"
-        )
+        return stage_name in self._progress["stages"] and self._progress["stages"][stage_name]["status"] == "completed"
 
     def complete_pipeline(self):
         """Mark pipeline as completed."""

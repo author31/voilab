@@ -62,9 +62,7 @@ class TestVideoOrganizationService:
 
             output_dir = tmpdir / "output"
 
-            service = VideoOrganizationService(
-                {"input_patterns": ["*.MP4", "*.mp4", "*.avi"]}
-            )
+            service = VideoOrganizationService({"input_patterns": ["*.MP4", "*.mp4", "*.avi"]})
             result = service.organize_videos(str(session_dir), str(output_dir))
 
             assert result["total_videos"] == 3

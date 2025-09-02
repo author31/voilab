@@ -120,9 +120,7 @@ class WSGController(mp.Process):
         self.input_queue.put(message)
 
     def restart_put(self, start_time):
-        self.input_queue.put(
-            {"cmd": Command.RESTART_PUT.value, "target_time": start_time}
-        )
+        self.input_queue.put({"cmd": Command.RESTART_PUT.value, "target_time": start_time})
 
     # ========= receive APIs =============
     def get_state(self, k=None, out=None):
@@ -149,9 +147,7 @@ class WSGController(mp.Process):
                 # curr_pos = 100.0
                 curr_t = time.monotonic()
                 last_waypoint_time = curr_t
-                pose_interp = PoseTrajectoryInterpolator(
-                    times=[curr_t], poses=[[curr_pos, 0, 0, 0, 0, 0]]
-                )
+                pose_interp = PoseTrajectoryInterpolator(times=[curr_t], poses=[[curr_pos, 0, 0, 0, 0, 0]])
 
                 keep_running = True
                 t_start = time.monotonic()
@@ -164,9 +160,7 @@ class WSGController(mp.Process):
                     target_pos = pose_interp(t_target)[0]
                     target_vel = (target_pos - pose_interp(t_target - dt)[0]) / dt
                     # print('controller', target_pos, target_vel)
-                    info = wsg.script_position_pd(
-                        position=target_pos, velocity=target_vel
-                    )
+                    info = wsg.script_position_pd(position=target_pos, velocity=target_vel)
                     # time.sleep(1e-3)
 
                     # get state from robot
@@ -215,9 +209,7 @@ class WSGController(mp.Process):
                             )
                             last_waypoint_time = target_time
                         elif cmd == Command.RESTART_PUT.value:
-                            t_start = (
-                                command["target_time"] - time.time() + time.monotonic()
-                            )
+                            t_start = command["target_time"] - time.time() + time.monotonic()
                             iter_idx = 1
                         else:
                             keep_running = False

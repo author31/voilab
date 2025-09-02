@@ -240,9 +240,7 @@ class TestCalibrationService:
 
             output_dir = tmpdir / "output"
 
-            service = CalibrationService(
-                {"slam_tag_calibration_timeout": 10, "gripper_range_timeout": 10}
-            )
+            service = CalibrationService({"slam_tag_calibration_timeout": 10, "gripper_range_timeout": 10})
             result = service.run_calibrations(str(input_dir), str(output_dir))
 
             assert "slam_tag_calibration" in result
@@ -333,9 +331,7 @@ class TestReplayBufferService:
             input_dir.mkdir()
 
             # Create mock dataset plan
-            dataset_plan = {
-                "episodes": [{"demo_name": "demo1", "frame_count": 10, "metadata": {}}]
-            }
+            dataset_plan = {"episodes": [{"demo_name": "demo1", "frame_count": 10, "metadata": {}}]}
 
             (input_dir / "dataset_plan.json").write_text(json.dumps(dataset_plan))
 
@@ -370,9 +366,7 @@ class TestReplayBufferService:
             valid_dir.mkdir()
 
             summary_data = {"total_episodes": 1}
-            (valid_dir / "replay_buffer_summary.json").write_text(
-                json.dumps(summary_data)
-            )
+            (valid_dir / "replay_buffer_summary.json").write_text(json.dumps(summary_data))
 
             service = ReplayBufferService({})
             assert service.validate_replay_buffer(str(valid_dir)) is True

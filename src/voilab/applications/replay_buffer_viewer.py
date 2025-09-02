@@ -7,6 +7,7 @@ from ..utils.replay_buffer_loader import ReplayBufferLoader
 
 from imagecodecs.numcodecs import Jpegxl
 from imagecodecs import numcodecs
+
 numcodecs.register_codec(Jpegxl)
 
 
@@ -40,11 +41,9 @@ def show(dataset_path: str):
         frame_idx = min(frame_idx, zarr_loader.total_frames - 1)
         plot_frame(frame_idx)
 
-
     interact(
         show_frame,
         frame_idx=IntSlider(
-            min=0, max=zarr_loader.total_frames - 1, step=1, value=0,
-            description="Frame", layout=Layout(width="80%")
-        )
+            min=0, max=zarr_loader.total_frames - 1, step=1, value=0, description="Frame", layout=Layout(width="80%")
+        ),
     )

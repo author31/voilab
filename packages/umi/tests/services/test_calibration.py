@@ -44,9 +44,7 @@ class TestCalibrationService:
                 json.dumps(
                     {
                         "tag_positions": {"tag1": {"x": 0, "y": 0, "z": 0}},
-                        "world_to_camera_transforms": {
-                            "demo1": [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]
-                        },
+                        "world_to_camera_transforms": {"demo1": [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]},
                     }
                 )
             )
@@ -67,9 +65,7 @@ class TestCalibrationService:
 
             output_dir = tmpdir / "output"
 
-            service = CalibrationService(
-                {"slam_tag_calibration_timeout": 10, "gripper_range_timeout": 10}
-            )
+            service = CalibrationService({"slam_tag_calibration_timeout": 10, "gripper_range_timeout": 10})
             result = service.run_calibrations(str(input_dir), str(output_dir))
 
             assert "slam_tag_calibration" in result
@@ -172,23 +168,16 @@ class TestCalibrationService:
             input_dir.mkdir()
 
             # Only create SLAM tag calibration file
-            (input_dir / "slam_tag_calibration.json").write_text(
-                json.dumps({"tag_positions": {}})
-            )
+            (input_dir / "slam_tag_calibration.json").write_text(json.dumps({"tag_positions": {}}))
 
             output_dir = tmpdir / "output"
 
-            service = CalibrationService(
-                {"slam_tag_calibration_timeout": 10, "gripper_range_timeout": 10}
-            )
+            service = CalibrationService({"slam_tag_calibration_timeout": 10, "gripper_range_timeout": 10})
             result = service.run_calibrations(str(input_dir), str(output_dir))
 
             # Should have errors but still return results
             assert len(result["errors"]) > 0
-            assert (
-                result["slam_tag_calibration"] is not None
-                or result["gripper_range_calibration"] is not None
-            )
+            assert result["slam_tag_calibration"] is not None or result["gripper_range_calibration"] is not None
 
     def test_validate_calibrations_success(self):
         """Test successful validation of calibration results"""
@@ -198,12 +187,8 @@ class TestCalibrationService:
             output_dir = tmpdir / "output"
             output_dir.mkdir()
 
-            (output_dir / "slam_tag_calibration.json").write_text(
-                json.dumps({"test": True})
-            )
-            (output_dir / "gripper_range_calibration.json").write_text(
-                json.dumps({"test": True})
-            )
+            (output_dir / "slam_tag_calibration.json").write_text(json.dumps({"test": True}))
+            (output_dir / "gripper_range_calibration.json").write_text(json.dumps({"test": True}))
 
             service = CalibrationService({})
             assert service.validate_calibrations(str(output_dir)) is True
@@ -216,9 +201,7 @@ class TestCalibrationService:
             # Missing one file
             output_dir = tmpdir / "output"
             output_dir.mkdir()
-            (output_dir / "slam_tag_calibration.json").write_text(
-                json.dumps({"test": True})
-            )
+            (output_dir / "slam_tag_calibration.json").write_text(json.dumps({"test": True}))
 
             service = CalibrationService({})
             assert service.validate_calibrations(str(output_dir)) is False
@@ -312,9 +295,7 @@ class TestCalibrationService:
 
     def test_timeout_configurations(self):
         """Test timeout configuration values"""
-        service = CalibrationService(
-            {"slam_tag_calibration_timeout": 123, "gripper_range_timeout": 456}
-        )
+        service = CalibrationService({"slam_tag_calibration_timeout": 123, "gripper_range_timeout": 456})
 
         assert service.slam_tag_timeout == 123
         assert service.gripper_range_timeout == 456

@@ -48,9 +48,7 @@ class ReplayBufferService(BaseService):
 
         with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
             future_to_episode = {
-                executor.submit(
-                    self._process_episode, episode, input_path, output_path
-                ): episode
+                executor.submit(self._process_episode, episode, input_path, output_path): episode
                 for episode in episodes
             }
 
@@ -79,18 +77,14 @@ class ReplayBufferService(BaseService):
 
         return results
 
-    def _process_episode(
-        self, episode: Dict[str, Any], input_path: Path, output_path: Path
-    ) -> Dict[str, Any]:
+    def _process_episode(self, episode: Dict[str, Any], input_path: Path, output_path: Path) -> Dict[str, Any]:
         """Process a single episode into replay buffer format."""
         demo_name = episode["demo_name"]
         episode_dir = output_path / demo_name
         episode_dir.mkdir(exist_ok=True)
 
         # Find corresponding video file
-        video_files = list(input_path.rglob(f"{demo_name}.MP4")) + list(
-            input_path.rglob(f"{demo_name}.mp4")
-        )
+        video_files = list(input_path.rglob(f"{demo_name}.MP4")) + list(input_path.rglob(f"{demo_name}.mp4"))
 
         if not video_files:
             raise ValueError(f"Video file not found for {demo_name}")
@@ -123,9 +117,7 @@ class ReplayBufferService(BaseService):
             "episode_dir": str(episode_dir),
         }
 
-    def _extract_frames(
-        self, video_file: Path, episode: Dict[str, Any]
-    ) -> List[Dict[str, Any]]:
+    def _extract_frames(self, video_file: Path, episode: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Extract and process frames from video."""
         cap = cv2.VideoCapture(str(video_file))
         if not cap.isOpened():

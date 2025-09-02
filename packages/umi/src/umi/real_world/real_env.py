@@ -155,9 +155,7 @@ class RealEnv:
 
         multi_cam_vis = None
         if enable_multi_cam_vis:
-            multi_cam_vis = MultiCameraVisualizer(
-                camera=camera, row=row, col=col, rgb_to_bgr=False
-            )
+            multi_cam_vis = MultiCameraVisualizer(camera=camera, row=row, col=col, rgb_to_bgr=False)
 
         cube_diag = np.linalg.norm([1, 1, 1])
         j_init = np.array([0, -90, -90, -90, 90, 0]) / 180 * np.pi
@@ -280,9 +278,7 @@ class RealEnv:
 
         # align camera obs timestamps
         dt = 1 / self.frequency
-        last_timestamp = np.max(
-            [x["timestamp"][-1] for x in self.last_camera_data.values()]
-        )
+        last_timestamp = np.max([x["timestamp"][-1] for x in self.last_camera_data.values()])
         obs_align_timestamps = last_timestamp - (np.arange(self.n_obs_steps)[::-1] * dt)
 
         camera_obs = dict()
@@ -379,9 +375,7 @@ class RealEnv:
             r_actions = new_actions[i, :6]
             g_actions = new_actions[i, 6:] + 1
             self.robot.schedule_waypoint(pose=r_actions, target_time=new_timestamps[i])
-            self.gripper.schedule_waypoint(
-                pos=g_actions, target_time=new_timestamps[i] - 0.02
-            )
+            self.gripper.schedule_waypoint(pos=g_actions, target_time=new_timestamps[i] - 0.02)
 
         # record actions
         if self.action_accumulator is not None:
@@ -415,18 +409,10 @@ class RealEnv:
         self.camera.start_recording(video_path=video_paths, start_time=start_time)
 
         # create accumulators
-        self.robot_obs_accumulator = TimestampObsAccumulator(
-            start_time=start_time, dt=1 / self.frequency
-        )
-        self.gripper_obs_accumulator = TimestampObsAccumulator(
-            start_time=start_time, dt=1 / self.frequency
-        )
-        self.action_accumulator = TimestampActionAccumulator(
-            start_time=start_time, dt=1 / self.frequency
-        )
-        self.stage_accumulator = TimestampActionAccumulator(
-            start_time=start_time, dt=1 / self.frequency
-        )
+        self.robot_obs_accumulator = TimestampObsAccumulator(start_time=start_time, dt=1 / self.frequency)
+        self.gripper_obs_accumulator = TimestampObsAccumulator(start_time=start_time, dt=1 / self.frequency)
+        self.action_accumulator = TimestampActionAccumulator(start_time=start_time, dt=1 / self.frequency)
+        self.stage_accumulator = TimestampActionAccumulator(start_time=start_time, dt=1 / self.frequency)
         print(f"Episode {episode_id} started!")
 
     def end_episode(self):

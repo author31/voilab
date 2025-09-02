@@ -28,9 +28,7 @@ class SLAMMappingService(BaseService):
         self.pull_docker = self.config.get("pull_docker", True)
         self.generate_mask = self.config.get("generate_mask", True)
         self.slam_process_mode = self.config.get("slam_process_mode", "slam_mapping")
-        self.num_workers = self.config.get(
-            "num_workers", multiprocessing.cpu_count() // 2
-        )
+        self.num_workers = self.config.get("num_workers", multiprocessing.cpu_count() // 2)
         self.force = self.config.get("force", False)
 
     def execute(self) -> dict:
@@ -40,9 +38,7 @@ class SLAMMappingService(BaseService):
             if self.slam_process_mode == BATCH_SLAM_MODE:
                 return self.execute_slam_batch()
             else:
-                raise ValueError(
-                    f"Unknown mode, only accepts: {CREATE_MAP_MODE}, {BATCH_SLAM_MODE}"
-                )
+                raise ValueError(f"Unknown mode, only accepts: {CREATE_MAP_MODE}, {BATCH_SLAM_MODE}")
 
     def execute_create_map_slam(self) -> dict:
         assert self.session_dir, "Missing session_dir from the configuration"
@@ -72,13 +68,20 @@ class SLAMMappingService(BaseService):
             f"{input_path}:/data",
             "--volume",
             f"{map_mount_source.parent}:{map_mount_target.parent}",
-            self.docker_image, "/ORB_SLAM3/Examples/Monocular-Inertial/gopro_slam",
-            "--vocabulary", "/ORB_SLAM3/Vocabulary/ORBvoc.txt",
-            "--setting", "/ORB_SLAM3/Examples/Monocular-Inertial/gopro10_maxlens_fisheye_setting_v1_720.yaml",
-            "--input_video", str(video_path),
-            "--input_imu_json", str(imu_path),
-            "--output_trajectory_csv", str(csv_path),
-            "--save_map", str(map_mount_target),
+            self.docker_image,
+            "/ORB_SLAM3/Examples/Monocular-Inertial/gopro_slam",
+            "--vocabulary",
+            "/ORB_SLAM3/Vocabulary/ORBvoc.txt",
+            "--setting",
+            "/ORB_SLAM3/Examples/Monocular-Inertial/gopro10_maxlens_fisheye_setting_v1_720.yaml",
+            "--input_video",
+            str(video_path),
+            "--input_imu_json",
+            str(imu_path),
+            "--output_trajectory_csv",
+            str(csv_path),
+            "--save_map",
+            str(map_mount_target),
         ]
         logger.info(f"[DOCKER CMD]: {' '.join(cmd)}")
         if not mask_path:
@@ -102,9 +105,7 @@ class SLAMMappingService(BaseService):
 
         process.wait()
         if process.returncode != 0:
-            raise RuntimeError(
-                f"SLAM mapping failed. Check logs at {stdout_path} for details."
-            )
+            raise RuntimeError(f"SLAM mapping failed. Check logs at {stdout_path} for details.")
 
         return {
             "map_path": str(map_path),
@@ -134,9 +135,7 @@ class SLAMMappingService(BaseService):
         input_video_dirs += [x.parent for x in input_path.glob("map*/raw_video.mp4")]
         map_path = input_path / "mapping/map_atlas.osa"
 
-        assert map_path.is_file(), (
-            "Missing map_atlas file, ensure the create_map process is executed before."
-        )
+        assert map_path.is_file(), "Missing map_atlas file, ensure the create_map process is executed before."
         self._pull_docker_image()
 
         processed_videos = []
@@ -144,17 +143,13 @@ class SLAMMappingService(BaseService):
         processed_video_dirs = []
         with (
             tqdm(total=len(input_video_dirs)) as pbar,
-            concurrent.futures.ThreadPoolExecutor(
-                max_workers=self.num_workers
-            ) as executor,
+            concurrent.futures.ThreadPoolExecutor(max_workers=self.num_workers) as executor,
         ):
             futures = {}
             for video_dir in input_video_dirs:
                 video_dir = video_dir.absolute()
                 if video_dir.joinpath("camera_trajectory.csv").is_file():
-                    logger.warning(
-                        f"camera_trajectory.csv already exists, skipping {video_dir.name}"
-                    )
+                    logger.warning(f"camera_trajectory.csv already exists, skipping {video_dir.name}")
                     continue
 
                 mount_target = Path("/data")
@@ -163,17 +158,13 @@ class SLAMMappingService(BaseService):
                 json_path = mount_target / "imu_data.json"
                 mask_path = mount_target / "slam_mask.png"
                 mask_write_path = video_dir / "slam_mask.png"
-                with av.open(
-                    str(video_dir.joinpath("raw_video.mp4").absolute())
-                ) as container:
+                with av.open(str(video_dir.joinpath("raw_video.mp4").absolute())) as container:
                     video = container.streams.video[0]
                     duration_sec = float(video.duration * video.time_base)
 
                 timeout = duration_sec * self.timeout_multiple
                 slam_mask = np.zeros((2028, 2704), dtype=np.uint8)
-                slam_mask = draw_predefined_mask(
-                    slam_mask, color=255, mirror=True, gripper=False, finger=True
-                )
+                slam_mask = draw_predefined_mask(slam_mask, color=255, mirror=True, gripper=False, finger=True)
                 cv2.imwrite(str(mask_write_path.absolute()), slam_mask)
                 map_mount_source = map_path
                 map_mount_target = Path("/map") / map_mount_source.name
@@ -210,9 +201,7 @@ class SLAMMappingService(BaseService):
                 stderr_path = video_dir / "slam_stderr.txt"
 
                 if len(futures) >= self.num_workers:
-                    completed, _ = concurrent.futures.wait(
-                        futures, return_when=concurrent.futures.FIRST_COMPLETED
-                    )
+                    completed, _ = concurrent.futures.wait(futures, return_when=concurrent.futures.FIRST_COMPLETED)
                     for future in completed:
                         result = futures[future]
                         all_results.append(future.result())
@@ -220,9 +209,7 @@ class SLAMMappingService(BaseService):
                         pbar.update(1)
                     for future in completed:
                         del futures[future]
-                future = executor.submit(
-                    runner, cmd, str(video_dir), stdout_path, stderr_path, timeout
-                )
+                future = executor.submit(runner, cmd, str(video_dir), stdout_path, stderr_path, timeout)
                 futures[future] = video_dir
             if futures:
                 completed, _ = concurrent.futures.wait(futures)
@@ -266,8 +253,6 @@ class SLAMMappingService(BaseService):
         """Generate mask image for SLAM if enabled."""
         mask_path = input_path / "slam_mask.png"
         slam_mask = np.zeros((2028, 2704), dtype=np.uint8)
-        slam_mask = draw_predefined_mask(
-            slam_mask, color=255, mirror=True, gripper=False, finger=True
-        )
+        slam_mask = draw_predefined_mask(slam_mask, color=255, mirror=True, gripper=False, finger=True)
         cv2.imwrite(str(mask_path), slam_mask)
         return mask_path

@@ -41,9 +41,7 @@ def get_real_obs_dict(
             assert ci == co
             out_imgs = this_imgs_in
             if (ho != hi) or (wo != wi) or (this_imgs_in.dtype == np.uint8):
-                tf = get_image_transform(
-                    input_res=(wi, hi), output_res=(wo, ho), bgr_to_rgb=False
-                )
+                tf = get_image_transform(input_res=(wi, hi), output_res=(wo, ho), bgr_to_rgb=False)
                 out_imgs = np.stack([tf(x) for x in this_imgs_in])
                 if this_imgs_in.dtype == np.uint8:
                     out_imgs = out_imgs.astype(np.float32) / 255
@@ -76,9 +74,7 @@ def get_real_umi_obs_dict(
             assert ci == co
             out_imgs = this_imgs_in
             if (ho != hi) or (wo != wi) or (this_imgs_in.dtype == np.uint8):
-                tf = get_image_transform(
-                    input_res=(wi, hi), output_res=(wo, ho), bgr_to_rgb=False
-                )
+                tf = get_image_transform(input_res=(wi, hi), output_res=(wo, ho), bgr_to_rgb=False)
                 out_imgs = np.stack([tf(x) for x in this_imgs_in])
                 if this_imgs_in.dtype == np.uint8:
                     out_imgs = out_imgs.astype(np.float32) / 255
@@ -152,12 +148,8 @@ def get_real_umi_obs_dict(
                 backward=False,
             )
             rel_obs_pose = mat_to_pose10d(rel_obs_pose_mat)
-            obs_dict_np[f"robot{robot_id}_eef_pos_wrt{other_robot_id}"] = rel_obs_pose[
-                :, :3
-            ]
-            obs_dict_np[f"robot{robot_id}_eef_rot_axis_angle_wrt{other_robot_id}"] = (
-                rel_obs_pose[:, 3:]
-            )
+            obs_dict_np[f"robot{robot_id}_eef_pos_wrt{other_robot_id}"] = rel_obs_pose[:, :3]
+            obs_dict_np[f"robot{robot_id}_eef_rot_axis_angle_wrt{other_robot_id}"] = rel_obs_pose[:, 3:]
 
     # generate relative pose with respect to episode start
     if episode_start_pose is not None:
@@ -185,16 +177,12 @@ def get_real_umi_obs_dict(
 
             rel_obs_pose = mat_to_pose10d(rel_obs_pose_mat)
             # obs_dict_np[f'robot{robot_id}_eef_pos_wrt_start'] = rel_obs_pose[:,:3]
-            obs_dict_np[f"robot{robot_id}_eef_rot_axis_angle_wrt_start"] = rel_obs_pose[
-                :, 3:
-            ]
+            obs_dict_np[f"robot{robot_id}_eef_rot_axis_angle_wrt_start"] = rel_obs_pose[:, 3:]
 
     return obs_dict_np
 
 
-def get_real_umi_action(
-    action: np.ndarray, env_obs: Dict[str, np.ndarray], action_pose_repr: str = "abs"
-):
+def get_real_umi_action(action: np.ndarray, env_obs: Dict[str, np.ndarray], action_pose_repr: str = "abs"):
     n_robots = int(action.shape[-1] // 10)
     env_action = list()
     for robot_idx in range(n_robots):

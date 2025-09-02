@@ -182,9 +182,7 @@ def skew(v):
     cfo, 2015/08/13
 
     """
-    return numpy.array(
-        [[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]], dtype=numpy.float64
-    )
+    return numpy.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]], dtype=numpy.float64)
 
 
 def unskew(R):
@@ -284,17 +282,11 @@ def logmap_so3(R):
     # special
     if numpy.abs(tr + 1.0) < 1e-10:
         if numpy.abs(R33 + 1.0) > 1e-10:
-            omega = (numpy.pi / numpy.sqrt(2.0 + 2.0 * R33)) * numpy.array(
-                [R13, R23, 1.0 + R33]
-            )
+            omega = (numpy.pi / numpy.sqrt(2.0 + 2.0 * R33)) * numpy.array([R13, R23, 1.0 + R33])
         elif numpy.abs(R22 + 1.0) > 1e-10:
-            omega = (numpy.pi / numpy.sqrt(2.0 + 2.0 * R22)) * numpy.array(
-                [R12, 1.0 + R22, R32]
-            )
+            omega = (numpy.pi / numpy.sqrt(2.0 + 2.0 * R22)) * numpy.array([R12, 1.0 + R22, R32])
         else:
-            omega = (numpy.pi / numpy.sqrt(2.0 + 2.0 * R11)) * numpy.array(
-                [1.0 + R11, R21, R31]
-            )
+            omega = (numpy.pi / numpy.sqrt(2.0 + 2.0 * R11)) * numpy.array([1.0 + R11, R21, R31])
     else:
         magnitude = 1.0
         tr_3 = tr - 3.0
@@ -331,11 +323,7 @@ def right_jacobian_so3(rotvec):
         theta = numpy.sqrt(theta2)
         Y = skew(rotvec) / theta
         I_3x3 = numpy.identity(3, dtype=numpy.float64)
-        J_r = (
-            I_3x3
-            - ((1.0 - numpy.cos(theta)) / theta) * Y
-            + (1.0 - numpy.sin(theta) / theta) * numpy.dot(Y, Y)
-        )
+        J_r = I_3x3 - ((1.0 - numpy.cos(theta)) / theta) * Y + (1.0 - numpy.sin(theta) / theta) * numpy.dot(Y, Y)
         return J_r
 
 
@@ -536,9 +524,7 @@ def rotation_matrix(angle, direction, point=None):
     cosa = math.cos(angle)
     direction = unit_vector(direction[:3])
     # rotation matrix around unit vector
-    R = numpy.array(
-        ((cosa, 0.0, 0.0), (0.0, cosa, 0.0), (0.0, 0.0, cosa)), dtype=numpy.float64
-    )
+    R = numpy.array(((cosa, 0.0, 0.0), (0.0, cosa, 0.0), (0.0, 0.0, cosa)), dtype=numpy.float64)
     R += numpy.outer(direction, direction) * (1.0 - cosa)
     direction *= sina
     R += numpy.array(
@@ -1030,9 +1016,7 @@ def decompose_matrix(matrix):
     return scale, shear, angles, translate, perspective
 
 
-def compose_matrix(
-    scale=None, shear=None, angles=None, translate=None, perspective=None
-):
+def compose_matrix(scale=None, shear=None, angles=None, translate=None, perspective=None):
     """Return transformation matrix from sequence of transformations.
 
     This is the inverse of the decompose_matrix function.

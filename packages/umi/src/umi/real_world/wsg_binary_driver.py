@@ -389,9 +389,7 @@ class WSGBinaryDriver:
 
         # correct checksum ends in zero
         header_checksum = 0x50F5
-        msg_checksum = checksum_update_crc16(
-            cmd_id_b + size_b + payload_b + checksum_b, crc=header_checksum
-        )
+        msg_checksum = checksum_update_crc16(cmd_id_b + size_b + payload_b + checksum_b, crc=header_checksum)
         if msg_checksum != 0:
             raise RuntimeError("Corrupted packet received from WSG")
 
@@ -466,18 +464,14 @@ class WSGBinaryDriver:
 
         return self.act(CommandId.Homing, arg, wait=wait)
 
-    def pre_position(
-        self, width: float, speed: float, clamp_on_block: bool = True, wait=True
-    ):
+    def pre_position(self, width: float, speed: float, clamp_on_block: bool = True, wait=True):
         flag = 0
         if clamp_on_block:
             flag = 0
         else:
             flag = 1
 
-        return self.act(
-            CommandId.PrePosition, flag, float(width), float(speed), wait=wait
-        )
+        return self.act(CommandId.PrePosition, flag, float(width), float(speed), wait=wait)
 
     def ack_fault(self):
         return self.act(CommandId.AckFastStop, "ack", wait=False, ignore_other=True)
@@ -500,9 +494,7 @@ class WSGBinaryDriver:
         status = StatusCode(msg["status_code"])
         response_payload = msg["payload_bytes"]
         if status == StatusCode.E_CMD_UNKNOWN:
-            raise RuntimeError(
-                "Command unknown - make sure script (cmd_measure.lua) is running"
-            )
+            raise RuntimeError("Command unknown - make sure script (cmd_measure.lua) is running")
         if status != StatusCode.E_SUCCESS:
             raise RuntimeError("Command failed")
         if len(response_payload) != 17:
@@ -553,18 +545,14 @@ class WSGBinaryDriver:
             blocked_force_limit = travel_force_limit
         assert kp > 0
         assert kd >= 0
-        return self.custom_script(
-            0xB1, position, velocity, kp, kd, travel_force_limit, blocked_force_limit
-        )
+        return self.custom_script(0xB1, position, velocity, kp, kd, travel_force_limit, blocked_force_limit)
 
 
 def test():
     import numpy as np
     import time
 
-    with WSGBinaryDriver(
-        hostname="wsg50-00004544.internal.tri.global", port=1000
-    ) as wsg:
+    with WSGBinaryDriver(hostname="wsg50-00004544.internal.tri.global", port=1000) as wsg:
         # ACK
         # msg = wsg.cmd_submit(0x24, bytearray([0x61, 0x63, 0x6B]))
         msg = wsg.ack_fault()

@@ -22,6 +22,7 @@ class ReplayBufferLoader:
       ├── robot0_eef_rot_axis_angle (T, 3)
       └── robot0_gripper_width (T, 1)
     """
+
     def __init__(self, zarr_path: str):
         self.zarr_path = zarr_path
         self.store = self._open_store(zarr_path)
@@ -44,8 +45,7 @@ class ReplayBufferLoader:
         elif path.endswith(".zip"):
             if ZipStore is None:
                 raise ImportError(
-                    "Your zarr version does not support ZipStore. "
-                    "Run: pip install 'zarr<3' OR unzip the archive."
+                    "Your zarr version does not support ZipStore. Run: pip install 'zarr<3' OR unzip the archive."
                 )
             return zarr.open(ZipStore(path, mode="r"), mode="r")
         else:

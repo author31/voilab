@@ -98,9 +98,7 @@ class FisheyeRectConverter:
             [[out_f, 0, out_size[0] / 2], [0, out_f, out_size[1] / 2], [0, 0, 1]],
             dtype=np.float32,
         )
-        map1, map2 = cv2.fisheye.initUndistortRectifyMap(
-            K, D, np.eye(3), out_K, out_size, cv2.CV_16SC2
-        )
+        map1, map2 = cv2.fisheye.initUndistortRectifyMap(K, D, np.eye(3), out_K, out_size, cv2.CV_16SC2)
 
         self.map1 = map1
         self.map2 = map2
@@ -159,9 +157,7 @@ def detect_localize_aruco_tags(
     param = cv2.aruco.DetectorParameters()
     if refine_subpix:
         param.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
-    corners, ids, rejectedImgPoints = cv2.aruco.detectMarkers(
-        image=img, dictionary=aruco_dict, parameters=param
-    )
+    corners, ids, rejectedImgPoints = cv2.aruco.detectMarkers(image=img, dictionary=aruco_dict, parameters=param)
     if len(corners) == 0:
         return dict()
 
@@ -173,9 +169,7 @@ def detect_localize_aruco_tags(
 
         marker_size_m = marker_size_map[this_id]
         undistorted = cv2.fisheye.undistortPoints(this_corners, K, D, P=K)
-        rvec, tvec, markerPoints = cv2.aruco.estimatePoseSingleMarkers(
-            undistorted, marker_size_m, K, np.zeros((1, 5))
-        )
+        rvec, tvec, markerPoints = cv2.aruco.estimatePoseSingleMarkers(undistorted, marker_size_m, K, np.zeros((1, 5)))
         tag_dict[this_id] = {
             "rvec": rvec.squeeze(),
             "tvec": tvec.squeeze(),
@@ -191,9 +185,7 @@ def get_charuco_board(
     square_length_mm=50,
     tag_length_mm=30,
 ):
-    aruco_dict = cv2.aruco.Dictionary(
-        aruco_dict.bytesList[tag_id_offset:], aruco_dict.markerSize
-    )
+    aruco_dict = cv2.aruco.Dictionary(aruco_dict.bytesList[tag_id_offset:], aruco_dict.markerSize)
     board = cv2.aruco.CharucoBoard(
         size=grid_size,
         squareLength=square_length_mm / 1000,
@@ -208,9 +200,7 @@ def draw_charuco_board(board, dpi=300, padding_mm=15):
     square_length_mm = board.getSquareLength() * 1000
 
     mm_per_inch = 25.4
-    board_size_pixel = (
-        (grid_size * square_length_mm + padding_mm * 2) / mm_per_inch * dpi
-    )
+    board_size_pixel = (grid_size * square_length_mm + padding_mm * 2) / mm_per_inch * dpi
     board_size_pixel = board_size_pixel.round().astype(np.int64)
     padding_pixel = int(padding_mm / mm_per_inch * dpi)
     board_img = board.generateImage(outSize=board_size_pixel, marginSize=padding_pixel)
@@ -346,9 +336,7 @@ def get_finger_canonical_polygon(height=0.37, top_width=0.25, bottom_width=1.4):
     return coords
 
 
-def draw_predefined_mask(
-    img, color=(0, 0, 0), mirror=True, gripper=True, finger=True, use_aa=False
-):
+def draw_predefined_mask(img, color=(0, 0, 0), mirror=True, gripper=True, finger=True, use_aa=False):
     all_coords = list()
     if mirror:
         all_coords.extend(get_mirror_canonical_polygon())
@@ -365,9 +353,7 @@ def draw_predefined_mask(
     return img
 
 
-def get_gripper_with_finger_mask(
-    img, height=0.37, top_width=0.25, bottom_width=1.4, color=(0, 0, 0)
-):
+def get_gripper_with_finger_mask(img, height=0.37, top_width=0.25, bottom_width=1.4, color=(0, 0, 0)):
     # image size
     img_h = img.shape[0]
     img_w = img.shape[1]
@@ -412,9 +398,9 @@ def inpaint_tag(img, corners, tag_scale=1.4, n_samples=16):
     scaled_corners = tag_scale * (corners - center) + center
 
     # sample pixels on the boundary to obtain median color
-    sample_points = si.interp1d(
-        [0, 1, 2, 3, 4], list(scaled_corners) + [scaled_corners[0]], axis=0
-    )(np.linspace(0, 4, n_samples)).astype(np.int32)
+    sample_points = si.interp1d([0, 1, 2, 3, 4], list(scaled_corners) + [scaled_corners[0]], axis=0)(
+        np.linspace(0, 4, n_samples)
+    ).astype(np.int32)
     sample_colors = img[
         np.clip(sample_points[:, 1], 0, img.shape[0] - 1),
         np.clip(sample_points[:, 0], 0, img.shape[1] - 1),
@@ -422,16 +408,12 @@ def inpaint_tag(img, corners, tag_scale=1.4, n_samples=16):
     median_color = np.median(sample_colors, axis=0).astype(img.dtype)
 
     # draw tag with median color
-    img = cv2.fillPoly(
-        img, scaled_corners[None, ...].astype(np.int32), color=median_color.tolist()
-    )
+    img = cv2.fillPoly(img, scaled_corners[None, ...].astype(np.int32), color=median_color.tolist())
     return img
 
 
 # =========== other utils ====================
-def get_image_transform(
-    in_res, out_res, crop_ratio: float = 1.0, bgr_to_rgb: bool = False
-):
+def get_image_transform(in_res, out_res, crop_ratio: float = 1.0, bgr_to_rgb: bool = False):
     iw, ih = in_res
     ow, oh = out_res
     ch = round(ih * crop_ratio)

@@ -6,14 +6,10 @@ import umi.traj_eval.trajectory_utils as tu
 import umi.traj_eval.transformations as tf
 
 
-def compute_relative_error(
-    p_es, q_es, p_gt, q_gt, T_cm, dist, max_dist_diff, accum_distances=[], scale=1.0
-):
+def compute_relative_error(p_es, q_es, p_gt, q_gt, T_cm, dist, max_dist_diff, accum_distances=[], scale=1.0):
     if len(accum_distances) == 0:
         accum_distances = tu.get_distance_from_start(p_gt)
-    comparisons = tu.compute_comparison_indices_length(
-        accum_distances, dist, max_dist_diff
-    )
+    comparisons = tu.compute_comparison_indices_length(accum_distances, dist, max_dist_diff)
 
     n_samples = len(comparisons)
     print("number of samples = {0} ".format(n_samples))
@@ -46,9 +42,7 @@ def compute_relative_error(
             T_error_in_c2 = np.dot(np.linalg.inv(T_m1_m2_in_c1), T_c1_c2)
             T_c2_rot = np.eye(4)
             T_c2_rot[0:3, 0:3] = T_c2[0:3, 0:3]
-            T_error_in_w = np.dot(
-                T_c2_rot, np.dot(T_error_in_c2, np.linalg.inv(T_c2_rot))
-            )
+            T_error_in_w = np.dot(T_c2_rot, np.dot(T_error_in_c2, np.linalg.inv(T_c2_rot)))
             errors.append(T_error_in_w)
 
     error_trans_norm = []
@@ -64,9 +58,7 @@ def compute_relative_error(
         ypr_angles = tf.euler_from_matrix(e, "rzyx")
         e_rot.append(tu.compute_angle(e))
         error_yaw.append(abs(ypr_angles[0]) * 180.0 / np.pi)
-        error_gravity.append(
-            np.sqrt(ypr_angles[1] ** 2 + ypr_angles[2] ** 2) * 180.0 / np.pi
-        )
+        error_gravity.append(np.sqrt(ypr_angles[1] ** 2 + ypr_angles[2] ** 2) * 180.0 / np.pi)
         e_rot_deg_per_m.append(e_rot[-1] / dist)
     return (
         errors,
@@ -79,9 +71,7 @@ def compute_relative_error(
     )
 
 
-def compute_temporal_relative_error(
-    p_es, q_es, p_gt, q_gt, T_cm, window_steps, scale=1.0
-):
+def compute_temporal_relative_error(p_es, q_es, p_gt, q_gt, T_cm, window_steps, scale=1.0):
     all_idxs = np.arange(len(p_gt))
     comparisons = list()
     for i in range(1, window_steps):
@@ -120,9 +110,7 @@ def compute_temporal_relative_error(
             T_error_in_c2 = np.dot(np.linalg.inv(T_m1_m2_in_c1), T_c1_c2)
             T_c2_rot = np.eye(4)
             T_c2_rot[0:3, 0:3] = T_c2[0:3, 0:3]
-            T_error_in_w = np.dot(
-                T_c2_rot, np.dot(T_error_in_c2, np.linalg.inv(T_c2_rot))
-            )
+            T_error_in_w = np.dot(T_c2_rot, np.dot(T_error_in_c2, np.linalg.inv(T_c2_rot)))
             errors.append(T_error_in_w)
 
     error_trans_norm = []
@@ -135,9 +123,7 @@ def compute_temporal_relative_error(
         ypr_angles = tf.euler_from_matrix(e, "rzyx")
         e_rot.append(tu.compute_angle(e))
         error_yaw.append(abs(ypr_angles[0]) * 180.0 / np.pi)
-        error_gravity.append(
-            np.sqrt(ypr_angles[1] ** 2 + ypr_angles[2] ** 2) * 180.0 / np.pi
-        )
+        error_gravity.append(np.sqrt(ypr_angles[1] ** 2 + ypr_angles[2] ** 2) * 180.0 / np.pi)
     return (
         errors,
         np.array(error_trans_norm),

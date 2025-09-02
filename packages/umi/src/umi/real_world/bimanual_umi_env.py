@@ -170,17 +170,11 @@ class BimanualUmiEnv:
             resolution.append(res)
             capture_fps.append(fps)
             cap_buffer_size.append(buf)
-            video_recorder.append(
-                VideoRecorder.create_hevc_nvenc(
-                    fps=fps, input_pix_fmt="bgr24", bit_rate=bit_rate
-                )
-            )
+            video_recorder.append(VideoRecorder.create_hevc_nvenc(fps=fps, input_pix_fmt="bgr24", bit_rate=bit_rate))
 
             def vis_tf(data, input_res=res):
                 img = data["color"]
-                f = get_image_transform(
-                    input_res=input_res, output_res=(rw, rh), bgr_to_rgb=False
-                )
+                f = get_image_transform(input_res=input_res, output_res=(rw, rh), bgr_to_rgb=False)
                 img = f(img)
                 data["color"] = img
                 return data
@@ -206,9 +200,7 @@ class BimanualUmiEnv:
 
         multi_cam_vis = None
         if enable_multi_cam_vis:
-            multi_cam_vis = MultiCameraVisualizer(
-                camera=camera, row=row, col=col, rgb_to_bgr=False
-            )
+            multi_cam_vis = MultiCameraVisualizer(camera=camera, row=row, col=col, rgb_to_bgr=False)
 
         cube_diag = np.linalg.norm([1, 1, 1])
         j_init = np.array([0, -90, -90, -90, 90, 0]) / 180 * np.pi
@@ -373,12 +365,7 @@ class BimanualUmiEnv:
         # get data
         # 60 Hz, camera_calibrated_timestamp
         k = (
-            math.ceil(
-                self.camera_obs_horizon
-                * self.camera_down_sample_steps
-                * (60 / self.frequency)
-            )
-            + 2
+            math.ceil(self.camera_obs_horizon * self.camera_down_sample_steps * (60 / self.frequency)) + 2
         )  # here 2 is adjustable, typically 1 should be enough
         # print('==>k  ', k, self.camera_obs_horizon, self.camera_down_sample_steps, self.frequency)
         self.last_camera_data = self.camera.get(k=k, out=self.last_camera_data)
@@ -406,17 +393,9 @@ class BimanualUmiEnv:
                     continue
                 other_timestep_idx = -1
                 while True:
-                    if (
-                        self.last_camera_data[other_camera_idx]["timestamp"][
-                            other_timestep_idx
-                        ]
-                        < this_timestamp
-                    ):
+                    if self.last_camera_data[other_camera_idx]["timestamp"][other_timestep_idx] < this_timestamp:
                         this_error += (
-                            this_timestamp
-                            - self.last_camera_data[other_camera_idx]["timestamp"][
-                                other_timestep_idx
-                            ]
+                            this_timestamp - self.last_camera_data[other_camera_idx]["timestamp"][other_timestep_idx]
                         )
                         break
                     other_timestep_idx -= 1
@@ -429,9 +408,7 @@ class BimanualUmiEnv:
 
         # align camera obs timestamps
         camera_obs_timestamps = last_timestamp - (
-            np.arange(self.camera_obs_horizon)[::-1]
-            * self.camera_down_sample_steps
-            * dt
+            np.arange(self.camera_obs_horizon)[::-1] * self.camera_down_sample_steps * dt
         )
         camera_obs = dict()
         for camera_idx, value in self.last_camera_data.items():
@@ -469,9 +446,7 @@ class BimanualUmiEnv:
 
         # align gripper obs
         gripper_obs_timestamps = last_timestamp - (
-            np.arange(self.gripper_obs_horizon)[::-1]
-            * self.gripper_down_sample_steps
-            * dt
+            np.arange(self.gripper_obs_horizon)[::-1] * self.gripper_down_sample_steps * dt
         )
         for robot_idx, last_gripper_data in enumerate(last_grippers_data):
             # align gripper obs
@@ -479,11 +454,7 @@ class BimanualUmiEnv:
                 t=last_gripper_data["gripper_timestamp"],
                 x=last_gripper_data["gripper_position"][..., None],
             )
-            gripper_obs = {
-                f"robot{robot_idx}_gripper_width": gripper_interpolator(
-                    gripper_obs_timestamps
-                )
-            }
+            gripper_obs = {f"robot{robot_idx}_gripper_width": gripper_interpolator(gripper_obs_timestamps)}
 
             # update obs_data
             obs_data.update(gripper_obs)
@@ -502,19 +473,13 @@ class BimanualUmiEnv:
 
             for robot_idx, last_gripper_data in enumerate(last_grippers_data):
                 self.obs_accumulator.put(
-                    data={
-                        f"robot{robot_idx}_gripper_width": last_gripper_data[
-                            "gripper_position"
-                        ][..., None]
-                    },
+                    data={f"robot{robot_idx}_gripper_width": last_gripper_data["gripper_position"][..., None]},
                     timestamps=last_gripper_data["gripper_timestamp"],
                 )
 
         return obs_data
 
-    def exec_actions(
-        self, actions: np.ndarray, timestamps: np.ndarray, compensate_latency=False
-    ):
+    def exec_actions(self, actions: np.ndarray, timestamps: np.ndarray, compensate_latency=False):
         assert self.is_ready
         if not isinstance(actions, np.ndarray):
             actions = np.array(actions)
@@ -533,20 +498,14 @@ class BimanualUmiEnv:
         # schedule waypoints
         for i in range(len(new_actions)):
             for robot_idx, (robot, gripper, rc, gc) in enumerate(
-                zip(
-                    self.robots, self.grippers, self.robots_config, self.grippers_config
-                )
+                zip(self.robots, self.grippers, self.robots_config, self.grippers_config)
             ):
                 r_latency = rc["robot_action_latency"] if compensate_latency else 0.0
                 g_latency = gc["gripper_action_latency"] if compensate_latency else 0.0
                 r_actions = new_actions[i, 7 * robot_idx + 0 : 7 * robot_idx + 6]
                 g_actions = new_actions[i, 7 * robot_idx + 6]
-                robot.schedule_waypoint(
-                    pose=r_actions, target_time=new_timestamps[i] - r_latency
-                )
-                gripper.schedule_waypoint(
-                    pos=g_actions, target_time=new_timestamps[i] - g_latency
-                )
+                robot.schedule_waypoint(pose=r_actions, target_time=new_timestamps[i] - r_latency)
+                gripper.schedule_waypoint(pos=g_actions, target_time=new_timestamps[i] - g_latency)
 
         # record actions
         if self.action_accumulator is not None:
@@ -582,9 +541,7 @@ class BimanualUmiEnv:
 
         # create accumulators
         self.obs_accumulator = ObsAccumulator()
-        self.action_accumulator = TimestampActionAccumulator(
-            start_time=start_time, dt=1 / self.frequency
-        )
+        self.action_accumulator = TimestampActionAccumulator(start_time=start_time, dt=1 / self.frequency)
         print(f"Episode {episode_id} started!")
 
     def end_episode(self):
@@ -611,10 +568,7 @@ class BimanualUmiEnv:
             action_timestamps = self.action_accumulator.timestamps
             n_steps = 0
             if np.sum(self.action_accumulator.timestamps <= end_time) > 0:
-                n_steps = (
-                    np.nonzero(self.action_accumulator.timestamps <= end_time)[0][-1]
-                    + 1
-                )
+                n_steps = np.nonzero(self.action_accumulator.timestamps <= end_time)[0][-1] + 1
 
             if n_steps > 0:
                 timestamps = action_timestamps[:n_steps]
@@ -624,58 +578,28 @@ class BimanualUmiEnv:
                 }
                 for robot_idx in range(len(self.robots)):
                     robot_pose_interpolator = PoseInterpolator(
-                        t=np.array(
-                            self.obs_accumulator.timestamps[
-                                f"robot{robot_idx}_eef_pose"
-                            ]
-                        ),
-                        x=np.array(
-                            self.obs_accumulator.data[f"robot{robot_idx}_eef_pose"]
-                        ),
+                        t=np.array(self.obs_accumulator.timestamps[f"robot{robot_idx}_eef_pose"]),
+                        x=np.array(self.obs_accumulator.data[f"robot{robot_idx}_eef_pose"]),
                     )
                     robot_pose = robot_pose_interpolator(timestamps)
                     episode[f"robot{robot_idx}_eef_pos"] = robot_pose[:, :3]
                     episode[f"robot{robot_idx}_eef_rot_axis_angle"] = robot_pose[:, 3:]
                     joint_pos_interpolator = get_interp1d(
-                        np.array(
-                            self.obs_accumulator.timestamps[
-                                f"robot{robot_idx}_joint_pos"
-                            ]
-                        ),
-                        np.array(
-                            self.obs_accumulator.data[f"robot{robot_idx}_joint_pos"]
-                        ),
+                        np.array(self.obs_accumulator.timestamps[f"robot{robot_idx}_joint_pos"]),
+                        np.array(self.obs_accumulator.data[f"robot{robot_idx}_joint_pos"]),
                     )
                     joint_vel_interpolator = get_interp1d(
-                        np.array(
-                            self.obs_accumulator.timestamps[
-                                f"robot{robot_idx}_joint_vel"
-                            ]
-                        ),
-                        np.array(
-                            self.obs_accumulator.data[f"robot{robot_idx}_joint_vel"]
-                        ),
+                        np.array(self.obs_accumulator.timestamps[f"robot{robot_idx}_joint_vel"]),
+                        np.array(self.obs_accumulator.data[f"robot{robot_idx}_joint_vel"]),
                     )
-                    episode[f"robot{robot_idx}_joint_pos"] = joint_pos_interpolator(
-                        timestamps
-                    )
-                    episode[f"robot{robot_idx}_joint_vel"] = joint_vel_interpolator(
-                        timestamps
-                    )
+                    episode[f"robot{robot_idx}_joint_pos"] = joint_pos_interpolator(timestamps)
+                    episode[f"robot{robot_idx}_joint_vel"] = joint_vel_interpolator(timestamps)
 
                     gripper_interpolator = get_interp1d(
-                        t=np.array(
-                            self.obs_accumulator.timestamps[
-                                f"robot{robot_idx}_gripper_width"
-                            ]
-                        ),
-                        x=np.array(
-                            self.obs_accumulator.data[f"robot{robot_idx}_gripper_width"]
-                        ),
+                        t=np.array(self.obs_accumulator.timestamps[f"robot{robot_idx}_gripper_width"]),
+                        x=np.array(self.obs_accumulator.data[f"robot{robot_idx}_gripper_width"]),
                     )
-                    episode[f"robot{robot_idx}_gripper_width"] = gripper_interpolator(
-                        timestamps
-                    )
+                    episode[f"robot{robot_idx}_gripper_width"] = gripper_interpolator(timestamps)
 
                 self.replay_buffer.add_episode(episode, compressors="disk")
                 episode_id = self.replay_buffer.n_episodes - 1

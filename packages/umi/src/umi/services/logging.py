@@ -27,9 +27,7 @@ class LoggingService(BaseService):
         console_handler.setLevel(getattr(logging, log_level.upper()))
 
         # JSON formatter
-        formatter = logging.Formatter(
-            "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-        )
+        formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
         file_handler.setFormatter(formatter)
         console_handler.setFormatter(formatter)
 
@@ -77,6 +75,4 @@ class LoggingService(BaseService):
 
     def log_stage_error(self, stage_name: str, error: str, **kwargs):
         """Log stage error."""
-        self.error(
-            f"Error in stage: {stage_name}", stage=stage_name, error=error, **kwargs
-        )
+        self.error(f"Error in stage: {stage_name}", stage=stage_name, error=error, **kwargs)

@@ -125,20 +125,14 @@ class VideoRecorder(mp.Process):
         self.join()
 
     def is_ready(self):
-        return (
-            (self.start_time is not None)
-            and (self.ready_event.is_set())
-            and (not self.stop_event.is_set())
-        )
+        return (self.start_time is not None) and (self.ready_event.is_set()) and (not self.stop_event.is_set())
 
     def start_recording(self, video_path: str, start_time: float = -1):
         path_len = len(video_path.encode("utf-8"))
         if path_len > self.MAX_PATH_LENGTH:
             raise RuntimeError("video_path too long.")
         self.start_time = start_time
-        self.cmd_queue.put(
-            {"cmd": self.Command.START_RECORDING.value, "video_path": video_path}
-        )
+        self.cmd_queue.put({"cmd": self.Command.START_RECORDING.value, "video_path": video_path})
 
     def stop_recording(self):
         self.cmd_queue.put({"cmd": self.Command.STOP_RECORDING.value})
@@ -150,14 +144,12 @@ class VideoRecorder(mp.Process):
 
         n_repeats = 1
         if (not self.no_repeat) and (self.start_time is not None):
-            local_idxs, global_idxs, self.next_global_idx = (
-                get_accumulate_timestamp_idxs(
-                    # only one timestamp
-                    timestamps=[frame_time],
-                    start_time=self.start_time,
-                    dt=1 / self.fps,
-                    next_global_idx=self.next_global_idx,
-                )
+            local_idxs, global_idxs, self.next_global_idx = get_accumulate_timestamp_idxs(
+                # only one timestamp
+                timestamps=[frame_time],
+                start_time=self.start_time,
+                dt=1 / self.fps,
+                next_global_idx=self.next_global_idx,
             )
             # number of apperance means repeats
             n_repeats = len(local_idxs)
@@ -183,14 +175,12 @@ class VideoRecorder(mp.Process):
 
         n_repeats = 1
         if (not self.no_repeat) and (self.start_time is not None):
-            local_idxs, global_idxs, self.next_global_idx = (
-                get_accumulate_timestamp_idxs(
-                    # only one timestamp
-                    timestamps=[frame_time],
-                    start_time=self.start_time,
-                    dt=1 / self.fps,
-                    next_global_idx=self.next_global_idx,
-                )
+            local_idxs, global_idxs, self.next_global_idx = get_accumulate_timestamp_idxs(
+                # only one timestamp
+                timestamps=[frame_time],
+                start_time=self.start_time,
+                dt=1 / self.fps,
+                next_global_idx=self.next_global_idx,
             )
             # number of apperance means repeats
             n_repeats = len(local_idxs)
@@ -252,9 +242,7 @@ class VideoRecorder(mp.Process):
                         with self.img_queue.get_view() as data:
                             img = data["img"]
                             repeat = data["repeat"]
-                            frame = av.VideoFrame.from_ndarray(
-                                img, format=self.input_pix_fmt
-                            )
+                            frame = av.VideoFrame.from_ndarray(img, format=self.input_pix_fmt)
                         for _ in range(repeat):
                             for packet in stream.encode(frame):
                                 container.mux(packet)
@@ -267,9 +255,7 @@ class VideoRecorder(mp.Process):
                         with self.img_queue.get_view() as data:
                             img = data["img"]
                             repeat = data["repeat"]
-                            frame = av.VideoFrame.from_ndarray(
-                                img, format=self.input_pix_fmt
-                            )
+                            frame = av.VideoFrame.from_ndarray(img, format=self.input_pix_fmt)
                         for _ in range(repeat):
                             for packet in stream.encode(frame):
                                 container.mux(packet)

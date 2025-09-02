@@ -41,9 +41,7 @@ class CalibrationService(BaseService):
         csv_path = mapping_dir / "camera_trajectory.csv"
         if not csv_path.is_file():
             csv_path = mapping_dir / "mapping_camera_trajectory.csv"
-            logger.info(
-                "camera_trajectory.csv not found! using mapping_camera_trajectory.csv"
-            )
+            logger.info("camera_trajectory.csv not found! using mapping_camera_trajectory.csv")
         assert csv_path.is_file()
         df = pd.read_csv(csv_path)
         tag_detection_results = pickle.load(open(tag_path, "rb"))
@@ -84,9 +82,7 @@ class CalibrationService(BaseService):
             corners = tag["corners"]
             tag_center_pix = corners.mean(axis=0)
             img_center = np.array([2704, 2028], dtype=np.float32) / 2
-            dist_to_center = (
-                np.linalg.norm(tag_center_pix - img_center) / img_center[1]
-            )
+            dist_to_center = np.linalg.norm(tag_center_pix - img_center) / img_center[1]
 
             if dist_to_center > self.dist_to_center_threshold:
                 continue
@@ -106,9 +102,7 @@ class CalibrationService(BaseService):
         dists = np.linalg.norm(all_tx_slam_tag[is_valid][:, :3, 3] - mean, axis=(-1))
         nn_idx = np.argmin(dists)
         tx_slam_tag = all_tx_slam_tag[is_valid][nn_idx]
-        logger.info(
-            f"Tag detection standard deviation (cm) < 0.9 quantile: {std * 100}"
-        )
+        logger.info(f"Tag detection standard deviation (cm) < 0.9 quantile: {std * 100}")
         result = {"tx_slam_tag": tx_slam_tag.tolist()}
         json.dump(result, open(slam_tag_path, "w"), indent=2)
         logger.info(f"Saved result to {slam_tag_path}")
