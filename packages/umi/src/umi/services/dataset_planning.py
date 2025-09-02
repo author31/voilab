@@ -273,50 +273,49 @@ class DatasetPlanningService(BaseService):
                         gripper_vid_idxs.append(vid_idx)
                         vid_dir = row["video_dir"]
                         csv_path = vid_dir / "camera_trajectory.csv"
-                        if not csv_path.is_file():
-                            break
-                        else:
-                            csv_df = pd.read_csv(csv_path)
-                            if csv_df["is_lost"].sum() > 10:
-                                break
-                            else:
-                                if (~csv_df["is_lost"]).sum() < 60:
-                                    break
-                                else:
-                                    df = csv_df.loc[~csv_df["is_lost"]]
-                                    pose_interp = self.pose_interp_from_df(
-                                        df,
-                                        start_timestamp=row["start_timestamp"],
-                                        tx_base_slam=tx_tag_slam,
-                                    )
-                                    pose_interps.append(pose_interp)
+
+                        if not csv_path.is_file(): break
+
+                        csv_df = pd.read_csv(csv_path)
+
+                        if csv_df["is_lost"].sum() > 10: break
+
+                        if (~csv_df["is_lost"]).sum() < 60: break
+
+                        df = csv_df.loc[~csv_df["is_lost"]]
+                        pose_interp = self.pose_interp_from_df(
+                            df,
+                            start_timestamp=row["start_timestamp"],
+                            tx_base_slam=tx_tag_slam,
+                        )
+                        pose_interps.append(pose_interp)
+
                 if len(pose_interps) != n_gripper_cams:
                     logger.info(f"Excluded demo {demo_idx} from left/right disambiguation.")
                     continue
-                else:
-                    n_samples = 100
-                    t_samples = np.linspace(start_timestamp, end_timestamp, n_samples)
-                    pose_samples = [pose_to_mat(interp(t_samples)) for interp in pose_interps]
-                    x_proj_avg = []
-                    for i in range(len(pose_samples)):
-                        this_proj_avg = []
-                        for j in range(len(pose_samples)):
-                            this_proj_avg.append(
-                                np.mean(
-                                    self.get_x_projection(
-                                        tx_tag_this=pose_samples[i],
-                                        tx_tag_other=pose_samples[j],
-                                    )
+                n_samples = 100
+                t_samples = np.linspace(start_timestamp, end_timestamp, n_samples)
+                pose_samples = [pose_to_mat(interp(t_samples)) for interp in pose_interps]
+                x_proj_avg = []
+                for i in range(len(pose_samples)):
+                    this_proj_avg = []
+                    for j in range(len(pose_samples)):
+                        this_proj_avg.append(
+                            np.mean(
+                                self.get_x_projection(
+                                    tx_tag_this=pose_samples[i],
+                                    tx_tag_other=pose_samples[j],
                                 )
                             )
-                        this_proj_avg = np.mean(this_proj_avg)
-                        x_proj_avg.append(this_proj_avg)
-                    camera_right_to_left_idxs = np.argsort(x_proj_avg)
-                    for vid_idx, cam_serial, cam_right_idx in zip(
-                        gripper_vid_idxs, cam_serials, camera_right_to_left_idxs
-                    ):
-                        cam_serial_right_to_left_idx_map[cam_serial].append(cam_right_idx)
-                        vid_idx_cam_idx_map[vid_idx] = cam_right_idx
+                        )
+                    this_proj_avg = np.mean(this_proj_avg)
+                    x_proj_avg.append(this_proj_avg)
+                camera_right_to_left_idxs = np.argsort(x_proj_avg)
+                for vid_idx, cam_serial, cam_right_idx in zip(
+                    gripper_vid_idxs, cam_serials, camera_right_to_left_idxs
+                ):
+                    cam_serial_right_to_left_idx_map[cam_serial].append(cam_right_idx)
+                    vid_idx_cam_idx_map[vid_idx] = cam_right_idx
             for cs, cis in cam_serial_right_to_left_idx_map.items():
                 count = collections.Counter(cis)
                 this_cam_idx = count.most_common(1)[0][0]
@@ -385,115 +384,108 @@ class DatasetPlanningService(BaseService):
                 for cam_idx, row in demo_video_meta_df.iterrows():
                     if cam_idx >= n_gripper_cams:
                         continue
+                    start_frame_idx = cam_start_frame_idxs[cam_idx]
+                    video_dir = row["video_dir"]
+                    check_path = video_dir / "check_result.txt"
+                    if check_path.is_file() and (not check_path.open("r").read().startswith("true")):
+                        logger.info(f"Skipping {video_dir.name}, manually filtered with check_result.txt!=true")
+                        continue
+                    csv_path = video_dir / "camera_trajectory.csv"
+                    if not csv_path.is_file():
+                        logger.info(f"Skipping {video_dir.name}, no camera_trajectory.csv.")
+                        dropped_camera_count[row["camera_serial"]] += 1
+                        continue
+                    csv_df = pd.read_csv(csv_path)
+                    df = csv_df.iloc[start_frame_idx : start_frame_idx + n_frames]
+                    is_tracked = (~df["is_lost"]).to_numpy()
+                    n_frames_lost = (~is_tracked).sum()
+                    if n_frames_lost > 10:
+                        logger.info(f"Skipping {video_dir.name}, {n_frames_lost} frames are lost.")
+                        dropped_camera_count[row["camera_serial"]] += 1
+                        continue
+                    n_frames_valid = is_tracked.sum()
+                    if n_frames_valid < 60:
+                        logger.info(
+                            f"Skipping {video_dir.name}, only {n_frames_valid} frames are valid."
+                        )
+                        dropped_camera_count[row["camera_serial"]] += 1
                     else:
-                        start_frame_idx = cam_start_frame_idxs[cam_idx]
-                        video_dir = row["video_dir"]
-                        check_path = video_dir / "check_result.txt"
-                        if check_path.is_file() and (not check_path.open("r").read().startswith("true")):
-                            logger.info(f"Skipping {video_dir.name}, manually filtered with check_result.txt!=true")
+                        df.loc[df["is_lost"], "q_w"] = 1
+                        cam_pos = df[["x", "y", "z"]].to_numpy()
+                        cam_rot_quat_xyzw = df[["q_x", "q_y", "q_z", "q_w"]].to_numpy()
+                        cam_rot = Rotation.from_quat(cam_rot_quat_xyzw)
+                        cam_pose = np.zeros((cam_pos.shape[0], 4, 4), dtype=np.float32)
+                        cam_pose[:, 3, 3] = 1
+                        cam_pose[:, :3, 3] = cam_pos
+                        cam_pose[:, :3, :3] = cam_rot.as_matrix()
+                        tx_slam_cam = cam_pose
+                        tx_tag_cam = tx_tag_slam @ tx_slam_cam
+                        is_step_valid = is_tracked.copy()
+                        pkl_path = video_dir / "tag_detection.pkl"
+                        if not pkl_path.is_file():
+                            logger.info(f"Skipping {video_dir.name}, no tag_detection.pkl.")
+                            dropped_camera_count[row["camera_serial"]] += 1
                             continue
+                        tag_detection_results = pickle.load(open(pkl_path, "rb"))
+                        tag_detection_results = tag_detection_results[
+                            start_frame_idx : start_frame_idx + n_frames
+                        ]
+                        video_timestamps = np.array([x["time"] for x in tag_detection_results])
+                        if len(df) != len(video_timestamps):
+                            logger.info(f"Skipping {video_dir.name}, video csv length mismatch.")
+                            continue
+                        ghi = row["gripper_hardware_id"]
+                        if ghi < 0:
+                            logger.info(
+                                f"Skipping {video_dir.name}, invalid gripper hardware id {ghi}"
+                            )
+                            dropped_camera_count[row["camera_serial"]] += 1
+                            continue
+                        left_id = 6 * ghi
+                        right_id = left_id + 1
+                        gripper_cal_interp = None
+                        if ghi in gripper_id_gripper_cal_map:
+                            gripper_cal_interp = gripper_id_gripper_cal_map[ghi]
                         else:
-                            csv_path = video_dir / "camera_trajectory.csv"
-                            if not csv_path.is_file():
-                                logger.info(f"Skipping {video_dir.name}, no camera_trajectory.csv.")
-                                dropped_camera_count[row["camera_serial"]] += 1
-                                continue
+                            if row["camera_serial"] in cam_serial_gripper_cal_map:
+                                gripper_cal_interp = cam_serial_gripper_cal_map[
+                                    row["camera_serial"]
+                                ]
+                                logger.info(
+                                    f"Gripper id {ghi} not found in gripper calibrations {list(gripper_id_gripper_cal_map.keys())}. Falling back to camera serial map."
+                                )
                             else:
-                                csv_df = pd.read_csv(csv_path)
-                                df = csv_df.iloc[start_frame_idx : start_frame_idx + n_frames]
-                                is_tracked = (~df["is_lost"]).to_numpy()
-                                n_frames_lost = (~is_tracked).sum()
-                                if n_frames_lost > 10:
-                                    logger.info(f"Skipping {video_dir.name}, {n_frames_lost} frames are lost.")
-                                    dropped_camera_count[row["camera_serial"]] += 1
-                                    continue
-                                else:
-                                    n_frames_valid = is_tracked.sum()
-                                    if n_frames_valid < 60:
-                                        logger.info(
-                                            f"Skipping {video_dir.name}, only {n_frames_valid} frames are valid."
-                                        )
-                                        dropped_camera_count[row["camera_serial"]] += 1
-                                    else:
-                                        df.loc[df["is_lost"], "q_w"] = 1
-                                        cam_pos = df[["x", "y", "z"]].to_numpy()
-                                        cam_rot_quat_xyzw = df[["q_x", "q_y", "q_z", "q_w"]].to_numpy()
-                                        cam_rot = Rotation.from_quat(cam_rot_quat_xyzw)
-                                        cam_pose = np.zeros((cam_pos.shape[0], 4, 4), dtype=np.float32)
-                                        cam_pose[:, 3, 3] = 1
-                                        cam_pose[:, :3, 3] = cam_pos
-                                        cam_pose[:, :3, :3] = cam_rot.as_matrix()
-                                        tx_slam_cam = cam_pose
-                                        tx_tag_cam = tx_tag_slam @ tx_slam_cam
-                                        is_step_valid = is_tracked.copy()
-                                        pkl_path = video_dir / "tag_detection.pkl"
-                                        if not pkl_path.is_file():
-                                            logger.info(f"Skipping {video_dir.name}, no tag_detection.pkl.")
-                                            dropped_camera_count[row["camera_serial"]] += 1
-                                            continue
-                                        else:
-                                            tag_detection_results = pickle.load(open(pkl_path, "rb"))
-                                            tag_detection_results = tag_detection_results[
-                                                start_frame_idx : start_frame_idx + n_frames
-                                            ]
-                                            video_timestamps = np.array([x["time"] for x in tag_detection_results])
-                                            if len(df) != len(video_timestamps):
-                                                logger.info(f"Skipping {video_dir.name}, video csv length mismatch.")
-                                                continue
-                                            else:
-                                                ghi = row["gripper_hardware_id"]
-                                                if ghi < 0:
-                                                    logger.info(
-                                                        f"Skipping {video_dir.name}, invalid gripper hardware id {ghi}"
-                                                    )
-                                                    dropped_camera_count[row["camera_serial"]] += 1
-                                                    continue
-                                                else:
-                                                    left_id = 6 * ghi
-                                                    right_id = left_id + 1
-                                                    gripper_cal_interp = None
-                                                    if ghi in gripper_id_gripper_cal_map:
-                                                        gripper_cal_interp = gripper_id_gripper_cal_map[ghi]
-                                                    else:
-                                                        if row["camera_serial"] in cam_serial_gripper_cal_map:
-                                                            gripper_cal_interp = cam_serial_gripper_cal_map[
-                                                                row["camera_serial"]
-                                                            ]
-                                                            logger.info(
-                                                                f"Gripper id {ghi} not found in gripper calibrations {list(gripper_id_gripper_cal_map.keys())}. Falling back to camera serial map."
-                                                            )
-                                                        else:
-                                                            raise RuntimeError("Gripper calibration not found.")
-                                                    gripper_timestamps = []
-                                                    gripper_widths = []
-                                                    for td in tag_detection_results:
-                                                        width = get_gripper_width(
-                                                            td["tag_dict"],
-                                                            left_id=left_id,
-                                                            right_id=right_id,
-                                                            nominal_z=self.nominal_z,
-                                                        )
-                                                        if width is not None:
-                                                            gripper_timestamps.append(td["time"])
-                                                            gripper_widths.append(gripper_cal_interp(width))
-                                                    gripper_interp = get_interp1d(
-                                                        gripper_timestamps,
-                                                        gripper_widths,
-                                                    )
-                                                    gripper_det_ratio = len(gripper_widths) / len(tag_detection_results)
-                                                    if gripper_det_ratio < 0.9:
-                                                        logger.info(
-                                                            f"Warining: {video_dir.name} only {gripper_det_ratio} of gripper tags detected."
-                                                        )
-                                                    this_gripper_widths = gripper_interp(video_timestamps)
-                                                    tx_tag_tcp = tx_tag_cam @ tx_cam_tcp
-                                                    pose_tag_tcp = mat_to_pose(tx_tag_tcp)
-                                                    assert len(pose_tag_tcp) == n_frames
-                                                    assert len(this_gripper_widths) == n_frames
-                                                    assert len(is_step_valid) == n_frames
-                                                    all_cam_poses.append(pose_tag_tcp)
-                                                    all_gripper_widths.append(this_gripper_widths)
-                                                    all_is_valid.append(is_step_valid)
+                                raise RuntimeError("Gripper calibration not found.")
+                        gripper_timestamps = []
+                        gripper_widths = []
+                        for td in tag_detection_results:
+                            width = get_gripper_width(
+                                td["tag_dict"],
+                                left_id=left_id,
+                                right_id=right_id,
+                                nominal_z=self.nominal_z,
+                            )
+                            if width is not None:
+                                gripper_timestamps.append(td["time"])
+                                gripper_widths.append(gripper_cal_interp(width))
+                        gripper_interp = get_interp1d(
+                            gripper_timestamps,
+                            gripper_widths,
+                        )
+                        gripper_det_ratio = len(gripper_widths) / len(tag_detection_results)
+                        if gripper_det_ratio < 0.9:
+                            logger.info(
+                                f"Warining: {video_dir.name} only {gripper_det_ratio} of gripper tags detected."
+                            )
+                        this_gripper_widths = gripper_interp(video_timestamps)
+                        tx_tag_tcp = tx_tag_cam @ tx_cam_tcp
+                        pose_tag_tcp = mat_to_pose(tx_tag_tcp)
+                        assert len(pose_tag_tcp) == n_frames
+                        assert len(this_gripper_widths) == n_frames
+                        assert len(is_step_valid) == n_frames
+                        all_cam_poses.append(pose_tag_tcp)
+                        all_gripper_widths.append(this_gripper_widths)
+                        all_is_valid.append(is_step_valid)
                 if len(all_cam_poses) != n_gripper_cams:
                     logger.info(f"Skipped demo {demo_idx}.")
                     n_dropped_demos += 1

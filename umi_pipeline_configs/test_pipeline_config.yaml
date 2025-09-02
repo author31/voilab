@@ -42,8 +42,9 @@
     tag_id: 13
     dist_to_center_threshold: 0.6
 
+
 06_generate_dataset_plan:
   instance: "umi.services.dataset_planning.DatasetPlanningService"
   inherit_config: true
   config:
-    nominal_z: 0.7
+    nominal_z: 0.072
