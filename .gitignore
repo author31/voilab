@@ -212,3 +212,7 @@ __marimo__/
 
 # mimic_core runtime dir
 outputs/*
+
+*.zarr.zip
+*.pkl
+*.mp4
