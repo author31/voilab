@@ -58,9 +58,7 @@ class ReplayBufferService(BaseService):
         out_res = [int(x) for x in self.output_resolution]
 
 
-        # what does this mean?
-        # FOV: field of view
-        # is fisheye needed?
+        # this process is take a distorted, "warped" image from a fisheye lens and convert it into an image taken by normal lenses
         fisheye_converter = None
         if self.output_fov is not None and self.output_fov_intrinsic_path is not None:
             opencv_intr_dict = parse_fisheye_intrinsics(
@@ -293,6 +291,7 @@ class ReplayBufferService(BaseService):
                     
                     if (frame_idx + 1) == tasks[curr_task_idx]['frame_end']:
                         curr_task_idx += 1
+
 
                 else:
                     raise RuntimeError("Invalid frames")
