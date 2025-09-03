@@ -34,11 +34,9 @@ class SLAMMappingService(BaseService):
     def execute(self) -> dict:
         if self.slam_process_mode == CREATE_MAP_MODE:
             return self.execute_create_map_slam()
-        else:
-            if self.slam_process_mode == BATCH_SLAM_MODE:
-                return self.execute_slam_batch()
-            else:
-                raise ValueError(f"Unknown mode, only accepts: {CREATE_MAP_MODE}, {BATCH_SLAM_MODE}")
+        elif self.slam_process_mode == BATCH_SLAM_MODE:
+            return self.execute_slam_batch()
+        raise ValueError(f"Unknown mode, only accepts: {CREATE_MAP_MODE}, {BATCH_SLAM_MODE}")
 
     def execute_create_map_slam(self) -> dict:
         assert self.session_dir, "Missing session_dir from the configuration"
@@ -46,6 +44,7 @@ class SLAMMappingService(BaseService):
         input_path = Path(self.session_dir) / "demos/mapping"
         for fn in ["raw_video.mp4", "imu_data.json"]:
             assert (input_path / fn).exists()
+
         map_path = input_path / "map_atlas.osa"
         if map_path.exists() and (not self.force):
             msg = "map_atlas exists, skipping. set 'force' to True to force re-run if needed."
