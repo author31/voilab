@@ -7,7 +7,6 @@
 01_extract_gopro_imu:
   instance: "umi.services.imu_extraction.IMUExtractionService"
   config:
-    num_workers: null
     stream_types: ["ACCL", "GYRO", "GPS5", "GPSP", "GPSU", "GPSF", "GRAV", "MAGN", "CORI", "IORI", "TMPC"]
 
 02_create_map:
@@ -42,9 +41,21 @@
     tag_id: 13
     dist_to_center_threshold: 0.6
 
-
 06_generate_dataset_plan:
   instance: "umi.services.dataset_planning.DatasetPlanningService"
   inherit_config: true
   config:
+    dataset_plan_filename: dataset_plan.pkl
     nominal_z: 0.072
+
+07_generate_replay_buffer:
+  instance: "umi.services.replay_buffer.ReplayBufferService"
+  inherit_config: true
+  config:
+    output_filename: dataset.zarr.zip
+    output_resolution: [256, 256]
+    output_fov: null
+    output_fov_intrinsic_path: null
+    compression_level: 99
+    no_mirror: false
+    mirror_swap: false

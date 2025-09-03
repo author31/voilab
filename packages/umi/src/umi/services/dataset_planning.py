@@ -33,7 +33,7 @@ class DatasetPlanningService(BaseService):
         self.nominal_z = self.config.get("nominal_z", 0.0)
         self.min_episode_length = self.config.get("min_episode_length", 10)
         self.ignore_cameras = self.config.get("ignore_cameras")
-        self.output_file = self.config.get("output_file", "dataset.pkl")
+        self.dataset_plan_filename = self.config.get("dataset_plan_filename", "dataset.pkl")
 
     def execute(self) -> dict:
         """
@@ -44,7 +44,7 @@ class DatasetPlanningService(BaseService):
         assert self.session_dir, "Missing session_dir from the configuration file"
         input_path = Path(self.session_dir)
         demos_dir = input_path / "demos"
-        dest = input_path / self.output_file
+        output_path = input_path / self.dataset_plan_filename
         cam_to_center_height = 0.086
         cam_to_mount_offset = 0.01465
         cam_to_tip_offset = cam_to_mount_offset + self.tcp_offset
@@ -555,9 +555,9 @@ class DatasetPlanningService(BaseService):
             logger.info(f"{int(used_ratio * 100)}% of raw data are used.")
             logger.info(dropped_camera_count)
             logger.info("n_dropped_demos", n_dropped_demos)
-            pickle.dump(all_plans, dest.open("wb"))
+            pickle.dump(all_plans, output_path.open("wb"))
             return {
-                "plan_file": str(dest),
+                "plan_file": str(output_path),
                 "total_episodes": len(all_plans),
                 "total_frames": sum((len(ep.get("episode_timestamps", [])) for ep in all_plans)),
                 "plan": all_plans,
