@@ -129,7 +129,8 @@ class CalibrationService(BaseService):
 
             corners = tag["corners"]
             tag_center_pix = corners.mean(axis=0)
-            img_center = np.array([2704, 2028], dtype=np.float32) / 2
+            # img_center = np.array([2704, 2028], dtype=np.float32) / 2 #this resolution is fixed?
+            img_center = np.array([4000, 3000], dtype=np.float32) / 2 #this resolution is fixed?
             dist_to_center = np.linalg.norm(tag_center_pix - img_center) / img_center[1]
 
             if dist_to_center > self.dist_to_center_threshold:

@@ -1,8 +1,10 @@
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
-from ipywidgets import interact, IntSlider, Layout, VBox, HTML, Output
+from ipywidgets import interact, IntSlider, Layout, VBox, HTML, Output, Text, Checkbox, Button, HBox, Image
 from pathlib import Path
+import io
+import base64
 
 from ..utils.aruco_detection_loader import ArUcoDetectionLoader
 
@@ -79,68 +81,157 @@ def show(directory_path: str, figsize=(8, 6), dpi=100):
         figsize: Figure size as (width, height) in inches
         dpi: Dots per inch for display
     """
+    # UI Controls
+    camera_intrinsics_widget = Text(
+        value="",
+        placeholder="Path to camera intrinsics JSON file",
+        description="Camera Intrinsics:",
+        layout=Layout(width="500px")
+    )
+    
+    aruco_config_widget = Text(
+        value="",
+        placeholder="Path to ArUco config YAML file",
+        description="ArUco Config:",
+        layout=Layout(width="500px")
+    )
+    
+    undistort_checkbox = Checkbox(
+        value=False,
+        description="Show undistorted image"
+    )
+    
+    rerun_checkbox = Checkbox(
+        value=False,
+        description="Re-run detection"
+    )
+    
+    load_params_button = Button(
+        description="Load Parameters",
+        button_style="info"
+    )
+    
+    # Initialize loader
     loader = ArUcoDetectionLoader(directory_path)
-    stats = loader.get_detections_stats()
     
-    print(f"Loaded {loader.total_frames} frames")
-    print(f"Detection rate: {stats['detection_rate']:.2%}")
-    print(f"Unique marker IDs: {stats['unique_marker_ids']}")
+    # Create output widget for image display and status
+    image_widget = Image(
+        format='jpeg',
+        width=figsize[0] * dpi,
+        height=figsize[1] * dpi
+    )
     
-    # Create output widget for image display
-    output = Output()
+    info_widget = HTML()
+    status_output = Output()
+    
+    def load_parameters(_):
+        """Load camera intrinsics and ArUco config."""
+        with status_output:
+            status_output.clear_output()
+            try:
+                camera_path = camera_intrinsics_widget.value.strip()
+                aruco_path = aruco_config_widget.value.strip()
+                
+                # Create new loader with parameters
+                new_loader = ArUcoDetectionLoader(
+                    directory_path, 
+                    camera_intrinsics_path=camera_path if camera_path else None,
+                    aruco_config_path=aruco_path if aruco_path else None
+                )
+                
+                # Update the loader reference
+                nonlocal loader
+                loader = new_loader
+                
+                print("✓ Parameters loaded successfully")
+                if camera_path:
+                    print(f"  Camera intrinsics: {camera_path}")
+                if aruco_path:
+                    print(f"  ArUco config: {aruco_path}")
+                    
+            except Exception as e:
+                print(f"✗ Error loading parameters: {e}")
+    
+    load_params_button.on_click(load_parameters)
     
     def plot_frame(frame_idx):
         """Plot video frame with ArUco detections."""
-        img = loader.get_frame(frame_idx)
-        detection = loader.get_detection(frame_idx)
-        
-        fig = plt.figure(figsize=figsize, dpi=dpi)
-        
-        if detection and detection.get('tag_dict'):
-            # Draw markers on the image
-            img_with_markers = draw_aruco_markers(img, detection['tag_dict'])
-            plt.imshow(img_with_markers)
+        try:
+            # Get frame with optional undistortion
+            img = loader.get_frame(frame_idx, undistorted=undistort_checkbox.value)
             
-            # Create info text
-            tag_dict = detection['tag_dict']
-            info_lines = [
-                f"Frame: {frame_idx} | Time: {detection['time']:.3f}s",
-                f"Detected markers: {len(tag_dict)}",
-                ""
-            ]
+            # Get detection with optional re-run
+            detection = loader.get_detection(frame_idx, rerun=rerun_checkbox.value)
             
-            for tag_id, tag_data in tag_dict.items():
-                rvec = tag_data.get('rvec', np.zeros(3))
-                tvec = tag_data.get('tvec', np.zeros(3))
-                info_lines.extend([
-                    f"Marker {tag_id}:",
-                    f"  Position: ({tvec[0]:.3f}, {tvec[1]:.3f}, {tvec[2]:.3f})",
-                    f"  Rotation: ({rvec[0]:.3f}, {rvec[1]:.3f}, {rvec[2]:.3f})"
-                ])
+            if detection and detection.get('tag_dict'):
+                # Draw markers on the image
+                img_with_markers = draw_aruco_markers(img, detection['tag_dict'])
+                
+                # Create info text
+                tag_dict = detection['tag_dict']
+                mode_info = []
+                if undistort_checkbox.value:
+                    mode_info.append("Undistorted")
+                if rerun_checkbox.value:
+                    mode_info.append("Re-run Detection")
+                
+                info_lines = [
+                    f"Frame: {frame_idx} | Time: {detection['time']:.3f}s",
+                    f"Detected markers: {len(tag_dict)}",
+                ]
+                
+                if mode_info:
+                    info_lines.append(f"Mode: {', '.join(mode_info)}")
+                
+                info_lines.append("")
+                
+                for tag_id, tag_data in tag_dict.items():
+                    rvec = tag_data.get('rvec', np.zeros(3))
+                    tvec = tag_data.get('tvec', np.zeros(3))
+                    info_lines.extend([
+                        f"Marker {tag_id}:",
+                        f"  Position: ({tvec[0]:.3f}, {tvec[1]:.3f}, {tvec[2]:.3f})",
+                        f"  Rotation: ({rvec[0]:.3f}, {rvec[1]:.3f}, {rvec[2]:.3f})"
+                    ])
+                
+                info_text = '<br>'.join(info_lines)
+                info_widget.value = f'<pre style="background-color: wheat; padding: 10px; border-radius: 5px;">{info_text}</pre>'
+                
+                # Convert image to JPEG and display
+                _, buffer = cv2.imencode('.jpg', img_with_markers)
+                image_widget.value = buffer.tobytes()
+                
+            else:
+                mode_info = []
+                if undistort_checkbox.value:
+                    mode_info.append("Undistorted")
+                if rerun_checkbox.value:
+                    mode_info.append("Re-run Detection")
+                
+                frame_text = f"Frame: {frame_idx}"
+                if mode_info:
+                    frame_text += f" ({', '.join(mode_info)})"
+                frame_text += "\nNo markers detected"
+                
+                info_widget.value = f'<pre style="background-color: lightcoral; padding: 10px; border-radius: 5px;">{frame_text}</pre>'
+                
+                # Convert image to JPEG and display
+                _, buffer = cv2.imencode('.jpg', img)
+                image_widget.value = buffer.tobytes()
             
-            info_text = '\n'.join(info_lines)
-            plt.figtext(0.02, 0.98, info_text, 
-                       fontsize=8, verticalalignment='top',
-                       bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
-        else:
-            plt.imshow(img)
-            plt.figtext(0.02, 0.98, f"Frame: {frame_idx}\nNo markers detected", 
-                       fontsize=10, verticalalignment='top',
-                       bbox=dict(boxstyle='round', facecolor='lightcoral', alpha=0.8))
-        
-        plt.axis('off')
-        plt.tight_layout()
-        
-        # Display in output widget
-        with output:
-            output.clear_output(wait=True)
-            plt.show()
-        
-        plt.close(fig)
+        except Exception as e:
+            info_widget.value = f'<pre style="color: red;">Error: {e}</pre>'
     
     def show_frame(frame_idx):
         frame_idx = min(frame_idx, loader.total_frames - 1)
         plot_frame(frame_idx)
+    
+    # Create UI layout
+    controls = VBox([
+        HBox([camera_intrinsics_widget, aruco_config_widget]),
+        HBox([undistort_checkbox, rerun_checkbox, load_params_button]),
+        status_output
+    ])
     
     # Create slider
     slider = IntSlider(
@@ -151,11 +242,21 @@ def show(directory_path: str, figsize=(8, 6), dpi=100):
     # Connect slider to update function
     slider.observe(lambda change: show_frame(change['new']), names='value')
     
+    # Connect checkboxes to update function
+    undistort_checkbox.observe(lambda change: show_frame(slider.value), names='value')
+    rerun_checkbox.observe(lambda change: show_frame(slider.value), names='value')
+    
     # Initial display
+    stats = loader.get_detections_stats()
+    with status_output:
+        print(f"Loaded {loader.total_frames} frames")
+        print(f"Detection rate: {stats['detection_rate']:.2%}")
+        print(f"Unique marker IDs: {stats['unique_marker_ids']}")
+    
     show_frame(0)
     
     # Display widgets
-    display(VBox([slider, output]))
+    display(VBox([controls, slider, image_widget, info_widget]))
 
 
 def show_batch(directory_path: str, frame_indices: list, subplot_size=(3, 2.5), dpi=100):

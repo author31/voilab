@@ -231,6 +231,7 @@ def get_gripper_width(tag_dict, left_id, right_id, nominal_z=0.072, z_tolerance=
         width = abs(left_x) * 2
     elif right_x is not None:
         width = abs(right_x) * 2
+
     return width
 
 
