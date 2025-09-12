@@ -22,6 +22,8 @@ dependencies = [
     "zarr>=2.16",
     "umi",
     "loguru>=0.7.3",
+    "viser>=1.0.8",
+    "yourdfpy>=0.0.58",
 ]
 
 
@@ -32,6 +34,8 @@ dev = [
     "notebook",
     "plotly>=6.3.0",
     "ruff>=0.12.11",
+    "kaleido>=1.0.0",
+    "anywidget>=0.9.18",
 ]
 
 [project.scripts]

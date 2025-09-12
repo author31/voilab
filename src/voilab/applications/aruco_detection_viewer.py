@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
-from ipywidgets import interact, IntSlider, Layout, VBox, HTML, Output, Text, Checkbox, Button, HBox, Image
+from ipywidgets import IntSlider, Layout, VBox, HTML, Output, Text, Checkbox, Button, HBox, Image
 from pathlib import Path
 import io
 import base64
@@ -198,7 +198,7 @@ def show(directory_path: str, figsize=(8, 6), dpi=100):
                 info_widget.value = f'<pre style="background-color: wheat; padding: 10px; border-radius: 5px;">{info_text}</pre>'
                 
                 # Convert image to JPEG and display
-                _, buffer = cv2.imencode('.jpg', img_with_markers)
+                _, buffer = cv2.imencode('.jpg', img_with_markers[:, :, ::-1])
                 image_widget.value = buffer.tobytes()
                 
             else:

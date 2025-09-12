@@ -216,3 +216,4 @@ outputs/*
 *.zarr.zip
 *.pkl
 *.mp4
+*.JPG

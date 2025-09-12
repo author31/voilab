@@ -31,13 +31,14 @@
   instance: "umi.services.aruco_detection.ArucoDetectionService"
   inherit_config: true
   config:
-    camera_intrinsics_path: "packages/umi/defaults/calibration/gopro_intrinsics_2_7k.json"
+    camera_intrinsics_path: "packages/umi/defaults/calibration/gopro13_intrinsics_2_7k.json"
     aruco_config_path: "packages/umi/defaults/calibration/aruco_config.yaml"
 
 05_run_calibrations:
   instance: "umi.services.calibration.CalibrationService"
   inherit_config: true
   config:
+    video_resolution: [4000, 3000]
     tag_id: 13
     dist_to_center_threshold: 0.1
     nominal_z: 0.01

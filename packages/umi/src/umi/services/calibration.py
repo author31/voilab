@@ -20,6 +20,7 @@ class CalibrationService(BaseService):
     def __init__(self, config: dict):
         super().__init__(config)
         self.session_dir = self.config.get("session_dir")
+        self.video_resolution = self.config.get("video_resolution")
         self.slam_tag_timeout = self.config.get("slam_tag_calibration_timeout", 300)
         self.gripper_range_timeout = self.config.get("gripper_range_timeout", 300)
         self.keyframe_only = self.config.get("keyframe_only", True)
@@ -64,6 +65,7 @@ class CalibrationService(BaseService):
             dict: SLAM tag calibration result
         """
         logger.info("Starting SLAM tag calibration")
+        assert self.video_resolution, "Missing video_resolution in configuration "
         
         input_path = Path(self.session_dir)
         demos_dir = input_path / "demos"
@@ -129,8 +131,7 @@ class CalibrationService(BaseService):
 
             corners = tag["corners"]
             tag_center_pix = corners.mean(axis=0)
-            # img_center = np.array([2704, 2028], dtype=np.float32) / 2 #this resolution is fixed?
-            img_center = np.array([4000, 3000], dtype=np.float32) / 2 #this resolution is fixed?
+            img_center = np.array(self.video_resolution, dtype=np.float32) / 2 #this resolution is fixed?
             dist_to_center = np.linalg.norm(tag_center_pix - img_center) / img_center[1]
 
             if dist_to_center > self.dist_to_center_threshold:
