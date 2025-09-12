@@ -36,6 +36,7 @@ dev = [
     "ruff>=0.12.11",
     "kaleido>=1.0.0",
     "anywidget>=0.9.18",
+    "jupyterlab-urdf",
 ]
 
 [project.scripts]
@@ -46,3 +47,4 @@ members = ["packages/*"]
 
 [tool.uv.sources]
 umi = { workspace = true }
+jupyterlab-urdf = { path = "deps/jupyterlab_urdf-0.6.0-py3-none-any.whl" }
