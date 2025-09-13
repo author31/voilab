@@ -2,6 +2,26 @@
 
 A lightweight visualization toolkit for exploring robotics datasets, built on Voila for interactive Jupyter-based applications.
 
+## Index Overview
+
+### UMI_README.md
+**packages/umi**
+
+The command:
+```bash
+umi run-slam-pipeline umi_pipeline_configs/gopro13_wide_angle_pipeline_config.yaml
+```
+
+The run config is located in `umi_pipeline_configs` with structure:
+- `umi_pipeline_configs/gopro13_wide_angle_pipeline_config.yaml`
+
+See (`packages/umi/pyproject.toml`)
+
+### Voilab_README.md
+See (`README.md`)
+
+**nbs/** - Visualization tools
+
 ## Getting Started
 
 ### Installation
