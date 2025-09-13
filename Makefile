@@ -15,8 +15,14 @@ install: install-uv
 	@uv sync
 	@echo "Dependencies installed successfully"
 
+.PHONY install-dev:
+install-dev: install-uv
+	@echo "Installing project dev dependencies using uv..."
+	@uv sync --extra dev
+	@echo "Dev dependencies installed successfully"
+
 .PHONY launch-jupyterlab:
-launch-jupyterlab: install-uv
+launch-jupyterlab: install-dev
 	@echo "Launching Jupyter Lab"
 	@uv run jupyter lab --ip 0.0.0.0 --port 8888 --no-browser
 	@echo "Jupyter Lab launched successfully"
