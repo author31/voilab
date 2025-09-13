@@ -63,6 +63,16 @@ The interactive visualization tools are built as Jupyter notebooks that can be r
       - Visualizes RGB camera streams.
       - Displays robot end-effector positions, orientations, and gripper states.
       - Supports both `.zarr.zip` and `.zarr` datasets.
+  ![Replay Buffer Viewer](./media/replay_buffer_viewer.gif)
+
+#### Example: ArUco Tag Viewer
+
+  - **Location**: `nbs/aruco_detection_viewer.ipynb`
+  - **Goal**: An interactive tool to detect and visualize ArUco markers in the camera data from a dataset. This is useful for validating marker detection quality, camera calibration, and pose estimation.
+  - **Features**:
+      - Interactive slider to navigate through time-series data.
+      - Performs ArUco marker detection on each image frame.
+  ![Replay Buffer Viewer](./media/aruco_tag_viewer.png)
 
 ### 3. Viewing Robot Models (Built-in URDF Viewer)
 
@@ -74,6 +84,8 @@ The JupyterLab environment comes with a built-in viewer for Universal Robot Desc
 2.  Double-click the file to open it in a new tab with an interactive 3D viewer.
 
 An example model for the Franka Emika Panda robot is provided in `assets/franka_panda`. You can test the viewer by opening `assets/franka_panda/franka_panda.urdf`.
+
+![URDF Viewer](./media/urdf_viewer.png)
 
 -----
 
