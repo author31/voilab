@@ -72,7 +72,7 @@ The interactive visualization tools are built as Jupyter notebooks that can be r
   - **Features**:
       - Interactive slider to navigate through time-series data.
       - Performs ArUco marker detection on each image frame.
-  ![Replay Buffer Viewer](./media/aruco_tag_viewer.png)
+  ![ArUco Tag Viewer](./media/aruco_tag_viewer.png)
 
 ### 3. Viewing Robot Models (Built-in URDF Viewer)
 
