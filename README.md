@@ -12,7 +12,7 @@ Voilab provides a set of tools to interactively view and debug robotics data. Th
 
 This repository contains several packages. For more detailed information on each, please refer to their respective README files:
 
-  - [`packages/umi`](https://www.google.com/search?q=./packages/umi/README.md): Tools and configurations for running SLAM pipelines with UMI datasets.
+  - [`packages/umi`](./UMI_README.md): Tools and configurations for running SLAM pipelines with UMI datasets.
 
 -----
 
