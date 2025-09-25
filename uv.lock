@@ -18,6 +18,7 @@ resolution-markers = [
 
 [manifest]
 members = [
+    "diffusion-policy",
     "umi",
     "voilab",
 ]
@@ -881,6 +882,11 @@ sdist = { url = "https://files.pythonhosted.org/packages/24/08/17dba70474c552779
 wheels = [
     { url = "https://files.pythonhosted.org/packages/74/17/f8bfb7ce78bd8190b691fba7f303df396d0cf5db7aa722528097654e6364/diffusers-0.18.2-py3-none-any.whl", hash = "sha256:81292697d97a8eb74f0ecef02968addf2c78f06e4f9998d6a9e45c4e52f587cd", size = 1248442, upload-time = "2023-07-11T17:20:44.65Z" },
 ]
+
+[[package]]
+name = "diffusion-policy"
+version = "0.1.0"
+source = { editable = "packages/diffusion_policy" }
 
 [[package]]
 name = "dill"
@@ -6136,6 +6142,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
+    { name = "diffusion-policy" },
     { name = "imagecodecs", version = "2025.3.30", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "imagecodecs", version = "2025.8.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "ipykernel" },
@@ -6169,6 +6176,7 @@ dev = [
 requires-dist = [
     { name = "anywidget", marker = "extra == 'dev'", specifier = ">=0.9.18" },
     { name = "click", specifier = ">=8.2.1" },
+    { name = "diffusion-policy", editable = "packages/diffusion_policy" },
     { name = "imagecodecs", specifier = ">=2023.9.18" },
     { name = "ipykernel", specifier = ">=6.30.1" },
     { name = "ipympl", marker = "extra == 'dev'" },
