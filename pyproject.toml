@@ -22,8 +22,7 @@ dependencies = [
     "zarr>=2.16",
     "umi",
     "loguru>=0.7.3",
-    "viser>=1.0.8",
-    "yourdfpy>=0.0.58",
+    "numcodecs==0.12.0",
 ]
 
 
