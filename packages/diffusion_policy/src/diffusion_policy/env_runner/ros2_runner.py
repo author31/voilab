@@ -1,12 +1,20 @@
-import os
+import copy
 import json
+import os
 import time
+from typing import Any, Dict, List, Optional
+
 import numpy as np
-from typing import Dict, List, Optional, Any
 import torch
-from diffusion_policy.policy.base_image_policy import BaseImagePolicy
+from loguru import logger
+
+from diffusion_policy.common.pose_repr_util import compute_relative_pose
+from diffusion_policy.common.pytorch_util import dict_apply
 from diffusion_policy.env_runner.base_image_runner import BaseImageRunner
-from diffusion_policy.environments.ros2_environment import ROS2Environment, ROS2EnvironmentFactory
+from diffusion_policy.environments.ros2_environment import ROS2Environment
+from diffusion_policy.model.common.rotation_transformer import \
+    RotationTransformer
+from diffusion_policy.policy.base_image_policy import BaseImagePolicy
 
 
 class ROS2Runner(BaseImageRunner):
@@ -20,70 +28,72 @@ class ROS2Runner(BaseImageRunner):
     - Results saving and logging
     """
 
-    def __init__(self,
-                 output_dir: str,
-                 n_episodes: int = 10,
-                 max_steps_per_episode: int = 200,
-                 real_world: bool = False,
-                 env_config: Optional[Dict] = None,
-                 save_video: bool = False,
-                 save_observation_data: bool = False):
+    def __init__(
+        self,
+        output_dir: str,
+        shape_meta: dict, 
+        n_episodes: int = 10,
+        max_steps_per_episode: int = 200,
+        save_video: bool = False,
+        save_observation_data: bool = False,
+        tqdm_interval_sec=5.0,
+        obs_latency_steps=0,
+        pose_repr: dict = {}
+    ):
         """
         Initialize ROS2 runner.
 
         Args:
-            output_dir: Directory to save results
-            n_episodes: Number of evaluation episodes
-            max_steps_per_episode: Maximum steps per episode
-            real_world: Whether to use real-world environment
-            env_config: Additional environment configuration
-            save_video: Whether to save video recordings
-            save_observation_data: Whether to save observation data
         """
         super().__init__(output_dir)
+        # Initialize environment
+        self.env = ROS2Environment()
+
         self.n_episodes = n_episodes
         self.max_steps_per_episode = max_steps_per_episode
-        self.real_world = real_world
-        self.env_config = env_config or {}
         self.save_video = save_video
         self.save_observation_data = save_observation_data
-
-        # Initialize environment
-        self.env = None
-        self._setup_environment()
+        self.tqdm_interval_sec = tqdm_interval_sec
+        self.obs_latency_steps = obs_latency_steps
+        self.shape_meta = shape_meta
+        self.pose_repr = pose_repr
 
         # Initialize results storage
         self.episode_results = []
         self.current_episode_data = []
-
-    def _setup_environment(self):
-        """Setup ROS2 environment with proper configuration."""
-        env_config = {
-            'real_world': self.real_world,
-            **self.env_config
-        }
-
-        # Create environment using factory
-        if 'robot_type' in env_config:
-            robot_type = env_config['robot_type']
-            if robot_type == 'franka':
-                self.env = ROS2EnvironmentFactory.create_franka_environment(
-                    real_world=self.real_world
+        self.rot_quat2mat = RotationTransformer(
+            from_rep='quaternion',
+            to_rep='matrix'
+        )
+        self.rot_aa2mat = RotationTransformer(
+            from_rep='axis_angle',
+            to_rep='matrix'
+        )
+        self.rot_mat2target = {}
+        self.key_horizon = {}
+        for key, attr in self.shape_meta['obs'].items():
+            self.key_horizon[key] = self.shape_meta['obs'][key]['horizon']
+            if 'rotation_rep' in attr:
+                self.rot_mat2target[key] = RotationTransformer(
+                    from_rep='matrix',
+                    to_rep=attr['rotation_rep']
                 )
-            elif robot_type == 'ur5':
-                self.env = ROS2EnvironmentFactory.create_ur5_environment(
-                    real_world=self.real_world
-                )
-            else:
-                self.env = ROS2EnvironmentFactory.create_custom_environment(
-                    real_world=self.real_world
-                )
-        else:
-            self.env = ROS2EnvironmentFactory.create_default_environment(
-                real_world=self.real_world
-            )
 
-        print(f"ROS2 Environment created: {type(self.env).__name__}")
+        max_obs_horizon = max(self.key_horizon.values())
+        self.rot_quat2euler = RotationTransformer(
+            from_rep='quaternion',
+            to_rep='euler_angles', to_convention='XYZ'
+        )
+        assert 'rotation_rep' in self.shape_meta['action'], "Missing 'rotation_rep' from shape_meta"
+
+        self.rot_mat2target['action'] = RotationTransformer(
+            from_rep='matrix',
+            to_rep=self.shape_meta['action']['rotation_rep']
+        )
+
+        self.key_horizon['action'] = self.shape_meta['action']['horizon']
+        self.obs_pose_repr = self.pose_repr.get('obs_pose_repr', 'rel')
+        self.action_pose_repr = self.pose_repr.get('action_pose_repr', 'rel')
 
     def _process_observation_for_policy(self, obs: Dict[str, np.ndarray]) -> Dict[str, torch.Tensor]:
         """
@@ -137,189 +147,92 @@ class ROS2Runner(BaseImageRunner):
 
         return action
 
-    def _evaluate_episode(self, policy: BaseImagePolicy, episode_idx: int) -> Dict[str, Any]:
-        """
-        Evaluate a single episode.
+    def run(self, policy: BaseImagePolicy) -> Dict:
+        device = policy.device
+        env = self.env
+        if not env:
+            raise RuntimeError("Environment is not initialized or has been closed.")
 
-        Args:
-            policy: Policy to evaluate
-            episode_idx: Episode index
+        # start rollout
+        obs = env.reset()
+        policy.reset()
 
-        Returns:
-            Episode results dictionary
-        """
-        print(f"Starting episode {episode_idx + 1}/{self.n_episodes}")
+        prev_action = None
+        done = False
+        while not done:
+            obs_dict = {}
+            for key in obs.keys():
+                slice_start = -(self.key_horizon[key] + self.obs_latency_steps)
+                slice_end = None if self.obs_latency_steps == 0 else -self.obs_latency_steps
+                obs_dict[key] = obs[key][:, slice_start: slice_end]
 
-        # Reset environment
-        obs = self.env.reset()
+            current_pos = copy.copy(obs_dict['robot0_eef_pos'][:, -1:])
+            current_rot_mat = copy.copy(self.rot_quat2mat.forward(obs_dict['robot0_eef_quat'][:, -1:]))
 
-        episode_data = []
-        total_reward = 0.0
-        steps = 0
-        success = False
+            # solve relative obs
+            obs_dict['robot0_eef_pos'], obs_dict['robot0_eef_quat'] = compute_relative_pose(
+                pos=obs_dict['robot0_eef_pos'],
+                rot=obs_dict['robot0_eef_quat'],
+                base_pos=current_pos if self.obs_pose_repr == 'rel' else np.zeros(3, dtype=np.float32),
+                base_rot_mat=current_rot_mat if self.obs_pose_repr == 'rel' else np.eye(3, dtype=np.float32),
+                rot_transformer_to_mat=self.rot_quat2mat,
+                rot_transformer_to_target=self.rot_mat2target['robot0_eef_quat']
+            )
 
-        try:
-            for step in range(self.max_steps_per_episode):
-                # Execute policy step
-                action = self._execute_policy_step(policy, obs)
+            obs_dict = dict_apply(
+                obs_dict, 
+                lambda x: torch.from_numpy(x).to(device=device)
+            )
+            fixed_action_prefix = None
+            if prev_action is not None:
+                action_pos, action_rot = compute_relative_pose(
+                    pos=prev_action[..., :3],
+                    rot=prev_action[..., 3: -1],
+                    base_pos=current_pos if self.action_pose_repr == 'rel' else np.zeros(3, dtype=np.float32),
+                    base_rot_mat=current_rot_mat if self.action_pose_repr == 'rel' else np.eye(3, dtype=np.float32),
+                    rot_transformer_to_mat=self.rot_aa2mat,
+                    rot_transformer_to_target=self.rot_mat2target['action']
+                )
+                action_gripper = prev_action[..., -1:]
+                fixed_action_prefix = np.concatenate([action_pos, action_rot, action_gripper], axis=-1)
+                fixed_action_prefix = torch.from_numpy(fixed_action_prefix).to(device=device)
 
-                # Execute action in environment
-                obs, reward, done, info = self.env.step(action)
+            with torch.no_grad():
+                action_dict = policy.predict_action(obs_dict, fixed_action_prefix)
 
-                # Store step data
-                step_data = {
-                    'step': step,
-                    'observation': {k: v.tolist() if isinstance(v, np.ndarray) else v for k, v in obs.items()},
-                    'action': action.tolist(),
-                    'reward': reward,
-                    'done': done,
-                    'info': info
-                }
-                episode_data.append(step_data)
+            # WARN: performance issue
+            # device_transfer
+            np_action_dict = dict_apply(
+                action_dict,
+                lambda x: x.detach().to('cpu').numpy()
+            )
+            action = np_action_dict['action']
+            if not np.all(np.isfinite(action)):
+                logger.error(action)
+                raise RuntimeError("Nan or Inf action")
 
-                if self.save_observation_data:
-                    # Store raw observation data
-                    step_data['raw_obs'] = {k: v for k, v in obs.items()}
+            # action rotation transformer
+            action_pos, action_rot = compute_relative_pose(
+                pos=action[..., :3],
+                rot=action[..., 3: -1],
+                base_pos=current_pos if self.action_pose_repr == 'rel' else np.zeros(3, dtype=np.float32),
+                base_rot_mat=current_rot_mat if self.action_pose_repr == 'rel' else np.eye(3, dtype=np.float32),
+                rot_transformer_to_mat=self.rot_aa2mat,
+                rot_transformer_to_target=self.rot_mat2target['action'],
+                backward=True
+            )
+            action_gripper = action[..., -1:]
+            action_all = np.concatenate([action_pos, action_rot, action_gripper], axis=-1)
 
-                total_reward += reward
-                steps += 1
+            env_action = action_all[:, self.obs_latency_steps: self.obs_latency_steps + self.n_action_steps, :]
+            prev_action = env_action[:, -self.obs_latency_steps:, :]
 
-                if done:
-                    success = True
-                    print(f"Episode {episode_idx + 1} completed successfully at step {steps}")
-                    break
 
-                # Small delay to match real-time execution
-                time.sleep(0.01)
+            obs, reward, done, info = env.step(env_action)
+            done = np.all(done)
+            _ = env.reset()
 
-            if not done:
-                print(f"Episode {episode_idx + 1} reached max steps ({self.max_steps_per_episode})")
-
-        except Exception as e:
-            print(f"Error in episode {episode_idx + 1}: {e}")
-            info['error'] = str(e)
-
-        # Compile episode results
-        episode_results = {
-            'episode_idx': episode_idx,
-            'total_reward': total_reward,
-            'steps': steps,
-            'success': success,
-            'average_reward': total_reward / max(steps, 1),
-            'data': episode_data if self.save_observation_data else None,
-            'error': info.get('error', None)
-        }
-
-        return episode_results
-
-    def _save_results(self, results: List[Dict[str, Any]]):
-        """Save evaluation results to files."""
-        os.makedirs(self.output_dir, exist_ok=True)
-
-        # Save summary results
-        summary = {
-            'n_episodes': self.n_episodes,
-            'max_steps_per_episode': self.max_steps_per_episode,
-            'real_world': self.real_world,
-            'episodes': results,
-            'aggregate_metrics': self._compute_aggregate_metrics(results)
-        }
-
-        summary_path = os.path.join(self.output_dir, 'evaluation_summary.json')
-        with open(summary_path, 'w') as f:
-            json.dump(summary, f, indent=2)
-
-        # Save individual episode data if requested
-        if self.save_observation_data:
-            episodes_dir = os.path.join(self.output_dir, 'episode_data')
-            os.makedirs(episodes_dir, exist_ok=True)
-
-            for episode_result in results:
-                if episode_result['data'] is not None:
-                    episode_file = os.path.join(
-                        episodes_dir,
-                        f'episode_{episode_result["episode_idx"]:04d}.json'
-                    )
-                    with open(episode_file, 'w') as f:
-                        json.dump(episode_result['data'], f, indent=2)
-
-        print(f"Results saved to {self.output_dir}")
-
-    def _compute_aggregate_metrics(self, results: List[Dict[str, Any]]) -> Dict[str, float]:
-        """Compute aggregate metrics across all episodes."""
-        if not results:
-            return {}
-
-        metrics = {
-            'total_episodes': len(results),
-            'successful_episodes': sum(1 for r in results if r['success']),
-            'success_rate': sum(1 for r in results if r['success']) / len(results),
-            'average_reward': np.mean([r['total_reward'] for r in results]),
-            'average_steps': np.mean([r['steps'] for r in results]),
-            'std_reward': np.std([r['total_reward'] for r in results]),
-            'max_reward': max([r['total_reward'] for r in results]),
-            'min_reward': min([r['total_reward'] for r in results]),
-        }
-
-        return metrics
-
-    def run(self, policy: BaseImagePolicy) -> Dict[str, Any]:
-        """
-        Run policy evaluation in ROS2 environment.
-
-        Args:
-            policy: Policy to evaluate
-
-        Returns:
-            Evaluation results dictionary
-        """
-        print(f"Starting policy evaluation in ROS2 environment")
-        print(f"Configuration: {self.n_episodes} episodes, max {self.max_steps_per_episode} steps each")
-
-        all_results = []
-
-        try:
-            # Evaluate each episode
-            for episode_idx in range(self.n_episodes):
-                episode_result = self._evaluate_episode(policy, episode_idx)
-                all_results.append(episode_result)
-
-                # Print progress
-                success_rate = sum(1 for r in all_results if r['success']) / len(all_results)
-                avg_reward = np.mean([r['total_reward'] for r in all_results])
-                print(f"Progress: {episode_idx + 1}/{self.n_episodes}, "
-                      f"Success rate: {success_rate:.2f}, Avg reward: {avg_reward:.2f}")
-
-            # Save results
-            self._save_results(all_results)
-
-            # Compute final metrics
-            aggregate_metrics = self._compute_aggregate_metrics(all_results)
-
-            print("\n=== Evaluation Results ===")
-            print(f"Success rate: {aggregate_metrics['success_rate']:.2%}")
-            print(f"Average reward: {aggregate_metrics['average_reward']:.2f}")
-            print(f"Average steps: {aggregate_metrics['average_steps']:.1f}")
-            print(f"Successful episodes: {aggregate_metrics['successful_episodes']}/{aggregate_metrics['total_episodes']}")
-
-            return {
-                'episodes': all_results,
-                'aggregate_metrics': aggregate_metrics,
-                'output_dir': self.output_dir
-            }
-
-        except Exception as e:
-            print(f"Error during evaluation: {e}")
-            return {
-                'error': str(e),
-                'episodes': all_results,
-                'aggregate_metrics': self._compute_aggregate_metrics(all_results) if all_results else {}
-            }
-
-        finally:
-            # Clean up environment
-            if self.env:
-                self.env.close()
+        return {}
 
     def close(self):
         """Clean up runner resources."""
@@ -350,6 +263,5 @@ def create_ros2_runner(output_dir: str,
         output_dir=output_dir,
         n_episodes=n_episodes,
         max_steps_per_episode=max_steps_per_episode,
-        real_world=real_world,
         **kwargs
     )

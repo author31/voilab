@@ -15,3 +15,6 @@ description = "Dependencies for the Diffusion Policy package."
 readme = "README.md"
 requires-python = ">=3.10" 
 
+dependencies = [
+    "huggingface-hub==0.24.2"
+]

@@ -2,7 +2,7 @@ import numpy as np
 import time
 import transforms3d
 from typing import Dict, Optional, Tuple, Any
-from diffusion_policy.infrastructure.ros2_infrastructure import ROS2Infrastructure, ROS2Manager
+from diffusion_policy.infrastructure.ros2_infrastructure import ROS2Manager
 
 
 class ROS2Environment:
@@ -16,11 +16,10 @@ class ROS2Environment:
     def __init__(self,
                  rgb_topic: str = '/rgb',
                  joint_states_topic: str = '/joint_states',
-                 gripper_topic: str = '/gripper',
-                 action_topic: str = '/cmd_vel',
+                 gripper_topic: str = '/gripper_width',
+                 action_topic: str = '/joint_commands',
                  image_shape: Tuple[int, int, int] = (3, 224, 224),
                  timeout: float = 5.0,
-                 real_world: bool = False,
                  manager: Optional[ROS2Manager] = None):
         """
         Initialize ROS2 environment.
@@ -32,7 +31,6 @@ class ROS2Environment:
             action_topic: Topic name for publishing actions
             image_shape: Expected shape of RGB images (C, H, W)
             timeout: Timeout for waiting for sensor data
-            real_world: Whether this is a real-world or simulation environment
             manager: Optional ROS2Manager instance (creates new one if None)
         """
         # Store environment parameters
@@ -42,7 +40,6 @@ class ROS2Environment:
         self.action_topic = action_topic
         self.image_shape = image_shape
         self.timeout = timeout
-        self.real_world = real_world
 
         # Initialize ROS2 manager and infrastructure
         self.manager = manager or ROS2Manager()
@@ -156,6 +153,8 @@ class ROS2Environment:
     def _publish_action(self, action: np.ndarray):
         """Publish action to the action topic."""
         from geometry_msgs.msg import Twist
+
+        # TODO: Check "/joint_command" topic, it may not using Twist msg
 
         # Convert action to Twist message
         twist_msg = Twist()
@@ -351,133 +350,3 @@ class ROS2Environment:
         """Cleanup on destruction."""
         self.close()
 
-
-class ROS2EnvironmentFactory:
-    """
-    Factory class for creating ROS2 environments with common configurations.
-    """
-
-    @staticmethod
-    def create_default_environment(real_world: bool = False) -> ROS2Environment:
-        """
-        Create environment with default configuration.
-
-        Args:
-            real_world: Whether this is a real-world or simulation environment
-
-        Returns:
-            Configured ROS2Environment instance
-        """
-        return ROS2Environment(real_world=real_world)
-
-    @staticmethod
-    def create_custom_environment(rgb_topic: str = '/rgb',
-                                joint_states_topic: str = '/joint_states',
-                                gripper_topic: str = '/gripper',
-                                action_topic: str = '/cmd_vel',
-                                image_shape: Tuple[int, int, int] = (3, 224, 224),
-                                real_world: bool = False) -> ROS2Environment:
-        """
-        Create environment with custom topic configuration.
-
-        Args:
-            rgb_topic: RGB camera topic
-            joint_states_topic: Joint states topic
-            gripper_topic: Gripper state topic
-            action_topic: Action command topic
-            image_shape: Expected image shape
-            real_world: Real-world flag
-
-        Returns:
-            Configured ROS2Environment instance
-        """
-        return ROS2Environment(
-            rgb_topic=rgb_topic,
-            joint_states_topic=joint_states_topic,
-            gripper_topic=gripper_topic,
-            action_topic=action_topic,
-            image_shape=image_shape,
-            real_world=real_world
-        )
-
-    @staticmethod
-    def create_franka_environment(real_world: bool = False) -> ROS2Environment:
-        """
-        Create environment pre-configured for Franka robot.
-
-        Args:
-            real_world: Whether this is a real-world or simulation environment
-
-        Returns:
-            Configured ROS2Environment instance
-        """
-        return ROS2Environment(
-            rgb_topic='/camera/color/image_raw',
-            joint_states_topic='/joint_states',
-            gripper_topic='/gripper_width',
-            action_topic='/cartesian_velocity_controller/cmd_vel',
-            image_shape=(3, 224, 224),
-            real_world=real_world
-        )
-
-    @staticmethod
-    def create_ur5_environment(real_world: bool = False) -> ROS2Environment:
-        """
-        Create environment pre-configured for UR5 robot.
-
-        Args:
-            real_world: Whether this is a real-world or simulation environment
-
-        Returns:
-            Configured ROS2Environment instance
-        """
-        return ROS2Environment(
-            rgb_topic='/rgb/image',
-            joint_states_topic='/ur5/joint_states',
-            gripper_topic='/ur5/gripper_width',
-            action_topic='/ur5/cmd_vel',
-            image_shape=(3, 224, 224),
-            real_world=real_world
-        )
-
-
-# Example usage and testing
-def main():
-    """Example usage of ROS2Environment."""
-    try:
-        # Create environment using factory
-        env = ROS2EnvironmentFactory.create_default_environment(real_world=False)
-
-        # Test environment interface
-        print("Testing ROS2 Environment...")
-
-        # Reset environment
-        obs = env.reset()
-        print("Reset successful. Observation shapes:")
-        for key, value in obs.items():
-            print(f"  {key}: {value.shape}")
-
-        # Test step
-        action = np.array([0.1, 0.0, 0.0, 0.0, 0.0, 0.0])  # Move forward
-        obs, reward, done, info = env.step(action)
-        print(f"Step successful. Reward: {reward}, Done: {done}")
-
-        # Test observation shapes
-        shapes = env.get_observation_shapes()
-        print("\nObservation space information:")
-        for key, shape in shapes.items():
-            print(f"  {key}: {shape}")
-
-        # Check if ready
-        print(f"\nEnvironment ready: {env.is_ready()}")
-
-        # Clean up
-        env.close()
-        print("Environment test completed successfully!")
-
-    except Exception as e:
-        print(f"Error in environment test: {e}")
-
-
-if __name__ == '__main__':
-    main()
