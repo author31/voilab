@@ -1,0 +1,11 @@
+{
+    "version": "1.0",
+    "file_records": [
+        {
+            "source_url": "/workspace/voilab/assets/table/table/configuration/materials/textures/table.png",
+            "source_hash": "15d6954a9b8339beb25d4f63c069bdeaf53204a9",
+            "target_url": "./table/table/configuration/materials/textures/table.png",
+            "target_hash": "4abab0679b9d9aff1628479839e9af7bd7f22eeb"
+        }
+    ]
+}

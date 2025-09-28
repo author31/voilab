@@ -27,3 +27,13 @@ launch-jupyterlab: install-dev
 	@uv run jupyter lab --ip 0.0.0.0 --port 8888 --no-browser
 	@echo "Jupyter Lab launched successfully"
 
+.PHONY launch-workspace:
+launch-workspace:
+	@echo "Launching Docker workspace for development..."
+	@./launch_workspace.sh
+
+.PHONY launch-workspace-force:
+launch-workspace-force:
+	@echo "Launching Docker workspace for development (force rebuild)..."
+	@./launch_workspace.sh --force-rebuild
+
