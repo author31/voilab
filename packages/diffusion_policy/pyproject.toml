@@ -16,5 +16,6 @@ readme = "README.md"
 requires-python = ">=3.10" 
 
 dependencies = [
-    "huggingface-hub==0.24.2"
+    "huggingface-hub==0.24.2",
+    "transforms3d==0.4.2"
 ]

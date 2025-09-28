@@ -1,15 +1,17 @@
-import rclpy
-from rclpy.node import Node
-from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSDurabilityPolicy
-from sensor_msgs.msg import Image, JointState
-from std_msgs.msg import Float32
-from geometry_msgs.msg import Twist
-import numpy as np
-import cv2
-from cv_bridge import CvBridge
 import threading
 import time
-from typing import Dict, Optional, Tuple, Callable, Any, Union
+from typing import Any, Callable, Dict, Optional, Tuple, Union
+
+import cv2
+import numpy as np
+import rclpy
+from cv_bridge import CvBridge
+from geometry_msgs.msg import Twist
+from rclpy.executors import MultiThreadedExecutor
+from rclpy.node import Node
+from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
+from sensor_msgs.msg import Image, JointState
+from std_msgs.msg import Float32
 
 
 class ROS2Infrastructure(Node):
@@ -89,7 +91,7 @@ class ROS2Infrastructure(Node):
 
         return f"sub_{topic_key}"
 
-    def create_publisher(self,
+    def add_publisher(self,
                          topic: str,
                          msg_type: Any,
                          qos_profile: Optional[QoSProfile] = None):
@@ -107,7 +109,7 @@ class ROS2Infrastructure(Node):
         if qos_profile is None:
             qos_profile = self.default_qos
 
-        return self.create_publisher(msg_type, topic, qos_profile)
+        return super().create_publisher(msg_type, topic, qos_profile)
 
     def _get_topic_key(self, topic: str) -> str:
         """Convert topic name to internal key."""
@@ -329,7 +331,7 @@ class ROS2Infrastructure(Node):
                 return True
 
             time.sleep(0.1)
-            rclpy.spin_once(self, timeout_sec=0.1)
+            # No need to call spin_once here since the executor is running in a separate thread
 
         return False
 
@@ -373,6 +375,9 @@ class ROS2Infrastructure(Node):
     def shutdown(self):
         """Shutdown ROS2 infrastructure."""
         try:
+            # Set shutdown flag to signal spin thread
+            self._should_shutdown = True
+
             # Send final zero command if we have action publisher
             for attr_name in dir(self):
                 if attr_name.startswith('publisher_'):
@@ -401,28 +406,53 @@ class ROS2Manager:
     """
 
     def __init__(self):
+        rclpy.init()
+
         self.infrastructure = None
+        self.spin_thread = None
+        self.executor = None
         self.is_initialized = False
+        self._should_shutdown = False
 
     def initialize(self, node_name: str = 'ros2_infrastructure') -> ROS2Infrastructure:
-        """Initialize generic ROS2 infrastructure."""
+        """Initialize generic ROS2 infrastructure in a separate thread."""
         if not self.is_initialized:
-            rclpy.init()
             self.infrastructure = ROS2Infrastructure(node_name)
+
+            # Create executor and add node
+            self.executor = MultiThreadedExecutor()
+            self.executor.add_node(self.infrastructure)
+
+            # Start spinning in a separate thread
+            self.spin_thread = threading.Thread(target=self._spin_loop, daemon=True)
+            self.spin_thread.start()
+
             self.is_initialized = True
+
         return self.infrastructure
+
+    def _spin_loop(self):
+        """Spin loop running in separate thread."""
+        try:
+            while not self._should_shutdown and rclpy.ok():
+                self.executor.spin_once(timeout_sec=0.1)
+        except KeyboardInterrupt:
+            self.infrastructure.get_logger().info('Keyboard interrupt, shutting down.')
+        finally:
+            if self.infrastructure:
+                self.infrastructure.destroy_node()
 
     def shutdown(self):
         """Shutdown ROS2 infrastructure."""
+        self._should_shutdown = True
+
+        if self.spin_thread and self.spin_thread.is_alive():
+            self.spin_thread.join(timeout=1.0)
+
         if self.infrastructure:
             self.infrastructure.shutdown()
-            self.infrastructure = None
 
         if rclpy.ok():
             rclpy.shutdown()
 
         self.is_initialized = False
-
-    def __del__(self):
-        """Cleanup on destruction."""
-        self.shutdown()

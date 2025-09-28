@@ -82,7 +82,7 @@ class ROS2Runner(BaseImageRunner):
         max_obs_horizon = max(self.key_horizon.values())
         self.rot_quat2euler = RotationTransformer(
             from_rep='quaternion',
-            to_rep='euler_angles', to_convention='XYZ'
+            to_rep='euler_angles'
         )
         assert 'rotation_rep' in self.shape_meta['action'], "Missing 'rotation_rep' from shape_meta"
 

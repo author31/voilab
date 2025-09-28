@@ -15,11 +15,11 @@ class ROS2Environment:
 
     def __init__(self,
                  rgb_topic: str = '/rgb',
-                 joint_states_topic: str = '/joint_states',
+                 joint_states_topic: str = '/eef_states',
                  gripper_topic: str = '/gripper_width',
                  action_topic: str = '/joint_commands',
                  image_shape: Tuple[int, int, int] = (3, 224, 224),
-                 timeout: float = 5.0,
+                 timeout: float = 300,
                  manager: Optional[ROS2Manager] = None):
         """
         Initialize ROS2 environment.
