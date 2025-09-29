@@ -59,7 +59,6 @@ def main(checkpoint, output_dir, device, env_runner_path):
         output_dir=output_dir,
         shape_meta=cfg.shape_meta
     )
-    breakpoint()
     runner_log = env_runner.run(policy)
     
     # dump log to json

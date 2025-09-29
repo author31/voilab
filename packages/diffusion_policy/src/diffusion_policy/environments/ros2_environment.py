@@ -19,7 +19,7 @@ class ROS2Environment:
                  gripper_topic: str = '/gripper_width',
                  action_topic: str = '/joint_commands',
                  image_shape: Tuple[int, int, int] = (3, 224, 224),
-                 timeout: float = 300,
+                 timeout: float = 5.,
                  manager: Optional[ROS2Manager] = None):
         """
         Initialize ROS2 environment.
@@ -57,18 +57,19 @@ class ROS2Environment:
     def _setup_subscriptions(self):
         """Set up subscriptions for all required topics."""
         from sensor_msgs.msg import Image, JointState
-        from std_msgs.msg import Float32
+        from std_msgs.msg import Float32, Float64
 
         # Create subscribers for required topics
-        self.infrastructure.create_subscriber(self.rgb_topic, Image)
-        self.infrastructure.create_subscriber(self.joint_states_topic, JointState)
-        self.infrastructure.create_subscriber(self.gripper_topic, Float32)
+        # self.infrastructure.create_subscriber(self.rgb_topic, Image)
+        # self.infrastructure.create_subscriber(self.joint_states_topic, JointState)
+        self.infrastructure.create_subscriber(self.gripper_topic, Float64)
 
         print(f"Subscriptions created for: {self.rgb_topic}, {self.joint_states_topic}, {self.gripper_topic}")
 
     def _wait_for_initial_data(self, timeout: float) -> bool:
         """Wait for initial data from all subscribed topics."""
-        required_topics = [self.rgb_topic, self.joint_states_topic, self.gripper_topic]
+        # required_topics = [self.rgb_topic, self.joint_states_topic, self.gripper_topic]
+        required_topics = [self.gripper_topic]
         return self.infrastructure.wait_for_data(required_topics, timeout)
 
     def reset(self):

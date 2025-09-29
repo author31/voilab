@@ -42,10 +42,11 @@ class ROS2Infrastructure(Node):
         self.data_storage = {}
         self.data_locks = {}
         self.data_callbacks = {}
+        self.subs = []
 
         # Setup default QoS profile
         self.default_qos = QoSProfile(
-            reliability=QoSReliabilityPolicy.BEST_EFFORT,
+            reliability=QoSReliabilityPolicy.RELIABLE,
             durability=QoSDurabilityPolicy.VOLATILE,
             depth=10
         )
@@ -77,17 +78,24 @@ class ROS2Infrastructure(Node):
         self.data_storage[topic_key] = None
         self.data_locks[topic_key] = threading.Lock()
 
-        # Create generic callback wrapper
-        def generic_callback(msg):
-            self._handle_message(topic, msg, callback)
+        # Store user callback only if no callback is provided as parameter
+        if callback and topic_key not in self.data_callbacks:
+            self.data_callbacks[topic_key] = callback
 
-        # Create subscriber
+        self.get_logger().info(f"Creating subscriber for topic: {topic} (key: {topic_key})")
+
+        # Create generic callback wrapper - fix lambda closure by binding parameters at creation time
         subscriber = self.create_subscription(
             msg_type,
             topic,
-            generic_callback,
+            lambda msg, topic=topic, callback=callback: self._handle_message(topic, msg, callback),
             qos_profile
         )
+
+        self.get_logger().info(f'Subscriber created successfully for topic: {topic}')
+
+        if subscriber:
+            self.get_logger().info(f'Subscriber object is valid: {type(subscriber)}')
 
         return f"sub_{topic_key}"
 
@@ -124,8 +132,9 @@ class ROS2Infrastructure(Node):
             msg: ROS2 message
             user_callback: Optional user-provided callback
         """
+        self.get_logger().info(f'_handle_message called for topic: {topic}')
         topic_key = self._get_topic_key(topic)
-
+        self.get_logger().info(f"Processing message for topic: {topic} (key: {topic_key})")
         try:
             # Convert message to Python data structure
             processed_data = self._convert_message(msg)
@@ -134,12 +143,10 @@ class ROS2Infrastructure(Node):
             with self.data_locks[topic_key]:
                 self.data_storage[topic_key] = processed_data
 
-            # Call user callback if provided
+            # Call user callback if provided (prioritize parameter callback over stored callback)
             if user_callback:
                 user_callback(topic, processed_data)
-
-            # Call registered callback if any
-            if topic_key in self.data_callbacks and self.data_callbacks[topic_key]:
+            elif topic_key in self.data_callbacks and self.data_callbacks[topic_key]:
                 self.data_callbacks[topic_key](topic, processed_data)
 
         except Exception as e:
@@ -155,6 +162,7 @@ class ROS2Infrastructure(Node):
         Returns:
             Dictionary with converted data
         """
+        self.get_logger().info(f"converting message: {msg.data=}")
         # Handle Image messages
         if hasattr(msg, 'encoding') and hasattr(msg, 'data'):
             cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='rgb8')
@@ -421,21 +429,31 @@ class ROS2Manager:
 
             # Create executor and add node
             self.executor = MultiThreadedExecutor()
+            self.infrastructure.get_logger().info('Adding node to executor...')
             self.executor.add_node(self.infrastructure)
+            self.infrastructure.get_logger().info('Node added to executor successfully')
 
             # Start spinning in a separate thread
+            self.infrastructure.get_logger().info('Starting spin thread...')
             self.spin_thread = threading.Thread(target=self._spin_loop, daemon=True)
             self.spin_thread.start()
 
+            # Give some time for thread to start
+            import time
+            time.sleep(0.1)
+
             self.is_initialized = True
+            self.infrastructure.get_logger().info('ROS2 Manager initialization completed')
 
         return self.infrastructure
 
     def _spin_loop(self):
         """Spin loop running in separate thread."""
         try:
+            self.infrastructure.get_logger().info('Spin loop started')
             while not self._should_shutdown and rclpy.ok():
                 self.executor.spin_once(timeout_sec=0.1)
+            self.infrastructure.get_logger().info('Spin loop stopped')
         except KeyboardInterrupt:
             self.infrastructure.get_logger().info('Keyboard interrupt, shutting down.')
         finally:
