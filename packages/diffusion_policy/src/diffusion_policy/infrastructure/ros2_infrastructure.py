@@ -132,12 +132,13 @@ class ROS2Infrastructure(Node):
             msg: ROS2 message
             user_callback: Optional user-provided callback
         """
-        self.get_logger().info(f'_handle_message called for topic: {topic}')
         topic_key = self._get_topic_key(topic)
-        self.get_logger().info(f"Processing message for topic: {topic} (key: {topic_key})")
         try:
-            # Convert message to Python data structure
-            processed_data = self._convert_message(msg)
+            # Store raw message - conversion should be handled by environment-specific logic
+            processed_data = {
+                'raw_message': msg,
+                'type': 'raw'
+            }
 
             # Store data thread-safely
             with self.data_locks[topic_key]:
@@ -152,70 +153,7 @@ class ROS2Infrastructure(Node):
         except Exception as e:
             self.get_logger().error(f'Error handling message from {topic}: {e}')
 
-    def _convert_message(self, msg) -> Dict[str, Any]:
-        """
-        Convert ROS2 message to Python data structure.
-
-        Args:
-            msg: ROS2 message
-
-        Returns:
-            Dictionary with converted data
-        """
-        self.get_logger().info(f"converting message: {msg.data=}")
-        # Handle Image messages
-        if hasattr(msg, 'encoding') and hasattr(msg, 'data'):
-            cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='rgb8')
-            return {
-                'data': cv_image,
-                'header': msg.header,
-                'encoding': msg.encoding,
-                'height': msg.height,
-                'width': msg.width,
-                'type': 'image'
-            }
-
-        # Handle JointState messages
-        elif hasattr(msg, 'position'):
-            return {
-                'position': np.array(msg.position) if msg.position else np.array([]),
-                'velocity': np.array(msg.velocity) if msg.velocity else np.array([]),
-                'effort': np.array(msg.effort) if msg.effort else np.array([]),
-                'header': msg.header,
-                'name': msg.name,
-                'type': 'joint_state'
-            }
-
-        # Handle Float32 messages
-        elif hasattr(msg, 'data'):
-            return {
-                'data': float(msg.data),
-                'type': 'float32'
-            }
-
-        # Handle Twist messages
-        elif hasattr(msg, 'linear') and hasattr(msg, 'angular'):
-            return {
-                'linear': {
-                    'x': msg.linear.x,
-                    'y': msg.linear.y,
-                    'z': msg.linear.z
-                },
-                'angular': {
-                    'x': msg.angular.x,
-                    'y': msg.angular.y,
-                    'z': msg.angular.z
-                },
-                'type': 'twist'
-            }
-
-        # Generic fallback
-        else:
-            return {
-                'message': msg,
-                'type': 'unknown'
-            }
-
+  
     def get_data(self, topic: str) -> Optional[Dict[str, Any]]:
         """
         Args:
@@ -252,7 +190,7 @@ class ROS2Infrastructure(Node):
             if not hasattr(self, publisher_attr):
                 # Determine message type from data
                 msg_type = self._get_message_type(msg_data)
-                publisher = self.create_publisher(topic, msg_type)
+                publisher = self.create_publisher(msg_type, topic, self.default_qos)
                 setattr(self, publisher_attr, publisher)
             else:
                 publisher = getattr(self, publisher_attr)
@@ -328,17 +266,18 @@ class ROS2Infrastructure(Node):
         start_time = time.time()
 
         while time.time() - start_time < timeout:
+            time.sleep(0.1)
             all_received = True
             for topic in topics:
                 topic_key = self._get_topic_key(topic)
                 if topic_key not in self.data_storage or self.data_storage[topic_key] is None:
                     all_received = False
+                    self.get_logger().error(f"{topic_key} topic is empty.")
                     break
 
             if all_received:
                 return True
 
-            time.sleep(0.1)
             # No need to call spin_once here since the executor is running in a separate thread
 
         return False

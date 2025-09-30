@@ -31,23 +31,34 @@ class ROS2Runner(BaseImageRunner):
     def __init__(
         self,
         output_dir: str,
-        shape_meta: dict, 
+        shape_meta: dict,
         n_episodes: int = 10,
         max_steps_per_episode: int = 200,
         save_video: bool = False,
         save_observation_data: bool = False,
         tqdm_interval_sec=5.0,
         obs_latency_steps=0,
+        n_obs_steps: int = 1,
         pose_repr: dict = {}
     ):
         """
         Initialize ROS2 runner.
 
         Args:
+            output_dir: Output directory for results
+            shape_meta: Shape metadata for observations and actions
+            n_episodes: Number of evaluation episodes
+            max_steps_per_episode: Maximum steps per episode
+            save_video: Whether to save video recordings
+            save_observation_data: Whether to save observation data
+            tqdm_interval_sec: Interval for tqdm updates
+            obs_latency_steps: Observation latency steps
+            n_obs_steps: Number of observation steps to stack
+            pose_repr: Pose representation configuration
         """
         super().__init__(output_dir)
-        # Initialize environment
-        self.env = ROS2Environment()
+        # Initialize environment with observation stacking
+        self.env = ROS2Environment(n_obs_steps=n_obs_steps)
 
         self.n_episodes = n_episodes
         self.max_steps_per_episode = max_steps_per_episode
@@ -55,6 +66,7 @@ class ROS2Runner(BaseImageRunner):
         self.save_observation_data = save_observation_data
         self.tqdm_interval_sec = tqdm_interval_sec
         self.obs_latency_steps = obs_latency_steps
+        self.n_obs_steps = n_obs_steps
         self.shape_meta = shape_meta
         self.pose_repr = pose_repr
 
@@ -100,24 +112,25 @@ class ROS2Runner(BaseImageRunner):
         Process environment observation for policy input.
 
         Args:
-            obs: Raw observation from environment
+            obs: Raw observation from environment (already stacked)
 
         Returns:
             Processed observation ready for policy
         """
         policy_obs = {}
 
-        # Process RGB image
+        # Process RGB image (shape: [n_steps, 3, H, W])
         if 'camera0_rgb' in obs:
-            # Add batch dimension and convert to tensor
-            rgb_img = obs['camera0_rgb']
-            policy_obs['camera0_rgb'] = torch.from_numpy(rgb_img).float().unsqueeze(0)
+            # The environment already stacks observations, so we have shape [n_steps, 3, H, W]
+            # Policy expects [batch, n_steps, 3, H, W]
+            rgb_img = obs['camera0_rgb']  # [n_steps, 3, H, W]
+            policy_obs['camera0_rgb'] = torch.from_numpy(rgb_img).float().unsqueeze(0)  # [1, n_steps, 3, H, W]
 
-        # Process low-dimensional observations
+        # Process low-dimensional observations (shape: [n_steps, dim])
         for key in ['robot0_eef_pos', 'robot0_eef_rot_axis_angle', 'robot0_gripper_width']:
             if key in obs:
-                obs_data = obs[key]
-                policy_obs[key] = torch.from_numpy(obs_data).float().unsqueeze(0)
+                obs_data = obs[key]  # [n_steps, dim]
+                policy_obs[key] = torch.from_numpy(obs_data).float().unsqueeze(0)  # [1, n_steps, dim]
 
         return policy_obs
 

@@ -1,8 +1,10 @@
 import numpy as np
 import time
 import transforms3d
+import cv2
 from typing import Dict, Optional, Tuple, Any
 from diffusion_policy.infrastructure.ros2_infrastructure import ROS2Manager
+from cv_bridge import CvBridge
 
 
 class ROS2Environment:
@@ -15,11 +17,12 @@ class ROS2Environment:
 
     def __init__(self,
                  rgb_topic: str = '/rgb',
-                 joint_states_topic: str = '/eef_states',
+                 joint_states_topic: str = '/eef_state',
                  gripper_topic: str = '/gripper_width',
                  action_topic: str = '/joint_commands',
                  image_shape: Tuple[int, int, int] = (3, 224, 224),
                  timeout: float = 5.,
+                 n_obs_steps: int = 1,
                  manager: Optional[ROS2Manager] = None):
         """
         Initialize ROS2 environment.
@@ -31,6 +34,7 @@ class ROS2Environment:
             action_topic: Topic name for publishing actions
             image_shape: Expected shape of RGB images (C, H, W)
             timeout: Timeout for waiting for sensor data
+            n_obs_steps: Number of observation steps to stack for diffusion policy
             manager: Optional ROS2Manager instance (creates new one if None)
         """
         # Store environment parameters
@@ -40,10 +44,17 @@ class ROS2Environment:
         self.action_topic = action_topic
         self.image_shape = image_shape
         self.timeout = timeout
+        self.n_obs_steps = n_obs_steps
+
+        # Initialize observation history for stacking
+        self.obs_history = []
 
         # Initialize ROS2 manager and infrastructure
         self.manager = manager or ROS2Manager()
         self.infrastructure = self.manager.initialize(node_name='ros2_environment')
+
+        # Initialize CV bridge for image conversion
+        self.bridge = CvBridge()
 
         # Set up subscriptions for required topics
         self._setup_subscriptions()
@@ -56,20 +67,21 @@ class ROS2Environment:
 
     def _setup_subscriptions(self):
         """Set up subscriptions for all required topics."""
-        from sensor_msgs.msg import Image, JointState
+        from sensor_msgs.msg import Image
         from std_msgs.msg import Float32, Float64
+        from geometry_msgs.msg import Pose
 
-        # Create subscribers for required topics
-        # self.infrastructure.create_subscriber(self.rgb_topic, Image)
-        # self.infrastructure.create_subscriber(self.joint_states_topic, JointState)
-        self.infrastructure.create_subscriber(self.gripper_topic, Float64)
+
+        # Create subscribers for required topics with custom conversion callback
+        self.infrastructure.create_subscriber(self.rgb_topic, Image, self._convert_message)
+        self.infrastructure.create_subscriber(self.joint_states_topic, Pose, self._convert_message)
+        self.infrastructure.create_subscriber(self.gripper_topic, Float64, self._convert_message)
 
         print(f"Subscriptions created for: {self.rgb_topic}, {self.joint_states_topic}, {self.gripper_topic}")
 
     def _wait_for_initial_data(self, timeout: float) -> bool:
         """Wait for initial data from all subscribed topics."""
-        # required_topics = [self.rgb_topic, self.joint_states_topic, self.gripper_topic]
-        required_topics = [self.gripper_topic]
+        required_topics = [self.rgb_topic, self.joint_states_topic, self.gripper_topic]
         return self.infrastructure.wait_for_data(required_topics, timeout)
 
     def reset(self):
@@ -130,17 +142,20 @@ class ROS2Environment:
             # Return current observation even if action fails
             return self.get_obs(), 0.0, False, {'error': str(e)}
 
-    def get_obs(self) -> Dict[str, np.ndarray]:
+    def get_obs(self, n_steps: Optional[int] = None) -> Dict[str, np.ndarray]:
         """
-        Get current observation from the environment.
+        Get current observation from the environment with optional stacking.
+
+        Args:
+            n_steps: Number of steps to stack (defaults to self.n_obs_steps)
 
         Returns:
-            Dictionary containing:
-            - camera0_rgb: RGB image [3, 224, 224]
-            - robot0_eef_pos: End-effector position [3]
-            - robot0_eef_rot_axis_angle: Rotation in axis-angle format [6]
-            - robot0_gripper_width: Gripper width [1]
-            - robot0_eef_rot_axis_angle_wrt_start: Rotation relative to start [6]
+            Dictionary containing stacked observations with shapes:
+            - camera0_rgb: RGB images [n_steps, 3, 224, 224]
+            - robot0_eef_pos: End-effector positions [n_steps, 3]
+            - robot0_eef_rot_axis_angle: Rotation in axis-angle format [n_steps, 6]
+            - robot0_gripper_width: Gripper widths [n_steps, 1]
+            - robot0_eef_rot_axis_angle_wrt_start: Rotation relative to start [n_steps, 6]
         """
         # Get raw data from subscribed topics
         raw_data = self._get_raw_sensor_data()
@@ -149,7 +164,18 @@ class ROS2Environment:
         if not self._is_data_available(raw_data):
             raise RuntimeError("Not all sensor data available for observation")
 
-        return self._process_raw_observations(raw_data)
+        # Process current observation
+        current_obs = self._process_raw_observations(raw_data)
+
+        # Add to observation history
+        self.obs_history.append(current_obs)
+
+        # Use provided n_steps or default to self.n_obs_steps
+        if n_steps is None:
+            n_steps = self.n_obs_steps
+
+        # Return stacked observations
+        return self._stack_last_n_obs(self.obs_history, n_steps)
 
     def _publish_action(self, action: np.ndarray):
         """Publish action to the action topic."""
@@ -168,7 +194,7 @@ class ROS2Environment:
             twist_msg.angular.y = float(action[4])
             twist_msg.angular.z = float(action[5])
 
-        # Publish using infrastructure
+        # Publish using infrastructure with QoS profile
         self.infrastructure.publish_message(self.action_topic, {
             'type': 'twist',
             'linear': {
@@ -182,6 +208,60 @@ class ROS2Environment:
                 'z': twist_msg.angular.z
             }
         })
+
+    def _convert_message(self, topic: str, raw_data: Dict[str, Any]):
+        """
+        Convert ROS2 message to environment-specific data structure.
+
+        Args:
+            topic: Topic name
+            raw_data: Raw data from infrastructure
+        """
+        try:
+            msg = raw_data.get('raw_message')
+            if msg is None:
+                return
+
+            # Convert message based on topic
+            if topic == self.rgb_topic:
+                # Handle Image messages
+                cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='rgb8')
+                converted_data = {
+                    'data': cv_image,
+                    'header': msg.header,
+                    'encoding': msg.encoding,
+                    'height': msg.height,
+                    'width': msg.width,
+                    'type': 'image'
+                }
+            elif topic == self.joint_states_topic:
+                # Handle geometry_msgs/Pose messages
+                converted_data = {
+                    'position': np.array([msg.position.x, msg.position.y, msg.position.z]),
+                    'orientation': np.array([msg.orientation.x, msg.orientation.y, msg.orientation.z, msg.orientation.w]),
+                    'header': msg.header if hasattr(msg, 'header') else None,
+                    'type': 'pose'
+                }
+            elif topic == self.gripper_topic:
+                # Handle Float64 messages
+                converted_data = {
+                    'data': float(msg.data),
+                    'type': 'float64'
+                }
+            else:
+                # Generic fallback
+                converted_data = {
+                    'message': msg,
+                    'type': 'unknown'
+                }
+
+            # Store the converted data back to infrastructure
+            topic_key = self.infrastructure._get_topic_key(topic)
+            with self.infrastructure.data_locks[topic_key]:
+                self.infrastructure.data_storage[topic_key] = converted_data
+
+        except Exception as e:
+            print(f'Error converting message from {topic}: {e}')
 
     def _get_raw_sensor_data(self) -> Dict[str, any]:
         """Get raw sensor data from subscribed topics."""
@@ -206,32 +286,31 @@ class ROS2Environment:
             Processed observation dictionary
         """
         # Extract RGB image
-        rgb_obs = raw_data['rgb_image']
+        rgb_obs = raw_data['rgb_image']['data']
 
-        # Extract end-effector position (simplified)
-        joint_positions = raw_data['joint_states']['position']
-        if len(joint_positions) >= 3:
-            hand_pos = joint_positions[:3]  # Simplified assumption
+        # Extract end-effector position from Pose message
+        joint_states = raw_data['joint_states']
+        if joint_states and 'position' in joint_states:
+            hand_pos = joint_states['position'][:3]  # Use the 3D position directly
         else:
             hand_pos = np.zeros(3)
 
-        # Extract current rotation
-        current_euler = self._extract_euler_angles(raw_data['joint_states'])
-        rot_6d = self._euler_to_rotation_6d(current_euler)
+        # Extract rotation from Pose message quaternion
+        if joint_states and 'orientation' in joint_states:
+            orientation_quat = joint_states['orientation']
+            # Convert quaternion to rotation matrix, then to 6D representation
+            rot_matrix = transforms3d.quaternions.quat2mat(orientation_quat)
+            rot_6d = rot_matrix[:, :2].flatten()
+        else:
+            rot_6d = np.zeros(6)
 
         # Extract gripper width
-        gripper_width = np.array([raw_data['gripper_width']])
+        gripper_width = np.array([raw_data['gripper_width']['data']])
 
-        # Compute rotation relative to start
-        if raw_data['start_euler'] is not None:
-            # Compute relative rotation
-            start_rot_matrix = transforms3d.euler.euler2mat(
-                raw_data['start_euler'][0], raw_data['start_euler'][1], raw_data['start_euler'][2]
-            )
-            current_rot_matrix = transforms3d.euler.euler2mat(
-                current_euler[0], current_euler[1], current_euler[2]
-            )
-
+        # Compute rotation relative to start (simplified for now)
+        if hasattr(self, 'start_orientation'):
+            start_rot_matrix = transforms3d.quaternions.quat2mat(self.start_orientation)
+            current_rot_matrix = transforms3d.quaternions.quat2mat(orientation_quat)
             relative_rot_matrix = current_rot_matrix @ np.linalg.inv(start_rot_matrix)
             rot_wrt_start_6d = relative_rot_matrix[:, :2].flatten()
         else:
@@ -340,12 +419,55 @@ class ROS2Environment:
             Dictionary mapping observation names to their shapes
         """
         return {
-            "camera0_rgb": self.image_shape,
-            "robot0_eef_pos": (3,),
-            "robot0_eef_rot_axis_angle": (6,),
-            "robot0_gripper_width": (1,),
-            "robot0_eef_rot_axis_angle_wrt_start": (6,)
+            "camera0_rgb": (self.n_obs_steps,) + self.image_shape,
+            "robot0_eef_pos": (self.n_obs_steps, 3),
+            "robot0_eef_rot_axis_angle": (self.n_obs_steps, 6),
+            "robot0_gripper_width": (self.n_obs_steps, 1),
+            "robot0_eef_rot_axis_angle_wrt_start": (self.n_obs_steps, 6)
         }
+
+    def _stack_last_n_obs(self, obs_history: list, n_steps: int) -> Dict[str, np.ndarray]:
+        """
+        Stack the last n observations from history.
+
+        Args:
+            obs_history: List of observation dictionaries
+            n_steps: Number of steps to stack
+
+        Returns:
+            Dictionary with stacked observations
+        """
+        assert len(obs_history) > 0, "Observation history cannot be empty"
+
+        result = dict()
+        for key in obs_history[-1].keys():
+            result[key] = self._stack_array_last_n(
+                [obs[key] for obs in obs_history],
+                n_steps
+            )
+        return result
+
+    def _stack_array_last_n(self, array_list: list, n_steps: int) -> np.ndarray:
+        """
+        Stack last n arrays from a list.
+
+        Args:
+            array_list: List of numpy arrays
+            n_steps: Number of steps to stack
+
+        Returns:
+            Stacked array with shape (n_steps,) + array_shape
+        """
+        assert len(array_list) > 0, "Array list cannot be empty"
+
+        result = np.zeros((n_steps,) + array_list[-1].shape,
+                         dtype=array_list[-1].dtype)
+        start_idx = -min(n_steps, len(array_list))
+        result[start_idx:] = np.array(array_list[start_idx:])
+        if n_steps > len(array_list):
+            # pad with the oldest available observation
+            result[:start_idx] = array_list[start_idx]
+        return result
 
     def __del__(self):
         """Cleanup on destruction."""
