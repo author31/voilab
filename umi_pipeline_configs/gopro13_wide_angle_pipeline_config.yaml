@@ -1,7 +1,7 @@
 00_process_video:
   instance: "umi.services.video_organization.VideoOrganizationService"
   config:
-    session_dir: "/home/hcis-s17/author_workdir/voilab/0826_basement_test"
+    session_dir: "video"
     input_patterns: ["*.MP4", "*.mp4"]
   
 01_extract_gopro_imu:
