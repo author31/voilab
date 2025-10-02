@@ -41,7 +41,7 @@ If you haven't installed Docker Desktop, you can download it from [here](https:/
 # Install exiftool for extracting metadata from GoPro videos
 sudo apt install -y exiftool
 # Run the UMI pipeline with the specified configuration file
-umi run-slam-pipeline umi_pipeline_configs/gopro13_wide_angle_pipeline_config.yaml
+uv run umi run-slam-pipeline umi_pipeline_configs/gopro13_wide_angle_pipeline_config.yaml
 ```
 
 ## Pipeline Configuration
