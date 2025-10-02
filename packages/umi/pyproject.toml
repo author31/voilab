@@ -26,7 +26,7 @@ dependencies = [
     "pyyaml==6.0",
     "tqdm==4.65",
     "zarr>=2.16",
-    "numcodecs==0.11",
+    "numcodecs==0.12.0",
     "dill==0.3.7",
     "einops==0.6.1",
     "scikit-video",
@@ -65,23 +65,14 @@ dependencies = [
     "numba==0.57",
     "threadpoolctl==3.2",
 
-    # Hardware interfaces
-    "v4l2py==2.2",
-    "ur-rtde==1.5.6",
-
     # Utilities
     "atomics==1.0.2",
     "pynput==1.7.6",
     "fastcrc==0.2",
     "PyExifTool==0.5",
 
-    # Robotics frameworks
-    "robomimic",
-    "free-mujoco-py",
-
     # VCS dependencies (Git and URL)
     "spnav @ https://github.com/cheng-chi/spnav/archive/c1c938ebe3cc542db4685e0d13850ff1abfdb943.tar.gz",
-    "robosuite @ https://github.com/cheng-chi/robosuite/archive/3f2c3116f1c0a1916e94bfa28da4d055927d1ab3.tar.gz",
     "py-gpmf-parser @ git+https://github.com/urbste/py-gpmf-parser.git",
     "imagecodecs>=2023.9.18",
 ]
