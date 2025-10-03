@@ -17,6 +17,7 @@
     timeout_multiple: 16
     max_lost_frames: 60
     slam_process_mode: create_map
+    slam_settings_file: "/ORB_SLAM3/Examples/Monocular-Inertial/gopro10_maxlens_fisheye_setting_v1_720.yaml"
 
 03_batch_slam:
   instance: "umi.services.slam_mapping.SLAMMappingService"
@@ -26,6 +27,7 @@
     timeout_multiple: 16
     max_lost_frames: 60
     slam_process_mode: batch_slam
+    slam_settings_file: "/ORB_SLAM3/Examples/Monocular-Inertial/gopro10_maxlens_fisheye_setting_v1_720.yaml"
 
 04_detect_aruco:
   instance: "umi.services.aruco_detection.ArucoDetectionService"
