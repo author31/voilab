@@ -60,6 +60,8 @@ class SLAMMappingService(BaseService):
         mask_target = mount_target / "slam_mask.png"
         map_mount_source = map_path
         map_mount_target = Path("/map") / map_mount_source.name
+        settings_source = Path(__file__).parent.parent / "defaults" / "calibration" / "gopro10_maxlens_fisheye_setting_v1_720_compatible.yaml"
+        settings_target = Path("/settings") / settings_source.name
         cmd = [
             "docker",
             "run",
@@ -67,12 +69,14 @@ class SLAMMappingService(BaseService):
             f"{input_path.resolve()}:/data",
             "--volume",
             f"{map_mount_source.parent.resolve()}:{map_mount_target.parent}",
+            "--volume",
+            f"{settings_source.resolve()}:{settings_target}",
             self.docker_image,
             "/ORB_SLAM3/Examples/Monocular-Inertial/gopro_slam",
             "--vocabulary",
             "/ORB_SLAM3/Vocabulary/ORBvoc.txt",
             "--setting",
-            "/ORB_SLAM3/Examples/Monocular-Inertial/gopro10_maxlens_fisheye_setting_v1_720.yaml",
+            str(settings_target),
             "--input_video",
             str(video_path),
             "--input_imu_json",
@@ -167,6 +171,8 @@ class SLAMMappingService(BaseService):
                 cv2.imwrite(str(mask_write_path.absolute()), slam_mask)
                 map_mount_source = map_path
                 map_mount_target = Path("/map") / map_mount_source.name
+                settings_source = Path(__file__).parent.parent / "defaults" / "calibration" / "gopro10_maxlens_fisheye_setting_v1_720_compatible.yaml"
+                settings_target = Path("/settings") / settings_source.name
                 cmd = [
                     "docker",
                     "run",
@@ -175,12 +181,14 @@ class SLAMMappingService(BaseService):
                     f"{video_dir}:/data",
                     "--volume",
                     f"{map_mount_source.parent}:{str(map_mount_target.parent)}",
+                    "--volume",
+                    f"{settings_source.resolve()}:{settings_target}",
                     self.docker_image,
                     "/ORB_SLAM3/Examples/Monocular-Inertial/gopro_slam",
                     "--vocabulary",
                     "/ORB_SLAM3/Vocabulary/ORBvoc.txt",
                     "--setting",
-                    "/ORB_SLAM3/Examples/Monocular-Inertial/gopro10_maxlens_fisheye_setting_v1_720.yaml",
+                    str(settings_target),
                     "--input_video",
                     str(video_path),
                     "--input_imu_json",
