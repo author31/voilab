@@ -174,6 +174,7 @@ class SimpleDatasetPosePublisher(Node):
                     if angle < min_angle or angle > max_angle:
                         self.get_logger().warn(f"Initial position {i} ({angle}) outside bounds for {link.name}: {link.bounds}")
 
+            # transform the target_pos's base to "panda_joint0" base
             initial_position = full_initial_position
 
             # Solve IK using IKPy

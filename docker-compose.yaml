@@ -3,14 +3,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    develop:
-      watch:
-        - action: sync
-          path: .
-          target: /workspace/voilab
-          ignore:
-            - .venv/
     volumes:
+      - .:/workspace/voilab
       - /tmp/.X11-unix:/tmp/.X11-unix
       - /usr/share/vulkan/icd.d:/usr/share/vulkan/icd.d:ro
     stdin_open: true
