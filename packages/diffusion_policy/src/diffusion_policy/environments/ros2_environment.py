@@ -1,5 +1,7 @@
 import numpy as np
 import time
+
+from umi.common.pose_util import mat_to_rot6d, pose_to_mat
 import transforms3d
 import cv2
 from typing import Dict, Optional, Tuple, Any
@@ -22,7 +24,7 @@ class ROS2Environment:
                  action_topic: str = '/joint_commands',
                  image_shape: Tuple[int, int, int] = (3, 224, 224),
                  timeout: float = 5.,
-                 n_obs_steps: int = 1,
+                 n_obs_steps: int = 2,
                  manager: Optional[ROS2Manager] = None):
         """
         Initialize ROS2 environment.
@@ -264,7 +266,31 @@ class ROS2Environment:
             print(f'Error converting message from {topic}: {e}')
 
     def _get_raw_sensor_data(self) -> Dict[str, any]:
-        """Get raw sensor data from subscribed topics."""
+        """
+        Get raw sensor data from subscribed topics.
+
+        Returns:
+            Dictionary containing raw sensor data with the following structure:
+
+            'rgb_image': Dict with keys:
+                - 'data': np.ndarray of shape [224, 224, 3] containing RGB image data
+                - 'header': ROS2 message header with timestamp and frame info
+                - 'encoding': str, image encoding (e.g., 'rgb8')
+                - 'height': int, image height in pixels
+                - 'width': int, image width in pixels
+                - 'type': str, message type identifier ('image')
+
+            'joint_states': Dict with keys:
+                - 'position': np.ndarray of shape [3], end-effector position [x, y, z]
+                - 'orientation': np.ndarray of shape [4], quaternion orientation [x, y, z, w]
+                - 'header': ROS2 message header or None
+                - 'type': str, message type identifier ('pose')
+
+            'gripper_width': Dict with keys:
+                - 'data': float, gripper width in meters
+                - 'type': str, message type identifier ('float64')
+        """
+        
         return {
             'rgb_image': self.infrastructure.get_data(self.rgb_topic),
             'joint_states': self.infrastructure.get_data(self.joint_states_topic),
@@ -278,50 +304,52 @@ class ROS2Environment:
     def _process_raw_observations(self, raw_data: Dict[str, any]) -> Dict[str, np.ndarray]:
         """
         Process raw sensor data into structured observations.
-
-        Args:
-            raw_data: Raw data from infrastructure
-
-        Returns:
-            Processed observation dictionary
         """
         # Extract RGB image
+        assert "rgb_image" in raw_data
+        assert "joint_states" in raw_data
+        assert "gripper_width" in raw_data
+
         rgb_obs = raw_data['rgb_image']['data']
 
-        # Extract end-effector position from Pose message
+        # Ensure RGB is in correct format (H, W, 3) and normalized to [0, 1]
+        if rgb_obs.dtype == np.uint8:
+            rgb_obs = rgb_obs.astype(np.float32) / 255.0
+
+        # Extract end-effector position
         joint_states = raw_data['joint_states']
-        if joint_states and 'position' in joint_states:
-            hand_pos = joint_states['position'][:3]  # Use the 3D position directly
-        else:
-            hand_pos = np.zeros(3)
+        agent_pos = joint_states['position'] # an np.array (x,y,z)
+        agent_ori = joint_states['orientation'] # an np.array (x,y,z,w)
 
-        # Extract rotation from Pose message quaternion
-        if joint_states and 'orientation' in joint_states:
-            orientation_quat = joint_states['orientation']
-            # Convert quaternion to rotation matrix, then to 6D representation
-            rot_matrix = transforms3d.quaternions.quat2mat(orientation_quat)
-            rot_6d = rot_matrix[:, :2].flatten()
-        else:
-            rot_6d = np.zeros(6)
+        # Quaternion to 6D conversion
+        rot_matrix = transforms3d.quaternions.quat2mat(agent_ori)
+        rot_6d = mat_to_rot6d(rot_matrix)
 
-        # Extract gripper width
-        gripper_width = np.array([raw_data['gripper_width']['data']])
+        # Store initial pose for relative calculation (on first call)
+        if not hasattr(self, 'start_pose_mat'): 
+            start_pose_mat = pose_to_mat(np.concatenate([
+              agent_pos,
+              transforms3d.quaternions.quat2mat(agent_ori)  # Need axis-angle, not matrix
+          ], axis=-1))
+            self.start_pose_mat = start_pose_mat
 
-        # Compute rotation relative to start (simplified for now)
-        if hasattr(self, 'start_orientation'):
-            start_rot_matrix = transforms3d.quaternions.quat2mat(self.start_orientation)
-            current_rot_matrix = transforms3d.quaternions.quat2mat(orientation_quat)
-            relative_rot_matrix = current_rot_matrix @ np.linalg.inv(start_rot_matrix)
-            rot_wrt_start_6d = relative_rot_matrix[:, :2].flatten()
-        else:
-            rot_wrt_start_6d = np.zeros(6)
+
+        # Current pose matrix (need proper axis-angle conversion)
+        current_axis_angle = transforms3d.euler.mat2euler(rot_matrix)  # Convert to Euler first
+        current_pose_mat = pose_to_mat(np.concatenate([agent_pos, current_axis_angle], axis=-1))
+
+        # Calculate relative rotation: R_relative = R_start⁻¹ × R_current
+        relative_pose_mat = np.linalg.inv(self.start_pose_mat) @ current_pose_mat
+
+        # Convert relative rotation to 6D
+        relative_rot_6d = mat_to_rot6d(relative_pose_mat[:3, :3])
 
         return {
             "camera0_rgb": rgb_obs,
-            "robot0_eef_pos": hand_pos,
+            "robot0_eef_pos": agent_pos,
             "robot0_eef_rot_axis_angle": rot_6d,
-            "robot0_gripper_width": gripper_width,
-            "robot0_eef_rot_axis_angle_wrt_start": rot_wrt_start_6d
+            "robot0_gripper_width": np.array(raw_data['gripper_width']['data']),
+            "robot0_eef_rot_axis_angle_wrt_start": relative_rot_6d
         }
 
     def _extract_euler_angles(self, joint_states: Dict) -> Optional[np.ndarray]:
@@ -421,9 +449,8 @@ class ROS2Environment:
         return {
             "camera0_rgb": (self.n_obs_steps,) + self.image_shape,
             "robot0_eef_pos": (self.n_obs_steps, 3),
-            "robot0_eef_rot_axis_angle": (self.n_obs_steps, 6),
+            "robot0_eef_quat": (self.n_obs_steps, 6),
             "robot0_gripper_width": (self.n_obs_steps, 1),
-            "robot0_eef_rot_axis_angle_wrt_start": (self.n_obs_steps, 6)
         }
 
     def _stack_last_n_obs(self, obs_history: list, n_steps: int) -> Dict[str, np.ndarray]:

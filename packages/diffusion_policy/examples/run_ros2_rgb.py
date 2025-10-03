@@ -27,22 +27,14 @@ def test_callback(topic, data):
 
     # Convert ROS Image to OpenCV format
     bridge = CvBridge()
+    img_data = data["raw_message"]
     try:
         # Check if data is a dictionary (likely from get_data method)
-        if isinstance(data, dict):
-            # Extract image data from dictionary
-            if 'data' in data:
-                # Assuming the dictionary contains raw image data
-                img_data = data['data']
-                if isinstance(img_data, np.ndarray):
-                    cv_image = img_data
-                else:
-                    # Convert to numpy array if needed
-                    cv_image = np.frombuffer(img_data, dtype=np.uint8)
-                    cv_image = cv_image.reshape(data.get('height', 480), data.get('width', 640), -1)
-            else:
-                print("No 'data' key in dictionary")
-                return
+        if isinstance(img_data, Image):
+            cv_image = np.frombuffer(img_data.data, dtype=np.uint8)
+            cv_image = cv_image.reshape(
+                getattr(img_data, 'height', 480), getattr(img_data, 'width', 640), -1
+            )
         else:
             # Data is likely a ROS Image message
             cv_image = bridge.imgmsg_to_cv2(data, desired_encoding='bgr8')

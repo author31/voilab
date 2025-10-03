@@ -119,15 +119,15 @@ class ROS2Runner(BaseImageRunner):
         """
         policy_obs = {}
 
-        # Process RGB image (shape: [n_steps, 3, H, W])
+        # Process RGB image (shape: [n_steps, H, W, 3] from environment)
         if 'camera0_rgb' in obs:
-            # The environment already stacks observations, so we have shape [n_steps, 3, H, W]
-            # Policy expects [batch, n_steps, 3, H, W]
-            rgb_img = obs['camera0_rgb']  # [n_steps, 3, H, W]
+            rgb_img = obs['camera0_rgb']  # [n_steps, H, W, 3]
+            # Transpose from (n_steps, H, W, 3) to (n_steps, 3, H, W) then add batch dim
+            # rgb_img = rgb_img.transpose(0, 3, 1, 2)  # [n_steps, 3, H, W]
             policy_obs['camera0_rgb'] = torch.from_numpy(rgb_img).float().unsqueeze(0)  # [1, n_steps, 3, H, W]
 
         # Process low-dimensional observations (shape: [n_steps, dim])
-        for key in ['robot0_eef_pos', 'robot0_eef_rot_axis_angle', 'robot0_gripper_width']:
+        for key in ['robot0_eef_pos', 'robot0_eef_quat', 'robot0_gripper_width']:
             if key in obs:
                 obs_data = obs[key]  # [n_steps, dim]
                 policy_obs[key] = torch.from_numpy(obs_data).float().unsqueeze(0)  # [1, n_steps, dim]
@@ -173,45 +173,16 @@ class ROS2Runner(BaseImageRunner):
         prev_action = None
         done = False
         while not done:
-            obs_dict = {}
-            for key in obs.keys():
-                slice_start = -(self.key_horizon[key] + self.obs_latency_steps)
-                slice_end = None if self.obs_latency_steps == 0 else -self.obs_latency_steps
-                obs_dict[key] = obs[key][:, slice_start: slice_end]
-
+            obs_dict = self._process_observation_for_policy(obs)
             current_pos = copy.copy(obs_dict['robot0_eef_pos'][:, -1:])
-            current_rot_mat = copy.copy(self.rot_quat2mat.forward(obs_dict['robot0_eef_quat'][:, -1:]))
-
-            # solve relative obs
-            obs_dict['robot0_eef_pos'], obs_dict['robot0_eef_quat'] = compute_relative_pose(
-                pos=obs_dict['robot0_eef_pos'],
-                rot=obs_dict['robot0_eef_quat'],
-                base_pos=current_pos if self.obs_pose_repr == 'rel' else np.zeros(3, dtype=np.float32),
-                base_rot_mat=current_rot_mat if self.obs_pose_repr == 'rel' else np.eye(3, dtype=np.float32),
-                rot_transformer_to_mat=self.rot_quat2mat,
-                rot_transformer_to_target=self.rot_mat2target['robot0_eef_quat']
-            )
 
             obs_dict = dict_apply(
-                obs_dict, 
-                lambda x: torch.from_numpy(x).to(device=device)
+                obs_dict,
+                lambda x: x.to(device=device)
             )
-            fixed_action_prefix = None
-            if prev_action is not None:
-                action_pos, action_rot = compute_relative_pose(
-                    pos=prev_action[..., :3],
-                    rot=prev_action[..., 3: -1],
-                    base_pos=current_pos if self.action_pose_repr == 'rel' else np.zeros(3, dtype=np.float32),
-                    base_rot_mat=current_rot_mat if self.action_pose_repr == 'rel' else np.eye(3, dtype=np.float32),
-                    rot_transformer_to_mat=self.rot_aa2mat,
-                    rot_transformer_to_target=self.rot_mat2target['action']
-                )
-                action_gripper = prev_action[..., -1:]
-                fixed_action_prefix = np.concatenate([action_pos, action_rot, action_gripper], axis=-1)
-                fixed_action_prefix = torch.from_numpy(fixed_action_prefix).to(device=device)
 
             with torch.no_grad():
-                action_dict = policy.predict_action(obs_dict, fixed_action_prefix)
+                action_dict = policy.predict_action(obs_dict)
 
             # WARN: performance issue
             # device_transfer
