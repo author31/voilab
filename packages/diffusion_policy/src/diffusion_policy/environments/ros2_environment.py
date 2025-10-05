@@ -9,6 +9,9 @@ from diffusion_policy.infrastructure.ros2_infrastructure import ROS2Manager
 from cv_bridge import CvBridge
 
 
+import numpy as np
+
+
 class ROS2Environment:
     """
     ROS2 environment interface for robotics tasks.
@@ -19,7 +22,7 @@ class ROS2Environment:
 
     def __init__(self,
                  rgb_topic: str = '/rgb',
-                 joint_states_topic: str = '/eef_state',
+                 joint_states_topic: str = '/eef_states',
                  gripper_topic: str = '/gripper_width',
                  action_topic: str = '/joint_commands',
                  image_shape: Tuple[int, int, int] = (3, 224, 224),
@@ -108,7 +111,7 @@ class ROS2Environment:
             print('Environment reset successfully')
 
             # Return initial observation
-            return self.get_obs()
+            return self.get_obs(n_steps=self.n_obs_steps)
 
         except Exception as e:
             print(f'Error resetting environment: {e}')
@@ -176,7 +179,6 @@ class ROS2Environment:
         if n_steps is None:
             n_steps = self.n_obs_steps
 
-        # Return stacked observations
         return self._stack_last_n_obs(self.obs_history, n_steps)
 
     def _publish_action(self, action: np.ndarray):
@@ -327,28 +329,18 @@ class ROS2Environment:
 
         # Store initial pose for relative calculation (on first call)
         if not hasattr(self, 'start_pose_mat'): 
-            start_pose_mat = pose_to_mat(np.concatenate([
-              agent_pos,
-              transforms3d.quaternions.quat2mat(agent_ori)  # Need axis-angle, not matrix
-          ], axis=-1))
-            self.start_pose_mat = start_pose_mat
-
+            self.start_pose_mat = rot_matrix
 
         # Current pose matrix (need proper axis-angle conversion)
-        current_axis_angle = transforms3d.euler.mat2euler(rot_matrix)  # Convert to Euler first
-        current_pose_mat = pose_to_mat(np.concatenate([agent_pos, current_axis_angle], axis=-1))
-
-        # Calculate relative rotation: R_relative = R_start⁻¹ × R_current
-        relative_pose_mat = np.linalg.inv(self.start_pose_mat) @ current_pose_mat
-
-        # Convert relative rotation to 6D
-        relative_rot_6d = mat_to_rot6d(relative_pose_mat[:3, :3])
+        start_rot_inverse = self.start_pose_mat.T
+        relative_rot_matrix = start_rot_inverse @ rot_matrix
+        relative_rot_6d = mat_to_rot6d(relative_rot_matrix)
 
         return {
             "camera0_rgb": rgb_obs,
             "robot0_eef_pos": agent_pos,
             "robot0_eef_rot_axis_angle": rot_6d,
-            "robot0_gripper_width": np.array(raw_data['gripper_width']['data']),
+            "robot0_gripper_width": np.array([raw_data['gripper_width']['data']]),
             "robot0_eef_rot_axis_angle_wrt_start": relative_rot_6d
         }
 

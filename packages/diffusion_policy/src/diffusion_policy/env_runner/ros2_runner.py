@@ -38,7 +38,8 @@ class ROS2Runner(BaseImageRunner):
         save_observation_data: bool = False,
         tqdm_interval_sec=5.0,
         obs_latency_steps=0,
-        n_obs_steps: int = 1,
+        n_obs_steps: int = 2,
+        n_action_steps: int = 1,
         pose_repr: dict = {}
     ):
         """
@@ -54,6 +55,7 @@ class ROS2Runner(BaseImageRunner):
             tqdm_interval_sec: Interval for tqdm updates
             obs_latency_steps: Observation latency steps
             n_obs_steps: Number of observation steps to stack
+            n_action_steps: Number of action steps to execute
             pose_repr: Pose representation configuration
         """
         super().__init__(output_dir)
@@ -67,6 +69,7 @@ class ROS2Runner(BaseImageRunner):
         self.tqdm_interval_sec = tqdm_interval_sec
         self.obs_latency_steps = obs_latency_steps
         self.n_obs_steps = n_obs_steps
+        self.n_action_steps = n_action_steps
         self.shape_meta = shape_meta
         self.pose_repr = pose_repr
 
@@ -123,14 +126,13 @@ class ROS2Runner(BaseImageRunner):
         if 'camera0_rgb' in obs:
             rgb_img = obs['camera0_rgb']  # [n_steps, H, W, 3]
             # Transpose from (n_steps, H, W, 3) to (n_steps, 3, H, W) then add batch dim
-            # rgb_img = rgb_img.transpose(0, 3, 1, 2)  # [n_steps, 3, H, W]
+            rgb_img = rgb_img.transpose(0, 3, 1, 2)  # [n_steps, 3, H, W]
             policy_obs['camera0_rgb'] = torch.from_numpy(rgb_img).float().unsqueeze(0)  # [1, n_steps, 3, H, W]
 
         # Process low-dimensional observations (shape: [n_steps, dim])
-        for key in ['robot0_eef_pos', 'robot0_eef_quat', 'robot0_gripper_width']:
-            if key in obs:
-                obs_data = obs[key]  # [n_steps, dim]
-                policy_obs[key] = torch.from_numpy(obs_data).float().unsqueeze(0)  # [1, n_steps, dim]
+        for k, v in obs.items():
+            if k == "camera0_rgb": continue
+            policy_obs[k] = torch.from_numpy(v).float().unsqueeze(0)  # [1, n_steps, dim]
 
         return policy_obs
 
@@ -166,57 +168,78 @@ class ROS2Runner(BaseImageRunner):
         if not env:
             raise RuntimeError("Environment is not initialized or has been closed.")
 
-        # start rollout
-        obs = env.reset()
-        policy.reset()
+        # Initialize results storage
+        all_results = []
+        episode_stats = []
 
-        prev_action = None
-        done = False
-        while not done:
-            obs_dict = self._process_observation_for_policy(obs)
-            current_pos = copy.copy(obs_dict['robot0_eef_pos'][:, -1:])
+        for episode_idx in range(self.n_episodes):
+            # start rollout
+            obs = env.reset()
+            policy.reset()
 
-            obs_dict = dict_apply(
-                obs_dict,
-                lambda x: x.to(device=device)
-            )
+            episode_data = []
+            step_count = 0
+            done = False
 
-            with torch.no_grad():
-                action_dict = policy.predict_action(obs_dict)
+            while not done and step_count < self.max_steps_per_episode:
+                obs_dict = self._process_observation_for_policy(obs)
+                obs_dict = dict_apply(
+                    obs_dict,
+                    lambda x: x.to(device=device)
+                )
 
-            # WARN: performance issue
-            # device_transfer
-            np_action_dict = dict_apply(
-                action_dict,
-                lambda x: x.detach().to('cpu').numpy()
-            )
-            action = np_action_dict['action']
-            if not np.all(np.isfinite(action)):
-                logger.error(action)
-                raise RuntimeError("Nan or Inf action")
+                with torch.no_grad():
+                    action_dict = policy.predict_action(obs_dict)
 
-            # action rotation transformer
-            action_pos, action_rot = compute_relative_pose(
-                pos=action[..., :3],
-                rot=action[..., 3: -1],
-                base_pos=current_pos if self.action_pose_repr == 'rel' else np.zeros(3, dtype=np.float32),
-                base_rot_mat=current_rot_mat if self.action_pose_repr == 'rel' else np.eye(3, dtype=np.float32),
-                rot_transformer_to_mat=self.rot_aa2mat,
-                rot_transformer_to_target=self.rot_mat2target['action'],
-                backward=True
-            )
-            action_gripper = action[..., -1:]
-            action_all = np.concatenate([action_pos, action_rot, action_gripper], axis=-1)
+                # Extract action and convert to numpy
+                # action shape: [1, action_horizon, action_dim] -> take first action
+                action = action_dict['action'].detach().cpu().numpy()[0]  # [action_horizon, action_dim]
 
-            env_action = action_all[:, self.obs_latency_steps: self.obs_latency_steps + self.n_action_steps, :]
-            prev_action = env_action[:, -self.obs_latency_steps:, :]
+                # Take the first action from the predicted sequence
+                env_action = action[0]  # [action_dim]
 
+                if not np.all(np.isfinite(env_action)):
+                    logger.error(env_action)
+                    raise RuntimeError("Nan or Inf action")
 
-            obs, reward, done, info = env.step(env_action)
-            done = np.all(done)
-            _ = env.reset()
+                # Execute action in environment
+                obs, reward, done, info = env.step(env_action)
 
-        return {}
+                # Store step data
+                step_data = {
+                    'obs': obs_dict,
+                    'action': action,
+                    'env_action': env_action,
+                    'reward': reward,
+                    'done': done,
+                    'info': info
+                }
+                episode_data.append(step_data)
+                step_count += 1
+
+            # Store episode results
+            episode_stats.append({
+                'episode_idx': episode_idx,
+                'episode_length': step_count,
+                'success': done,
+                'total_reward': sum(step['reward'] for step in episode_data)
+            })
+
+            if self.save_observation_data:
+                all_results.extend(episode_data)
+
+        # Compile final results
+        results = {
+            'episode_stats': episode_stats,
+            'total_episodes': self.n_episodes,
+            'avg_episode_length': np.mean([ep['episode_length'] for ep in episode_stats]),
+            'success_rate': np.mean([ep['success'] for ep in episode_stats])
+        }
+
+        if self.save_observation_data:
+            results['all_step_data'] = all_results
+
+        return results
 
     def close(self):
         """Clean up runner resources."""
