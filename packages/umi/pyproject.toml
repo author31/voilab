@@ -11,7 +11,7 @@ pythonpath = [
 [project]
 name = "umi"
 version = "0.1.0" 
-description = "Dependencies for the Universal Manipulation Interface package."
+description = "Dependencies for the Universal Manipulation Interface project."
 readme = "README.md"
 requires-python = ">=3.10" 
 

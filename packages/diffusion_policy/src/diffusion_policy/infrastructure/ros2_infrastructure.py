@@ -171,31 +171,25 @@ class ROS2Infrastructure(Node):
             data = self.data_storage[topic_key]
             return data.copy() if data is not None else None
 
-    def publish_message(self, topic: str, msg_data: Dict[str, Any]):
+    def publish_message(self, topic: str, msg, msg_type: Optional[Any] = None):
         """
         Publish message to a topic.
 
         Args:
             topic: Topic name
-            msg_data: Dictionary with message data
+            msg: ROS2 message object or dictionary with message data (for backward compatibility)
+            msg_type: Optional ROS2 message type class for publisher creation
         """
         try:
-            # Create appropriate message type based on data
-            msg = self._create_message(msg_data)
-
-            # Get or create publisher
             topic_key = self._get_topic_key(topic)
             publisher_attr = f"publisher_{topic_key}"
 
             if not hasattr(self, publisher_attr):
-                # Determine message type from data
-                msg_type = self._get_message_type(msg_data)
                 publisher = self.create_publisher(msg_type, topic, self.default_qos)
                 setattr(self, publisher_attr, publisher)
             else:
                 publisher = getattr(self, publisher_attr)
 
-            # Publish message
             publisher.publish(msg)
 
         except Exception as e:

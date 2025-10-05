@@ -1,12 +1,17 @@
-import numpy as np
 import time
+import numpy as np
+import transforms3d
+
 
 from umi.common.pose_util import mat_to_rot6d, pose_to_mat
-import transforms3d
-import cv2
 from typing import Dict, Optional, Tuple, Any
 from diffusion_policy.infrastructure.ros2_infrastructure import ROS2Manager
 from cv_bridge import CvBridge
+from diffusion_policy.model.common.rotation_transformer import transform_rotation
+from scipy.spatial.transform import Rotation
+from loguru import logger
+from ikpy.chain import Chain
+
 
 
 class ROS2Environment:
@@ -18,10 +23,11 @@ class ROS2Environment:
     """
 
     def __init__(self,
+                 urdf_path: str,
                  rgb_topic: str = '/rgb',
-                 joint_states_topic: str = '/eef_state',
+                 joint_states_topic: str = '/eef_states',
                  gripper_topic: str = '/gripper_width',
-                 action_topic: str = '/joint_commands',
+                 action_topic: str = '/joint_states',
                  image_shape: Tuple[int, int, int] = (3, 224, 224),
                  timeout: float = 5.,
                  n_obs_steps: int = 2,
@@ -47,6 +53,21 @@ class ROS2Environment:
         self.image_shape = image_shape
         self.timeout = timeout
         self.n_obs_steps = n_obs_steps
+        self.robot_chain = self.load_robot_model(urdf_path)
+
+        # Initialize neutral joint configuration for Franka Panda
+        self.neutral_joint_angles = [
+            0.0,    # panda_joint1
+            -0.785, # panda_joint2
+            0.0,    # panda_joint3
+            -2.356, # panda_joint4
+            0.0,    # panda_joint5
+            1.571,  # panda_joint6
+            0.785,  # panda_joint7
+        ]
+
+        # Initialize last_joint_angles to match full chain length (including fixed joints)
+        self.last_joint_angles = [0.0] * len(self.robot_chain.links)
 
         # Initialize observation history for stacking
         self.obs_history = []
@@ -86,6 +107,33 @@ class ROS2Environment:
         required_topics = [self.rgb_topic, self.joint_states_topic, self.gripper_topic]
         return self.infrastructure.wait_for_data(required_topics, timeout)
 
+
+    def load_robot_model(self, urdf_path):
+        """Loads the robot kinematics chain from a URDF file using IKPy."""
+        try:
+            logger.info(f"Loading robot URDF from '{urdf_path}'...")
+
+            # Active joints mask for Franka Panda (7 revolute joints only)
+            # This matches the working validation script - fixed joints are handled automatically
+            self.active_joints_mask = [False, True, True, True, True, True, True, True, False]
+
+            robot_chain = Chain.from_urdf_file(
+                urdf_path,
+                base_elements=["panda_link0"],
+                active_links_mask=self.active_joints_mask
+            )
+
+            logger.info(f"Robot chain loaded successfully")
+            logger.info(f"Number of links in chain: {len(robot_chain.links)}")
+            logger.info(f"Active joints count: {sum(self.active_joints_mask)}")
+            logger.info(f"Expected joint angles length: {sum(self.active_joints_mask)}")
+
+            return robot_chain
+
+        except Exception as e:
+            logger.error(f"Failed to load robot model: {e}")
+            raise
+
     def reset(self):
         """
         Reset the environment to initial state.
@@ -108,7 +156,7 @@ class ROS2Environment:
             print('Environment reset successfully')
 
             # Return initial observation
-            return self.get_obs()
+            return self.get_obs(n_steps=self.n_obs_steps)
 
         except Exception as e:
             print(f'Error resetting environment: {e}')
@@ -119,20 +167,61 @@ class ROS2Environment:
         Execute action in the environment.
 
         Args:
-            action: Action array to execute (format depends on robot configuration)
+            action: Action array, (Ta, 10), to execute. Format: [x,y,z, rot_6d(6), gripper]
 
         Returns:
-            Tuple of (observation, reward, done, info) - matching gym interface
+            Tuple of (observation, reward, done, info).
         """
         try:
-            # Publish action through infrastructure
-            self._publish_action(action)
+            # Validate action shape
+            if len(action.shape) != 2 or action.shape[1] != 10:
+                raise ValueError(f"Expected action shape [N, 10], got {action.shape}")
+
+            current_ik_guess = self.last_joint_angles
+
+            for robot_step in range(action.shape[0]):
+                action_position = action[robot_step, 0:3]
+
+                action_rotation_6d = action[robot_step, 3:9].reshape(1, 6) # Keep as 2D for compatibility
+                action_rotation = transform_rotation(
+                    action_rotation_6d, from_rep='rotation_6d', to_rep='quaternion'
+                )
+
+                # Extract gripper width (element 9, 10th element)
+                gripper_width = action[robot_step, 9] # Single value for gripper
+                rot = Rotation.from_quat(action_rotation[0]) # Use first (and only) rotation
+                target_orientation_matrix = rot.as_matrix()
+
+                # Prepare initial position for IK solver
+                if len(current_ik_guess) < len(self.robot_chain.links):
+                    initial_ik_position = list(current_ik_guess) + [0.0] * (len(self.robot_chain.links) - len(current_ik_guess))
+                else:
+                    initial_ik_position = current_ik_guess
+
+                joint_angles = self.robot_chain.inverse_kinematics(
+                    target_position=action_position,
+                    target_orientation=target_orientation_matrix,
+                    orientation_mode="all",
+                    initial_position=initial_ik_position,
+                )
+
+                # Extract active joint angles
+                active_joint_angles = [joint_angles[i] for i, active in enumerate(self.active_joints_mask) if active]
+
+                # Update tracking variables
+                current_ik_guess = joint_angles
+                self.last_joint_angles = active_joint_angles
+
+                # Publish joint states for robot arm
+                self._publish_joint_states(active_joint_angles)
+
+                # Publish gripper command
+                self._publish_gripper_command(gripper_width)
+
 
             # Get new observation
             obs = self.get_obs()
 
-            # For now, return dummy reward/done/info
-            # These can be customized based on specific task requirements
             reward = 0.0
             done = False
             info = {}
@@ -176,40 +265,32 @@ class ROS2Environment:
         if n_steps is None:
             n_steps = self.n_obs_steps
 
-        # Return stacked observations
         return self._stack_last_n_obs(self.obs_history, n_steps)
 
-    def _publish_action(self, action: np.ndarray):
-        """Publish action to the action topic."""
-        from geometry_msgs.msg import Twist
+    def _publish_joint_states(self, joint_states: np.ndarray):
+        """Publish joint states to the action topic."""
+        from sensor_msgs.msg import JointState
 
-        # TODO: Check "/joint_command" topic, it may not using Twist msg
+        joint_state_msg = JointState()
+        joint_state_msg.header.stamp = self.infrastructure.get_clock().now().to_msg()
+        joint_state_msg.name = [
+            'panda_joint1', 'panda_joint2', 'panda_joint3',
+            'panda_joint4', 'panda_joint5', 'panda_joint6', 'panda_joint7'
+        ]
 
-        # Convert action to Twist message
-        twist_msg = Twist()
-        if len(action) >= 3:
-            twist_msg.linear.x = float(action[0])
-            twist_msg.linear.y = float(action[1])
-            twist_msg.linear.z = float(action[2])
-        if len(action) >= 6:
-            twist_msg.angular.x = float(action[3])
-            twist_msg.angular.y = float(action[4])
-            twist_msg.angular.z = float(action[5])
+        joint_state_msg.position = joint_states.tolist()
+        self.infrastructure.publish_message(self.action_topic, joint_state_msg, JointState)
 
-        # Publish using infrastructure with QoS profile
-        self.infrastructure.publish_message(self.action_topic, {
-            'type': 'twist',
-            'linear': {
-                'x': twist_msg.linear.x,
-                'y': twist_msg.linear.y,
-                'z': twist_msg.linear.z
-            },
-            'angular': {
-                'x': twist_msg.angular.x,
-                'y': twist_msg.angular.y,
-                'z': twist_msg.angular.z
-            }
-        })
+    def _publish_gripper_command(self, gripper_width: float):
+        """Publish gripper command to the gripper topic."""
+        from std_msgs.msg import Float64
+
+        gripper_msg = Float64()
+        gripper_msg.data = float(gripper_width)
+
+        # Use the gripper_topic for publishing commands
+        # Note: In a real setup, you might want a separate command topic
+        self.infrastructure.publish_message('/gripper_command', gripper_msg, Float64)
 
     def _convert_message(self, topic: str, raw_data: Dict[str, Any]):
         """
@@ -221,8 +302,7 @@ class ROS2Environment:
         """
         try:
             msg = raw_data.get('raw_message')
-            if msg is None:
-                return
+            if msg is None: return
 
             # Convert message based on topic
             if topic == self.rgb_topic:
@@ -327,28 +407,18 @@ class ROS2Environment:
 
         # Store initial pose for relative calculation (on first call)
         if not hasattr(self, 'start_pose_mat'): 
-            start_pose_mat = pose_to_mat(np.concatenate([
-              agent_pos,
-              transforms3d.quaternions.quat2mat(agent_ori)  # Need axis-angle, not matrix
-          ], axis=-1))
-            self.start_pose_mat = start_pose_mat
-
+            self.start_pose_mat = rot_matrix
 
         # Current pose matrix (need proper axis-angle conversion)
-        current_axis_angle = transforms3d.euler.mat2euler(rot_matrix)  # Convert to Euler first
-        current_pose_mat = pose_to_mat(np.concatenate([agent_pos, current_axis_angle], axis=-1))
-
-        # Calculate relative rotation: R_relative = R_start⁻¹ × R_current
-        relative_pose_mat = np.linalg.inv(self.start_pose_mat) @ current_pose_mat
-
-        # Convert relative rotation to 6D
-        relative_rot_6d = mat_to_rot6d(relative_pose_mat[:3, :3])
+        start_rot_inverse = self.start_pose_mat.T
+        relative_rot_matrix = start_rot_inverse @ rot_matrix
+        relative_rot_6d = mat_to_rot6d(relative_rot_matrix)
 
         return {
             "camera0_rgb": rgb_obs,
             "robot0_eef_pos": agent_pos,
             "robot0_eef_rot_axis_angle": rot_6d,
-            "robot0_gripper_width": np.array(raw_data['gripper_width']['data']),
+            "robot0_gripper_width": np.array([raw_data['gripper_width']['data']]),
             "robot0_eef_rot_axis_angle_wrt_start": relative_rot_6d
         }
 

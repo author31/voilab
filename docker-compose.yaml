@@ -15,6 +15,13 @@ services:
       - DISPLAY=${DISPLAY:-:1}
       - VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json
       - NVIDIA_DRIVER_CAPABILITIES=all,graphics,display,utility,compute
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     runtime: nvidia
     network_mode: host
     command: >

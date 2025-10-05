@@ -8,9 +8,14 @@ Dataset structure:
      ├── camera0_rgb (T, H, W, 3) uint8
      ├── robot0_demo_end_pose (T, 6)
      ├── robot0_demo_start_pose (T, 6)
-     ├── robot0_eef_pos (T, 3)
-     ├── robot0_eef_rot_axis_angle (T, 3)
+     ├── robot0_eef_pos (T, 3)  # POSITIONS IN ARUCO TAG COORDINATE FRAME
+     ├── robot0_eef_rot_axis_angle (T, 3)  # ORIENTATIONS IN ARUCO TAG COORDINATE FRAME
      └── robot0_gripper_width (T, 1)
+
+Coordinate Systems:
+    - Dataset poses are in ArUco tag coordinate frame (from dataset_planning.py)
+    - IK solver expects poses in robot base coordinate frame (panda_link0)
+    - This script handles the coordinate transformation automatically
 
 Published to /joint_command (sensor_msgs/JointState):
     - header: timestamp and frame_id
@@ -30,6 +35,7 @@ import numpy as np
 from pathlib import Path
 import zarr
 import zipfile
+import json
 from scipy.spatial.transform import Rotation
 from ikpy.chain import Chain
 from sensor_msgs.msg import JointState
@@ -38,16 +44,20 @@ from sensor_msgs.msg import JointState
 class SimpleDatasetPosePublisher(Node):
     """Simplified ROS2 Node to publish joint states from dataset using IKPy solver."""
 
-    def __init__(self, dataset_path, urdf_path, topic, publish_rate):
+    def __init__(self, dataset_path, urdf_path, topic, publish_rate, coord_transform_path=None):
         super().__init__('simple_dataset_pose_publisher')
 
         self.dataset_path = dataset_path
         self.urdf_path = urdf_path
         self.topic = topic
         self.publish_rate = publish_rate
+        self.coord_transform_path = coord_transform_path
 
         # Create publisher for joint states
         self.publisher_ = self.create_publisher(JointState, topic, 10)
+
+        # Load coordinate transformation if provided
+        self.coord_transform = self.load_coordinate_transform(coord_transform_path)
 
         # Load dataset and robot model
         self.data = self.load_dataset(dataset_path)
@@ -75,6 +85,40 @@ class SimpleDatasetPosePublisher(Node):
         self.get_logger().info(f'Simple Dataset Pose Publisher started')
         self.get_logger().info(f'Publishing to topic: {topic}')
         self.get_logger().info(f'Dataset contains {self.total_steps} timesteps')
+
+    def load_coordinate_transform(self, coord_transform_path):
+        """Load coordinate transformation matrix from file."""
+        if coord_transform_path is None:
+            self.get_logger().info("No coordinate transformation provided - assuming dataset poses are in robot base frame")
+            return None
+
+        try:
+            transform_path = Path(coord_transform_path)
+            if not transform_path.exists():
+                self.get_logger().error(f"Coordinate transformation file not found: {transform_path}")
+                return None
+
+            with open(transform_path, 'r') as f:
+                transform_data = json.load(f)
+
+            # Handle different transformation formats
+            if 'tx_robot_tag' in transform_data:
+                tx_robot_tag = np.array(transform_data['tx_robot_tag'])
+            elif 'tx_tag_robot' in transform_data:
+                # Invert if we have tag-to-robot instead of robot-to-tag
+                tx_tag_robot = np.array(transform_data['tx_tag_robot'])
+                tx_robot_tag = np.linalg.inv(tx_tag_robot)
+            else:
+                self.get_logger().error("Transformation file must contain 'tx_robot_tag' or 'tx_tag_robot'")
+                return None
+
+            self.get_logger().info(f"Loaded coordinate transformation from: {transform_path}")
+            self.get_logger().info(f"Transformation matrix shape: {tx_robot_tag.shape}")
+            return tx_robot_tag
+
+        except Exception as e:
+            self.get_logger().error(f"Failed to load coordinate transformation: {e}")
+            return None
 
     def get_neutral_joint_config(self):
         """Get a neutral joint configuration for the Franka Panda robot."""
@@ -133,20 +177,65 @@ class SimpleDatasetPosePublisher(Node):
             self.get_logger().error(f"Failed to load robot model: {e}")
             raise
 
+    def transform_pose_to_robot_frame(self, pos, rot_axis_angle):
+        """
+        Transform pose from ArUco tag frame to robot base frame.
+
+        Args:
+            pos: Position in ArUco tag frame [x, y, z]
+            rot_axis_angle: Rotation in ArUco tag frame [rx, ry, rz] (axis-angle)
+
+        Returns:
+            tuple: (pos_robot, rot_robot) in robot base frame
+        """
+        if self.coord_transform is None:
+            # No transformation needed - assume dataset is already in robot frame
+            return pos, rot_axis_angle
+
+        try:
+            # Convert axis-angle to rotation matrix
+            rot = Rotation.from_rotvec(rot_axis_angle)
+            rot_matrix = rot.as_matrix()
+
+            # Create 4x4 transformation matrix for the pose
+            pose_tag = np.zeros((4, 4))
+            pose_tag[:3, :3] = rot_matrix
+            pose_tag[:3, 3] = pos
+            pose_tag[3, 3] = 1.0
+
+            # Apply coordinate transformation: pose_robot = tx_robot_tag @ pose_tag
+            pose_robot = self.coord_transform @ pose_tag
+
+            # Extract position and rotation from transformed pose
+            pos_robot = pose_robot[:3, 3]
+            rot_matrix_robot = pose_robot[:3, :3]
+
+            # Convert rotation matrix back to axis-angle
+            rot_robot = Rotation.from_matrix(rot_matrix_robot).as_rotvec()
+
+            return pos_robot, rot_robot
+
+        except Exception as e:
+            self.get_logger().error(f"Failed to transform pose: {e}")
+            return pos, rot_axis_angle  # Return original pose if transformation fails
+
     def solve_ik(self, target_pos, target_rot):
         """
         Solve inverse kinematics for target pose using IKPy.
 
         Args:
-            target_pos: Target position [x, y, z]
-            target_rot: Target rotation as axis-angle [rx, ry, rz]
+            target_pos: Target position [x, y, z] (will be transformed to robot frame if needed)
+            target_rot: Target rotation as axis-angle [rx, ry, rz] (will be transformed to robot frame if needed)
 
         Returns:
             list of joint angles for active joints, or None if IK fails
         """
         try:
+            # Transform pose from ArUco tag frame to robot base frame if needed
+            transformed_pos, transformed_rot = self.transform_pose_to_robot_frame(target_pos, target_rot)
+
             # Convert axis-angle to rotation matrix
-            rot = Rotation.from_rotvec(target_rot)
+            rot = Rotation.from_rotvec(transformed_rot)
             target_orientation_matrix = rot.as_matrix()
 
             # Use last successful pose as initial guess, otherwise neutral
@@ -179,31 +268,31 @@ class SimpleDatasetPosePublisher(Node):
 
             # Solve IK using IKPy
             calculated_joints = self.robot_chain.inverse_kinematics(
-                target_position=target_pos,
+                target_position=transformed_pos,
                 target_orientation=target_orientation_matrix,
                 orientation_mode="all",
                 initial_position=initial_position
             )
 
-            # Filter to get only active joint angles (excluding base and end joints)
             active_joint_angles = [calculated_joints[i] for i, active in enumerate(self.active_joints_mask) if active]
 
-            # Debug: Log results
             self.get_logger().debug(f"IK returned {len(calculated_joints)} joint angles")
             self.get_logger().debug(f"Filtered to {len(active_joint_angles)} active joints: {active_joint_angles}")
 
-            # Validate joint angles
             if self.validate_joint_angles(active_joint_angles):
                 self.last_joint_angles = active_joint_angles  # Store for next iteration
                 return active_joint_angles
-            else:
-                self.get_logger().warn(f"Joint angles validation failed: {active_joint_angles}")
-                return None
+
+            self.get_logger().warn(f"Joint angles validation failed: {active_joint_angles}")
+            return None
 
         except Exception as e:
             self.get_logger().warn(f"IK solver failed: {e}")
-            self.get_logger().debug(f"Target position: {target_pos}")
-            self.get_logger().debug(f"Target rotation: {target_rot}")
+            self.get_logger().debug(f"Original target position (ArUco frame): {target_pos}")
+            self.get_logger().debug(f"Original target rotation (ArUco frame): {target_rot}")
+            if self.coord_transform is not None:
+                self.get_logger().debug(f"Transformed target position (robot frame): {transformed_pos}")
+                self.get_logger().debug(f"Transformed target rotation (robot frame): {transformed_rot}")
             return None
 
     def validate_joint_angles(self, joint_angles):
@@ -247,12 +336,12 @@ class SimpleDatasetPosePublisher(Node):
                 return False
 
         try:
-            # Extract pose data from dataset
+            # Extract pose data from dataset (in ArUco tag coordinate frame)
             target_pos = self.data['robot0_eef_pos'][self.current_step]
             target_rot = self.data['robot0_eef_rot_axis_angle'][self.current_step]
             gripper_width = self.data['robot0_gripper_width'][self.current_step][0]
 
-            # Solve IK to get joint angles
+            # Solve IK to get joint angles (handles coordinate transformation internally)
             joint_angles = self.solve_ik(target_pos, target_rot)
 
             if joint_angles is None:
@@ -351,6 +440,12 @@ def parse_args():
         default=2.0,
         help='Delay between loops in seconds (default: 2.0)'
     )
+    parser.add_argument(
+        '--coord_transform',
+        type=str,
+        default=None,
+        help='Path to coordinate transformation JSON file (tx_robot_tag or tx_tag_robot)'
+    )
 
     return parser.parse_args()
 
@@ -385,7 +480,7 @@ def main():
 
         # Create publisher node
         publisher_node = SimpleDatasetPosePublisher(
-            str(dataset_path), str(urdf_path), args.topic, args.publish_rate
+            str(dataset_path), str(urdf_path), args.topic, args.publish_rate, args.coord_transform
         )
         publisher_node.loop_enabled = args.loop
         publisher_node.episode_delay = args.episode_delay

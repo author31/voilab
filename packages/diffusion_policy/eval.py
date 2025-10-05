@@ -27,7 +27,8 @@ from diffusion_policy.workspace.base_workspace import BaseWorkspace
 @click.option('-o', '--output_dir', required=True)
 @click.option('-d', '--device', default='cuda:0')
 @click.option('-e', '--env_runner_path', default=None)
-def main(checkpoint, output_dir, device, env_runner_path):
+@click.option('-urdf', '--urdf_path', default=None)
+def main(checkpoint, output_dir, device, env_runner_path, urdf_path):
     if os.path.exists(output_dir):
         click.confirm(f"Output path {output_dir} already exists! Overwrite?", abort=True)
     pathlib.Path(output_dir).mkdir(parents=True, exist_ok=True)
@@ -57,6 +58,7 @@ def main(checkpoint, output_dir, device, env_runner_path):
     env_runner = hydra.utils.instantiate(
         env_runner_path,
         output_dir=output_dir,
+        urdf_path=urdf_path,
         shape_meta=cfg.shape_meta
     )
     runner_log = env_runner.run(policy)
