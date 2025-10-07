@@ -217,3 +217,12 @@ outputs/*
 *.pkl
 *.mp4
 *.JPG
+
+# IDE config files
+.vscode/
+.idea/
+
+# video files
+video/raw_videos/*
+video/demos/*
+!video/raw_videos/.gitkeep
