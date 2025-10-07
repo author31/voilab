@@ -81,8 +81,9 @@ class SLAMMappingService(BaseService):
                 str(settings_target),
             ]
         else:
-            # Mount local settings file
-            settings_source = Path(__file__).parent.parent / "defaults" / "calibration" / self.slam_settings_file
+            # Mount local settings file (resolve relative to project root)
+            project_root = Path(__file__).parent.parent.parent.parent.parent.parent
+            settings_source = project_root / self.slam_settings_file
             settings_target = Path("/settings") / settings_source.name
             cmd = [
                 "docker",
@@ -217,8 +218,9 @@ class SLAMMappingService(BaseService):
                         str(settings_target),
                     ]
                 else:
-                    # Mount local settings file
-                    settings_source = Path(__file__).parent.parent / "defaults" / "calibration" / self.slam_settings_file
+                    # Mount local settings file (resolve relative to project root)
+                    project_root = Path(__file__).parent.parent.parent.parent.parent.parent
+                    settings_source = project_root / self.slam_settings_file
                     settings_target = Path("/settings") / settings_source.name
                     cmd = [
                         "docker",
