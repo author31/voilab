@@ -112,29 +112,35 @@ class SLAMMappingService(BaseService):
             "--save_map",
             str(map_mount_target),
         ])
-        logger.info(f"[DOCKER CMD]: {' '.join(cmd)}")
-        if not mask_path:
+        if mask_path:
             cmd.extend(["--mask_img", str(mask_target)])
+        
+        logger.info(f"[DOCKER CMD]: {' '.join(cmd)}")
         stdout_path = input_path / "slam_stdout.txt"
         stderr_path = input_path / "slam_stderr.txt"
 
         logger.info(f"Running SLAM mapping in {input_path}...")
 
-        process = subprocess.Popen(
-            cmd,
-            cwd=str(input_path),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        for line in iter(process.stdout.readline, ""):
-            logger.info(f"SUBPROCESS STDOUT: {line.strip()}")
-        for line in iter(process.stderr.readline, ""):
-            logger.error(f"SUBPROCESS STDERR: {line.strip()}")
+        with stdout_path.open("w") as stdout_f, stderr_path.open("w") as stderr_f:
+            process = subprocess.Popen(
+                cmd,
+                cwd=str(input_path),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            for line in iter(process.stdout.readline, ""):
+                logger.info(f"SUBPROCESS STDOUT: {line.strip()}")
+                stdout_f.write(line)
+                stdout_f.flush()
+            for line in iter(process.stderr.readline, ""):
+                logger.error(f"SUBPROCESS STDERR: {line.strip()}")
+                stderr_f.write(line)
+                stderr_f.flush()
 
-        process.wait()
-        if process.returncode != 0:
-            raise RuntimeError(f"SLAM mapping failed. Check logs at {stdout_path} for details.")
+            process.wait()
+            if process.returncode != 0:
+                raise RuntimeError(f"SLAM mapping failed. Check logs at {stdout_path} for details.")
 
         return {
             "map_path": str(map_path),
