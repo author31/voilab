@@ -62,47 +62,22 @@ class SLAMMappingService(BaseService):
         map_mount_source = map_path
         map_mount_target = Path("/map") / map_mount_source.name
         
-        # Check if slam_settings_file is an absolute path (Docker built-in) or a filename (local mount)
-        if self.slam_settings_file.startswith("/"):
-            # Use built-in Docker settings file
-            settings_target = self.slam_settings_file
-            cmd = [
-                "docker",
-                "run",
-                "--volume",
-                f"{input_path.resolve()}:/data",
-                "--volume",
-                f"{map_mount_source.parent.resolve()}:{map_mount_target.parent}",
-                self.docker_image,
-                "/ORB_SLAM3/Examples/Monocular-Inertial/gopro_slam",
-                "--vocabulary",
-                "/ORB_SLAM3/Vocabulary/ORBvoc.txt",
-                "--setting",
-                str(settings_target),
-            ]
-        else:
-            # Mount local settings file (resolve relative to project root)
-            project_root = Path(__file__).parent.parent.parent.parent.parent.parent
-            settings_source = project_root / self.slam_settings_file
-            settings_target = Path("/settings") / settings_source.name
-            cmd = [
-                "docker",
-                "run",
-                "--volume",
-                f"{input_path.resolve()}:/data",
-                "--volume",
-                f"{map_mount_source.parent.resolve()}:{map_mount_target.parent}",
-                "--volume",
-                f"{settings_source.resolve()}:{settings_target}",
-                self.docker_image,
-                "/ORB_SLAM3/Examples/Monocular-Inertial/gopro_slam",
-                "--vocabulary",
-                "/ORB_SLAM3/Vocabulary/ORBvoc.txt",
-                "--setting",
-                str(settings_target),
-            ]
-        
-        cmd.extend([
+        # Mount settings file to /slam_settings
+        cmd = [
+            "docker",
+            "run",
+            "--volume",
+            f"{input_path.resolve()}:/data",
+            "--volume",
+            f"{map_mount_source.parent.resolve()}:{map_mount_target.parent}",
+            "--volume",
+            f"{self.slam_settings_file}:/slam_settings",
+            self.docker_image,
+            "/ORB_SLAM3/Examples/Monocular-Inertial/gopro_slam",
+            "--vocabulary",
+            "/ORB_SLAM3/Vocabulary/ORBvoc.txt",
+            "--setting",
+            "/slam_settings",
             "--input_video",
             str(video_path),
             "--input_imu_json",
@@ -111,7 +86,7 @@ class SLAMMappingService(BaseService):
             str(csv_path),
             "--save_map",
             str(map_mount_target),
-        ])
+        ]
         if mask_path:
             cmd.extend(["--mask_img", str(mask_target)])
         
@@ -204,49 +179,23 @@ class SLAMMappingService(BaseService):
                 map_mount_source = map_path
                 map_mount_target = Path("/map") / map_mount_source.name
                 
-                # Check if slam_settings_file is an absolute path (Docker built-in) or a filename (local mount)
-                if self.slam_settings_file.startswith("/"):
-                    # Use built-in Docker settings file
-                    settings_target = self.slam_settings_file
-                    cmd = [
-                        "docker",
-                        "run",
-                        "--rm",
-                        "--volume",
-                        f"{video_dir}:/data",
-                        "--volume",
-                        f"{map_mount_source.parent.resolve()}:{str(map_mount_target.parent)}",
-                        self.docker_image,
-                        "/ORB_SLAM3/Examples/Monocular-Inertial/gopro_slam",
-                        "--vocabulary",
-                        "/ORB_SLAM3/Vocabulary/ORBvoc.txt",
-                        "--setting",
-                        str(settings_target),
-                    ]
-                else:
-                    # Mount local settings file (resolve relative to project root)
-                    project_root = Path(__file__).parent.parent.parent.parent.parent.parent
-                    settings_source = project_root / self.slam_settings_file
-                    settings_target = Path("/settings") / settings_source.name
-                    cmd = [
-                        "docker",
-                        "run",
-                        "--rm",
-                        "--volume",
-                        f"{video_dir}:/data",
-                        "--volume",
-                        f"{map_mount_source.parent.resolve()}:{str(map_mount_target.parent)}",
-                        "--volume",
-                        f"{settings_source.resolve()}:{settings_target}",
-                        self.docker_image,
-                        "/ORB_SLAM3/Examples/Monocular-Inertial/gopro_slam",
-                        "--vocabulary",
-                        "/ORB_SLAM3/Vocabulary/ORBvoc.txt",
-                        "--setting",
-                        str(settings_target),
-                    ]
-                
-                cmd.extend([
+                # Mount settings file to /slam_settings
+                cmd = [
+                    "docker",
+                    "run",
+                    "--rm",
+                    "--volume",
+                    f"{video_dir}:/data",
+                    "--volume",
+                    f"{map_mount_source.parent.resolve()}:{str(map_mount_target.parent)}",
+                    "--volume",
+                    f"{self.slam_settings_file}:/slam_settings",
+                    self.docker_image,
+                    "/ORB_SLAM3/Examples/Monocular-Inertial/gopro_slam",
+                    "--vocabulary",
+                    "/ORB_SLAM3/Vocabulary/ORBvoc.txt",
+                    "--setting",
+                    "/slam_settings",
                     "--input_video",
                     str(video_path),
                     "--input_imu_json",
@@ -259,7 +208,7 @@ class SLAMMappingService(BaseService):
                     str(mask_path),
                     "--max_lost_frames",
                     str(self.max_lost_frames),
-                ])
+                ]
 
                 logger.info(f"[DOCKER CMD]: {' '.join(cmd)}")
                 stdout_path = video_dir / "slam_stdout.txt"
@@ -314,6 +263,7 @@ class SLAMMappingService(BaseService):
             if result.returncode != 0:
                 raise RuntimeError(f"Failed to pull docker image: {self.docker_image}")
 
+    
     def _generate_mask_file(self, input_path: Path) -> Path:
         """Generate mask image for SLAM if enabled."""
         mask_path = input_path / "slam_mask.png"
