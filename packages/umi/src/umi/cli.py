@@ -9,8 +9,9 @@ def cli():
 
 @cli.command()
 @click.argument("config_path")
-def run_slam_pipeline(config_path: str):
-    executor = PipelineExecutor(config_path)
+@click.option("--session-dir", type=click.Path(exists=True), help="Override session directory from config file")
+def run_slam_pipeline(config_path: str, session_dir: str):
+    executor = PipelineExecutor(config_path, session_dir_override=session_dir)
     executor.execute_all()
 
 
