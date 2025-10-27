@@ -1,0 +1,75 @@
+FROM nvidia/cuda:12.4.0-runtime-ubuntu22.04
+
+# Prevent interactive prompts during package installation
+ARG DEBIAN_FRONTEND=noninteractive
+
+# Set locale
+RUN apt-get update && apt-get install -y \
+    locales \
+    && locale-gen en_US en_US.UTF-8 \
+    && update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV LANG=en_US.UTF-8
+ENV LC_ALL=en_US.UTF-8
+
+# Install essential packages and add ROS2 repository
+RUN apt-get update && apt-get install -y \
+    software-properties-common \
+    curl \
+    gnupg2 \
+    lsb-release \
+    && add-apt-repository universe \
+    && curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu $(. /etc/os-release && echo $UBUNTU_CODENAME) main" | tee /etc/apt/sources.list.d/ros2.list > /dev/null \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python 3.11 from deadsnakes PPA
+RUN add-apt-repository ppa:deadsnakes/ppa -y \
+    && apt-get update \
+    && apt-get install -y \
+    python3.11 \
+    python3.11-dev \
+    python3.11-distutils \
+    python3.11-venv \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set Python 3.11 as default
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1 \
+    && update-alternatives --set python3 /usr/bin/python3.11
+
+# Install pip for Python 3.11
+RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3.11
+
+# Install ROS2 Humble Desktop
+RUN apt-get update && apt-get install -y \
+    ros-humble-desktop \
+    python3-colcon-common-extensions \
+    python3-rosdep \
+    python3-argcomplete \
+    && rm -rf /var/lib/apt/lists/*
+
+# Initialize rosdep
+RUN rosdep init && rosdep update
+
+# Remove any distutils-installed sympy to avoid conflicts
+RUN rm -rf /usr/lib/python3/dist-packages/sympy* || true
+
+# Install Isaac Sim with --ignore-installed for problematic packages
+RUN pip install --upgrade pip && \
+    pip install isaacsim[all,extscache]==5.0.0 \
+    --extra-index-url https://pypi.nvidia.com
+
+
+# Set up environment variables
+ENV NVIDIA_VISIBLE_DEVICES=all
+ENV NVIDIA_DRIVER_CAPABILITIES=all
+ENV ROS_DISTRO=humble
+
+# Source ROS2 setup in bashrc
+RUN echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc
+
+# Set working directory
+WORKDIR /root
+
+CMD echo "Yes" | isaacsim --allow-root

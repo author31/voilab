@@ -1,2 +1,7 @@
 .venv
+
+Dockerfile
 .git
+*.sh
+*.conf
+*.yml

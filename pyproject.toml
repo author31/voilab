@@ -23,6 +23,8 @@ dependencies = [
     "loguru>=0.7.3",
     "viser>=1.0.8",
     "yourdfpy>=0.0.58",
+    "torch==2.1.0",
+    "torchvision==0.16.0",
     "umi",
     "diffusion_policy",
 ]
