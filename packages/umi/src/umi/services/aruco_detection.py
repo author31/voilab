@@ -25,76 +25,9 @@ class ArucoDetectionService(BaseService):
     def __init__(self, config: dict):
         super().__init__(config)
         self.session_dir = self.config.get("session_dir")
-        # Handle None for num_workers by auto-detecting
-        num_workers = self.config.get("num_workers", multiprocessing.cpu_count() // 2)
-        self.num_workers = multiprocessing.cpu_count() // 2 if num_workers is None else num_workers
+        self.num_workers = self.config.get("num_workers", multiprocessing.cpu_count() // 2)
         self.camera_intrinsics_path = self.config.get("camera_intrinsics_path")
         self.aruco_config_path = self.config.get("aruco_config_path")
-
-    def _load_camera_intrinsics(self):
-        """Load camera intrinsics from file or return defaults."""
-        if not self.camera_intrinsics_path:
-            # Default identity intrinsics for testing
-            camera_matrix = np.eye(3, dtype=np.float64)
-            dist_coeffs = np.zeros(5, dtype=np.float64)
-            return camera_matrix, dist_coeffs
-
-        try:
-            # Load JSON data from file
-            with open(self.camera_intrinsics_path, 'r') as f:
-                json_data = json.load(f)
-
-            # Check if it's a simple format like in tests
-            if "camera_matrix" in json_data and "dist_coeffs" in json_data:
-                camera_matrix = np.array(json_data["camera_matrix"], dtype=np.float64)
-                dist_coeffs = np.array(json_data["dist_coeffs"], dtype=np.float64)
-                return camera_matrix, dist_coeffs
-
-            # Otherwise try parsing as fisheye intrinsics
-            intrinsics = parse_fisheye_intrinsics(json_data)
-            intrinsics = convert_fisheye_intrinsics_resolution(
-                intrinsics, target_width=2704, target_height=2028
-            )
-            return intrinsics["K"], intrinsics["D"]
-        except Exception as e:
-            logger.error(f"Failed to load camera intrinsics: {e}")
-            # Return defaults on error
-            camera_matrix = np.eye(3, dtype=np.float64)
-            dist_coeffs = np.zeros(5, dtype=np.float64)
-            return camera_matrix, dist_coeffs
-
-    def _load_aruco_config(self):
-        """Load ArUco configuration from file or return defaults."""
-        if not self.aruco_config_path:
-            # Default ArUco configuration
-            aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
-            aruco_params = cv2.aruco.DetectorParameters()
-            return aruco_dict, aruco_params
-
-        try:
-            # Load JSON data from file
-            with open(self.aruco_config_path, 'r') as f:
-                config_data = json.load(f)
-
-            # Check if it's a simple format like in tests
-            if "parameters" in config_data:
-                aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
-                aruco_params = cv2.aruco.DetectorParameters()
-                # Set parameters from config if provided
-                for param_name, param_value in config_data["parameters"].items():
-                    if hasattr(aruco_params, param_name):
-                        setattr(aruco_params, param_name, param_value)
-                return aruco_dict, aruco_params
-
-            # Otherwise try parsing as full aruco config
-            aruco_config = parse_aruco_config(config_data)
-            return aruco_config["aruco_dict"], aruco_config["marker_size_map"]
-        except Exception as e:
-            logger.error(f"Failed to load ArUco config: {e}")
-            # Return defaults on error
-            aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
-            aruco_params = cv2.aruco.DetectorParameters()
-            return aruco_dict, aruco_params
 
     def execute(self) -> dict:
         assert self.session_dir, "Missing session_dir from the configuration"
@@ -149,99 +82,38 @@ class ArucoDetectionService(BaseService):
             "detection_results_dir": str(input_path),
         }
 
-    def detect_aruco(self, input_dir: str, output_dir: str) -> dict:
-        """Detect ArUco markers in videos for testing purposes.
+    def detect_aruco(self, video_path, tag_detection_dest):
+        assert self.camera_intrinsics_path, "Missing camera_intrinsics_path from the configuration"
+        assert self.aruco_config_path, "Missing aruco_config_path from the configuration"
 
-        Args:
-            input_dir: Directory containing videos (or demo directories)
-            output_dir: Directory for ArUco detection outputs
-
-        Returns:
-            Dictionary with detection results
-        """
-        input_path = Path(input_dir)
-        output_path = Path(output_dir)
-        output_path.mkdir(parents=True, exist_ok=True)
-
-        # Find video files
-        video_files = []
-
-        # Check for demo directories first (as in tests)
-        for demo_dir in input_path.iterdir():
-            if demo_dir.is_dir():
-                # Look for video files with different extensions
-                for ext in ['*.MP4', '*.mp4', '*.avi', '*.mov']:
-                    video_files.extend(demo_dir.glob(ext))
-
-        # If no demo directories found, look directly in input directory
-        if not video_files:
-            for ext in ['*.MP4', '*.mp4', '*.avi', '*.mov']:
-                video_files.extend(input_path.glob(ext))
-
-        # Process each video file
-        detections = []
-        failed = []
-
-        for video_file in video_files:
-            try:
-                result = self._detect_in_video(video_file, output_path)
-                detections.append(result)
-            except Exception as e:
-                logger.error(f"Failed to process {video_file}: {e}")
-                failed.append({
-                    "video_file": str(video_file),
-                    "error": str(e)
-                })
-
-        return {
-            "detections": detections,
-            "failed": failed
-        }
-
-    def _detect_in_video(self, video_file: Path, output_dir: Path) -> dict:
-        """Detect ArUco markers in a single video file (placeholder implementation).
-
-        Args:
-            video_file: Path to the video file
-            output_dir: Directory to save detection results
-
-        Returns:
-            Dictionary with detection results
-        """
-        # Placeholder implementation for testing
-        result = {
-            "video_file": str(video_file),
-            "total_frames": 100,  # Mock frame count
-            "detections": []  # Mock detections
-        }
-
-        # Create a mock detection file
-        output_file = output_dir / f"{video_file.stem}_aruco.json"
-        mock_detection_data = {
-            "video_file": str(video_file),
-            "total_frames": 100,
-            "detections": []
-        }
-        output_file.write_text(json.dumps(mock_detection_data, indent=2))
-
-        return result
-
-    def validate_detections(self, output_dir: str) -> bool:
-        """Validate that ArUco detection has been completed correctly.
-
-        Args:
-            output_dir: Path to output directory to validate
-
-        Returns:
-            True if detection is valid, False otherwise
-        """
-        output_path = Path(output_dir)
-
-        # Check that output directory exists
-        if not output_path.is_dir():
-            return False
-
-        # Look for ArUco detection files
-        aruco_files = list(output_path.glob("*_aruco.json"))
-
-        return len(aruco_files) > 0
+        aruco_config = parse_aruco_config(yaml.safe_load(open(self.aruco_config_path, "r")))
+        aruco_dict = aruco_config["aruco_dict"]
+        marker_size_map = aruco_config["marker_size_map"]
+        raw_fisheye_intr = parse_fisheye_intrinsics(json.load(open(self.camera_intrinsics_path, "r")))
+        results = []
+        with av.open(str(video_path)) as in_container:
+            in_stream = in_container.streams.video[0]
+            in_stream.thread_type = "AUTO"
+            in_stream.thread_count = self.num_workers
+            in_res = np.array([in_stream.height, in_stream.width])[::(-1)]
+            fisheye_intr = convert_fisheye_intrinsics_resolution(
+                opencv_intr_dict=raw_fisheye_intr, target_resolution=in_res
+            )
+            for i, frame in tqdm(enumerate(in_container.decode(in_stream)), total=in_stream.frames):
+                img = frame.to_ndarray(format="rgb24")
+                frame_cts_sec = frame.pts * in_stream.time_base
+                img = draw_predefined_mask(img, color=(0, 0, 0), mirror=True, gripper=False, finger=False)
+                tag_dict = detect_localize_aruco_tags(
+                    img=img,
+                    aruco_dict=aruco_dict,
+                    marker_size_map=marker_size_map,
+                    fisheye_intr_dict=fisheye_intr,
+                    refine_subpix=True,
+                )
+                result = {
+                    "frame_idx": i,
+                    "time": float(frame_cts_sec),
+                    "tag_dict": tag_dict,
+                }
+                results.append(result)
+        pickle.dump(results, open(str(tag_detection_dest), "wb"))

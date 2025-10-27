@@ -61,8 +61,11 @@ class SLAMMappingService(BaseService):
         mask_target = mount_target / "slam_mask.png"
         map_mount_source = map_path
         map_mount_target = Path("/map") / map_mount_source.name
-        
-        # Mount settings file to /slam_settings
+
+        # Resolve settings file to absolute path for Docker mounting
+        settings_file_abs_path = self._resolve_settings_file_path()
+
+        # Mount settings file to /slam_settings.yaml
         cmd = [
             "docker",
             "run",
@@ -71,13 +74,13 @@ class SLAMMappingService(BaseService):
             "--volume",
             f"{map_mount_source.parent.resolve()}:{map_mount_target.parent}",
             "--volume",
-            f"{self.slam_settings_file}:/slam_settings",
+            f"{settings_file_abs_path}:/slam_settings.yaml",
             self.docker_image,
             "/ORB_SLAM3/Examples/Monocular-Inertial/gopro_slam",
             "--vocabulary",
             "/ORB_SLAM3/Vocabulary/ORBvoc.txt",
             "--setting",
-            "/slam_settings",
+            "/slam_settings.yaml",
             "--input_video",
             str(video_path),
             "--input_imu_json",
@@ -148,6 +151,9 @@ class SLAMMappingService(BaseService):
         assert map_path.is_file(), "Missing map_atlas file, ensure the create_map process is executed before."
         self._pull_docker_image()
 
+        # Resolve settings file to absolute path for Docker mounting
+        settings_file_abs_path = self._resolve_settings_file_path()
+
         processed_videos = []
         all_results = []
         processed_video_dirs = []
@@ -178,8 +184,8 @@ class SLAMMappingService(BaseService):
                 cv2.imwrite(str(mask_write_path.absolute()), slam_mask)
                 map_mount_source = map_path
                 map_mount_target = Path("/map") / map_mount_source.name
-                
-                # Mount settings file to /slam_settings
+
+                # Mount settings file to /slam_settings.yaml
                 cmd = [
                     "docker",
                     "run",
@@ -189,13 +195,13 @@ class SLAMMappingService(BaseService):
                     "--volume",
                     f"{map_mount_source.parent.resolve()}:{str(map_mount_target.parent)}",
                     "--volume",
-                    f"{self.slam_settings_file}:/slam_settings",
+                    f"{settings_file_abs_path}:/slam_settings.yaml",
                     self.docker_image,
                     "/ORB_SLAM3/Examples/Monocular-Inertial/gopro_slam",
                     "--vocabulary",
                     "/ORB_SLAM3/Vocabulary/ORBvoc.txt",
                     "--setting",
-                    "/slam_settings",
+                    "/slam_settings.yaml",
                     "--input_video",
                     str(video_path),
                     "--input_imu_json",
@@ -271,6 +277,35 @@ class SLAMMappingService(BaseService):
         slam_mask = draw_predefined_mask(slam_mask, color=255, mirror=True, gripper=False, finger=True)
         cv2.imwrite(str(mask_path), slam_mask)
         return mask_path
+
+    def _resolve_settings_file_path(self) -> Path:
+        """Resolve and validate the SLAM settings file path to absolute path.
+
+        Returns:
+            Absolute Path to the settings file
+
+        Raises:
+            FileNotFoundError: If the settings file doesn't exist
+            ValueError: If the settings file path is invalid
+        """
+        if not self.slam_settings_file:
+            raise ValueError("slam_settings_file is not configured")
+
+        settings_path = Path(self.slam_settings_file)
+
+        # Convert to absolute path if it's a relative path
+        if not settings_path.is_absolute():
+            # Assume relative paths are relative to current working directory
+            settings_path = Path.cwd() / settings_path
+
+        # Validate that the file exists
+        if not settings_path.exists():
+            raise FileNotFoundError(f"SLAM settings file not found: {settings_path}")
+
+        if not settings_path.is_file():
+            raise ValueError(f"SLAM settings path is not a file: {settings_path}")
+
+        return settings_path.resolve()
 
     def create_map(self, input_dir: str, output_dir: str) -> dict:
         """Alias for execute_create_map_slam method for compatibility with tests.

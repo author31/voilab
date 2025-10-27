@@ -17,7 +17,7 @@
     timeout_multiple: 16
     max_lost_frames: 60
     slam_process_mode: create_map
-    slam_settings_file: "umi_pipeline_configs/slam_settings/gopro10_maxlens_fisheye_setting_v1_720.yaml"
+    slam_settings_file: "packages/umi/defaults/orb_slam3_settings/gopro13_60fps_4k_settings.yaml"
 
 03_batch_slam:
   instance: "umi.services.slam_mapping.SLAMMappingService"
@@ -27,20 +27,20 @@
     timeout_multiple: 16
     max_lost_frames: 60
     slam_process_mode: batch_slam
-    slam_settings_file: "umi_pipeline_configs/slam_settings/gopro10_maxlens_fisheye_setting_v1_720.yaml"
+    slam_settings_file: "packages/umi/defaults/orb_slam3_settings/gopro10_maxlens_fisheye_setting_v1_720.yaml"
 
 04_detect_aruco:
   instance: "umi.services.aruco_detection.ArucoDetectionService"
   inherit_config: true
   config:
     camera_intrinsics_path: "packages/umi/defaults/calibration/gopro13_intrinsics_2_7k.json"
-    aruco_config_path: "packages/umi/defaults/calibration/aruco_config.yaml"
+    slam_settings_file: "packages/umi/defaults/orb_slam3_settings/gopro10_maxlens_fisheye_setting_v1_720.yaml"
 
 05_run_calibrations:
   instance: "umi.services.calibration.CalibrationService"
   inherit_config: true
   config:
-    video_resolution: [4000, 3000]
+    video_resolution: [4000,3000]
     tag_id: 13
     dist_to_center_threshold: 0.1
     nominal_z: 0.01
