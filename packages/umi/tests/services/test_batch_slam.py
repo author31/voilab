@@ -46,8 +46,8 @@ class TestBatchSLAMService:
             input_dir.mkdir()
             demo_dir = input_dir / "demo1"
             demo_dir.mkdir()
-            (demo_dir / "demo1.MP4").write_text(b"mock video data")
-            (demo_dir / "map.bin").write_text(b"mock map data")
+            (demo_dir / "demo1.MP4").write_text("mock video data")
+            (demo_dir / "map.bin").write_text("mock map data")
 
             output_dir = tmpdir / "output"
 
@@ -69,13 +69,13 @@ class TestBatchSLAMService:
             # Create multiple demo directories
             demo1_dir = input_dir / "demo1"
             demo1_dir.mkdir()
-            (demo1_dir / "demo1.MP4").write_text(b"video1")
-            (demo1_dir / "map.bin").write_text(b"map1")
+            (demo1_dir / "demo1.MP4").write_text("video1")
+            (demo1_dir / "map.bin").write_text("map1")
 
             demo2_dir = input_dir / "demo2"
             demo2_dir.mkdir()
-            (demo2_dir / "demo2.mp4").write_text(b"video2")
-            (demo2_dir / "map.txt").write_text(b"map2")
+            (demo2_dir / "demo2.mp4").write_text("video2")
+            (demo2_dir / "map.txt").write_text("map2")
 
             output_dir = tmpdir / "output"
 
@@ -110,7 +110,7 @@ class TestBatchSLAMService:
             input_dir.mkdir()
             demo_dir = input_dir / "demo1"
             demo_dir.mkdir()
-            (demo_dir / "demo1.MP4").write_text(b"video only")
+            (demo_dir / "demo1.MP4").write_text("video only")
 
             output_dir = tmpdir / "output"
 
@@ -131,8 +131,8 @@ class TestBatchSLAMService:
 
             demo1_dir = output_dir / "demo1"
             demo1_dir.mkdir()
-            (demo1_dir / "optimized_trajectory.txt").write_text(b"trajectory")
-            (demo1_dir / "keyframes.json").write_text(b"keyframes")
+            (demo1_dir / "optimized_trajectory.txt").write_text("trajectory")
+            (demo1_dir / "keyframes.json").write_text("keyframes")
 
             service = BatchSLAMService({})
             assert service.validate_batch_results(str(output_dir)) is True
@@ -158,8 +158,8 @@ class TestBatchSLAMService:
             input_dir.mkdir()
             demo_dir = input_dir / "demo1"
             demo_dir.mkdir()
-            (demo_dir / "demo1.MP4").write_text(b"video")
-            (demo_dir / "map.bin").write_text(b"map")
+            (demo_dir / "demo1.MP4").write_text("video")
+            (demo_dir / "map.bin").write_text("map")
 
             output_dir = tmpdir / "output"
 
@@ -182,8 +182,8 @@ class TestBatchSLAMService:
             input_dir.mkdir()
             demo_dir = input_dir / "demo1"
             demo_dir.mkdir()
-            (demo_dir / "demo1.MP4").write_text(b"video")
-            (demo_dir / "map.bin").write_text(b"map")
+            (demo_dir / "demo1.MP4").write_text("video")
+            (demo_dir / "map.bin").write_text("map")
 
             output_dir = tmpdir / "output"
 
@@ -228,8 +228,8 @@ class TestBatchSLAMService:
             input_dir.mkdir()
             demo_dir = input_dir / "demo1"
             demo_dir.mkdir()
-            (demo_dir / "demo1.MP4").write_text(b"video")
-            (demo_dir / "map.bin").write_text(b"map")
+            (demo_dir / "demo1.MP4").write_text("video")
+            (demo_dir / "map.bin").write_text("map")
 
             output_dir = tmpdir / "output"
 

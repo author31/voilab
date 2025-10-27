@@ -109,7 +109,7 @@ class TestArucoDetectionService:
             input_dir.mkdir()
             demo_dir = input_dir / "demo1"
             demo_dir.mkdir()
-            (demo_dir / "demo1.MP4").write_text(b"mock video data")
+            (demo_dir / "demo1.MP4").write_text("mock video data")
 
             output_dir = tmpdir / "output"
 
@@ -136,11 +136,11 @@ class TestArucoDetectionService:
             # Create multiple demo videos
             demo1_dir = input_dir / "demo1"
             demo1_dir.mkdir()
-            (demo1_dir / "demo1.MP4").write_text(b"video1")
+            (demo1_dir / "demo1.MP4").write_text("video1")
 
             demo2_dir = input_dir / "demo2"
             demo2_dir.mkdir()
-            (demo2_dir / "demo2.mp4").write_text(b"video2")
+            (demo2_dir / "demo2.mp4").write_text("video2")
 
             output_dir = tmpdir / "output"
 
@@ -185,7 +185,7 @@ class TestArucoDetectionService:
 
             # Create mock video file
             video_file = tmpdir / "test.MP4"
-            video_file.write_text(b"mock video data")
+            video_file.write_text("mock video data")
             output_dir = tmpdir / "output"
             output_dir.mkdir()
 
@@ -268,7 +268,7 @@ class TestArucoDetectionService:
             input_dir.mkdir()
             demo_dir = input_dir / "demo1"
             demo_dir.mkdir()
-            (demo_dir / "demo1.MP4").write_text(b"mock video")
+            (demo_dir / "demo1.MP4").write_text("mock video")
 
             output_dir = tmpdir / "output"
 
@@ -295,7 +295,7 @@ class TestArucoDetectionService:
             input_dir.mkdir()
             demo_dir = input_dir / "demo1"
             demo_dir.mkdir()
-            (demo_dir / "demo1.MP4").write_text(b"mock video")
+            (demo_dir / "demo1.MP4").write_text("mock video")
 
             output_dir = tmpdir / "output"
 

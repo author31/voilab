@@ -1,3 +1,4 @@
+from pathlib import Path
 import datetime
 import av
 
@@ -45,6 +46,16 @@ def stream_get_start_datetime(stream: av.stream.Stream) -> datetime.datetime:
 
 
 def mp4_get_start_datetime(mp4_path: str) -> datetime.datetime:
-    with av.open(mp4_path) as container:
-        stream = container.streams.video[0]
-        return stream_get_start_datetime(stream=stream)
+    """Extract start datetime from MP4 file with fallback for invalid files."""
+    try:
+        with av.open(mp4_path) as container:
+            if not container.streams.video:
+                # No video stream, return file modification time
+                return datetime.datetime.fromtimestamp(Path(mp4_path).stat().st_mtime)
+            stream = container.streams.video[0]
+            return stream_get_start_datetime(stream=stream)
+    except (av.error.InvalidDataError, Exception) as e:
+        # For invalid/corrupted files, use file modification time as fallback
+        import warnings
+        warnings.warn(f"Could not extract metadata from {mp4_path}: {e}. Using file modification time.")
+        return datetime.datetime.fromtimestamp(Path(mp4_path).stat().st_mtime)

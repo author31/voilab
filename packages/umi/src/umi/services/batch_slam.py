@@ -102,3 +102,40 @@ class BatchSLAMService(BaseService):
 
         demo_dirs = [d for d in output_path.iterdir() if d.is_dir()]
         return len(demo_dirs) > 0
+
+    def process_batch(self, input_dir: str, output_dir: str) -> dict:
+        """Alias for execute method for compatibility with tests.
+
+        Args:
+            input_dir: Directory containing input videos and maps
+            output_dir: Directory for batch SLAM outputs
+
+        Returns:
+            Dictionary with batch processing results
+        """
+        return self.execute(input_dir, output_dir)
+
+    def validate_batch_results(self, output_dir: str) -> bool:
+        """Validate that batch SLAM processing has been completed correctly.
+
+        Args:
+            output_dir: Path to output directory to validate
+
+        Returns:
+            True if batch processing is valid, False otherwise
+        """
+        output_path = Path(output_dir)
+
+        # Check that output directory exists
+        if not output_path.is_dir():
+            return False
+
+        # Look for batch SLAM output files
+        demo_dirs = [d for d in output_path.iterdir() if d.is_dir()]
+        trajectory_files = []
+        keyframe_files = []
+        for demo_dir in demo_dirs:
+            trajectory_files.extend(list(demo_dir.glob("optimized_trajectory.txt")))
+            keyframe_files.extend(list(demo_dir.glob("keyframes.json")))
+
+        return len(demo_dirs) > 0 and len(trajectory_files) > 0 and len(keyframe_files) > 0
