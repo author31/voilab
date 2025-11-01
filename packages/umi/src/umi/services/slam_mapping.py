@@ -179,7 +179,7 @@ class SLAMMappingService(BaseService):
                     duration_sec = float(video.duration * video.time_base)
 
                 timeout = duration_sec * self.timeout_multiple
-                slam_mask = np.zeros((2028, 2704), dtype=np.uint8)
+                slam_mask = np.zeros((720, 960), dtype=np.uint8) #TODO: remove hardcoding
                 slam_mask = draw_predefined_mask(slam_mask, color=255, mirror=True, gripper=False, finger=True)
                 cv2.imwrite(str(mask_write_path.absolute()), slam_mask)
                 map_mount_source = map_path
