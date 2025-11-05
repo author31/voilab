@@ -214,10 +214,11 @@ class DatasetPlanningService(BaseService):
                     left_prob = tag_stats[left_id]
                     right_prob = tag_stats[right_id]
                     gripper_prob = min(left_prob, right_prob)
-                    if gripper_prob <= 0:
-                        continue
-                    else:
-                        gripper_prob_map[gripper_id] = gripper_prob
+
+                    if gripper_prob <= 0: continue
+
+                    gripper_prob_map[gripper_id] = gripper_prob
+
                 gripper_id_by_tag = -1
                 if len(gripper_prob_map) > 0:
                     gripper_probs = sorted(gripper_prob_map.items(), key=lambda x: x[(-1)])
@@ -225,6 +226,7 @@ class DatasetPlanningService(BaseService):
                     gripper_prob = gripper_probs[(-1)][1]
                     if gripper_prob >= finger_tag_det_th:
                         gripper_id_by_tag = gripper_id
+
                 cam_serial_gripper_ids_map[row["camera_serial"]].append(gripper_id_by_tag)
                 vid_idx_gripper_hardware_id_map[vid_idx] = gripper_id_by_tag
         series = pd.Series(
@@ -468,10 +470,13 @@ class DatasetPlanningService(BaseService):
                             if width is not None:
                                 gripper_timestamps.append(td["time"])
                                 gripper_widths.append(gripper_cal_interp(width))
-                        gripper_interp = get_interp1d(
-                            gripper_timestamps,
-                            gripper_widths,
-                        )
+                        try:
+                            gripper_interp = get_interp1d(
+                                gripper_timestamps,
+                                gripper_widths,
+                            )
+                        except Exception as e:
+                            breakpoint()
                         gripper_det_ratio = len(gripper_widths) / len(tag_detection_results)
                         if gripper_det_ratio < 0.9:
                             logger.info(

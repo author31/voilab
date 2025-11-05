@@ -37,6 +37,7 @@ dev = [
     "kaleido>=1.0.0",
     "anywidget>=0.9.18",
     "jupyterlab-urdf",
+    "ipympl"
 ]
 
 [project.scripts]
