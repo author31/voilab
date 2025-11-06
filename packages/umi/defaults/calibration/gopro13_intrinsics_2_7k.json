@@ -10,8 +10,8 @@
       "principal_pt_x": 668.407,
       "principal_pt_y": 508.187,
       "radial_distortion_1": 0.0813337,
-      "radial_distortion_3": 0.0229981,
       "radial_distortion_2": 0.07741,
+      "radial_distortion_3": 0.0229981,
       "radial_distortion_4": -0.0296763,
       "skew": 0.0
     },
