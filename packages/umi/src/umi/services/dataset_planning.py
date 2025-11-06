@@ -476,7 +476,8 @@ class DatasetPlanningService(BaseService):
                                 gripper_widths,
                             )
                         except Exception as e:
-                            breakpoint()
+                            logger.error(f"Failed to create gripper_interp for {video_dir.name}: {e}")
+                            raise
                         gripper_det_ratio = len(gripper_widths) / len(tag_detection_results)
                         if gripper_det_ratio < 0.9:
                             logger.info(
