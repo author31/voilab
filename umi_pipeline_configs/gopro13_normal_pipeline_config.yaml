@@ -17,6 +17,7 @@
     timeout_multiple: 16
     max_lost_frames: 60
     slam_process_mode: create_map
+    enable_gui: false
 
 03_batch_slam:
   instance: "umi.services.slam_mapping.SLAMMappingService"
@@ -26,6 +27,7 @@
     timeout_multiple: 16
     max_lost_frames: 60
     slam_process_mode: batch_slam
+    enable_gui: false
 
 04_detect_aruco:
   instance: "umi.services.aruco_detection.ArucoDetectionService"
