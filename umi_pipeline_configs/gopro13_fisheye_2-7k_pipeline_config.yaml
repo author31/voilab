@@ -37,7 +37,7 @@
   instance: "umi.services.aruco_detection.ArucoDetectionService"
   inherit_config: true
   config:
-    camera_intrinsics_path: "packages/umi/defaults/calibration/gopro13_intrinsics_2_7k.json"
+    camera_intrinsics_path: "packages/umi/defaults/calibration/gopro9_intrinsics_2_7k.json"
     aruco_config_path: "packages/umi/defaults/calibration/aruco_config.yaml"
 
 05_run_calibrations:
@@ -46,16 +46,14 @@
   config:
     resolution: [2028,2704]
     tag_id: 13
-    dist_to_center_threshold: 0.8
-    nominal_z: 0
-    keyframe_only: false
+    dist_to_center_threshold: 0.6
+    nominal_z: 0.04
 
 06_generate_dataset_plan:
   instance: "umi.services.dataset_planning.DatasetPlanningService"
   inherit_config: true
   config:
     dataset_plan_filename: dataset_plan.pkl
-    nominal_z: 0.05
 
 07_generate_replay_buffer:
   instance: "umi.services.replay_buffer.ReplayBufferService"
