@@ -89,41 +89,47 @@ class DatasetPlanningService(BaseService):
                 if cam_serial in ignore_cam_serials:
                     logger.info(f"Ignored {video_dir.name}")
                     continue
-                else:
-                    csv_path = video_dir / "camera_trajectory.csv"
-                    if not csv_path.is_file():
-                        logger.info(f"Ignored {video_dir.name}, no camera_trajectory.csv")
-                        continue
-                    else:
-                        pkl_path = video_dir / "tag_detection.pkl"
-                        if not pkl_path.is_file():
-                            logger.info(f"Ignored {video_dir.name}, no tag_detection.pkl")
-                            continue
-                        else:
-                            with av.open(str(mp4_path), "r") as container:
-                                stream = container.streams.video[0]
-                                n_frames = stream.frames
-                                if fps is None:
-                                    fps = stream.average_rate
-                                else:
-                                    if fps != stream.average_rate:
-                                        logger.info(
-                                            f"Inconsistent fps: {float(fps)} vs {float(stream.average_rate)} in {video_dir.name}"
-                                        )
-                                        exit(1)
-                        duration_sec = float(n_frames / fps)
-                        end_timestamp = start_timestamp + duration_sec
-                        rows.append(
-                            {
-                                "video_dir": video_dir,
-                                "camera_serial": cam_serial,
-                                "start_date": start_date,
-                                "n_frames": n_frames,
-                                "fps": fps,
-                                "start_timestamp": start_timestamp,
-                                "end_timestamp": end_timestamp,
-                            }
+                csv_path = video_dir / "camera_trajectory.csv"
+                if not csv_path.is_file():
+                    logger.info(f"Ignored {video_dir.name}, no camera_trajectory.csv")
+                    continue
+
+                pkl_path = video_dir / "tag_detection.pkl"
+                if not pkl_path.is_file():
+                    logger.info(f"Ignored {video_dir.name}, no tag_detection.pkl")
+                    continue
+
+                n_frames = 0
+                if (converted_path := video_dir / f"converted_60fps_{mp4_path.name}").is_file():
+                    mp4_path = converted_path
+
+                with av.open(str(mp4_path), "r") as container:
+                    stream = container.streams.video[0]
+                    n_frames = stream.frames
+                    assert stream.average_rate is not None, f"Missing fps info in {video_dir.name}"
+
+                    fps = stream.average_rate
+                    if fps and fps != stream.average_rate:
+                        raise ValueError(
+                            f"Inconsistent fps: {float(fps)} vs {float(stream.average_rate)} in {video_dir.name}"
                         )
+
+                if not fps:
+                    raise ValueError(f"Missing fps info in {video_dir.name}")
+
+                duration_sec = float(n_frames / fps)
+                end_timestamp = start_timestamp + duration_sec
+                rows.append(
+                    {
+                        "video_dir": video_dir,
+                        "camera_serial": cam_serial,
+                        "start_date": start_date,
+                        "n_frames": n_frames,
+                        "fps": fps,
+                        "start_timestamp": start_timestamp,
+                        "end_timestamp": end_timestamp,
+                    }
+                )
         if len(rows) == 0:
             logger.info("No valid videos found!")
             exit(1)
@@ -539,10 +545,13 @@ class DatasetPlanningService(BaseService):
                                     )
                                 video_dir = row["video_dir"]
                                 vid_start_frame = cam_start_frame_idxs[cam_idx]
+                                video_filename = "raw_video.mp4"
+                                if (video_dir / f"converted_60fps_{video_filename}").is_file():
+                                    video_filename = f"converted_60fps_{video_filename}"
                                 cameras.append(
                                     {
                                         "video_path": str(
-                                            video_dir.joinpath("raw_video.mp4").relative_to(video_dir.parent)
+                                            video_dir.joinpath(video_filename).relative_to(video_dir.parent)
                                         ),
                                         "video_start_end": (
                                             start + vid_start_frame,

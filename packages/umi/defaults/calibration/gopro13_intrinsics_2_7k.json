@@ -1,5 +1,5 @@
 {
-    "final_reproj_error": 0.2916398582648,
+    "final_reproj_error": 0.399639,
     "fps": 59.94005994005994,
     "image_height": 2028,
     "image_width": 2704,
@@ -9,10 +9,10 @@
       "focal_length": 389.409,
       "principal_pt_x": 668.407,
       "principal_pt_y": 508.187,
-      "radial_distortion_1": 0.0813337,
-      "radial_distortion_2": 0.07741,
-      "radial_distortion_3": 0.0229981,
-      "radial_distortion_4": -0.0296763,
+      "radial_distortion_1": 0.000747276,
+      "radial_distortion_2": -0.00525625,
+      "radial_distortion_3": 0.00634346,
+      "radial_distortion_4": -0.00748918,
       "skew": 0.0
     },
     "nr_calib_images": 59,

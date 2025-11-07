@@ -43,17 +43,21 @@ class ArucoDetectionService(BaseService):
             futures = set()
             for video_dir in tqdm(input_video_dirs):
                 video_path = video_dir / "raw_video.mp4"
+                if (converted_path:=video_dir/f"converted_60fps_{video_path.name}").is_file():
+                    video_path = converted_path
+
                 pkl_path = video_dir / "tag_detection.pkl"
                 if pkl_path.is_file():
                     logger.info(f"tag_detection.pkl already exists, skipping {video_dir.name}")
                     continue
-                else:
-                    if len(futures) >= self.num_workers:
-                        completed, futures = concurrent.futures.wait(
-                            futures, return_when=concurrent.futures.FIRST_COMPLETED
-                        )
-                        pbar.update(len(completed))
-                    futures.add(executor.submit(self.detect_aruco, video_path, pkl_path))
+
+                if len(futures) >= self.num_workers:
+                    completed, futures = concurrent.futures.wait(
+                        futures, return_when=concurrent.futures.FIRST_COMPLETED
+                    )
+                    pbar.update(len(completed))
+
+                futures.add(executor.submit(self.detect_aruco, video_path, pkl_path))
             completed, futures = concurrent.futures.wait(futures)
             pbar.update(len(completed))
             for future in completed:

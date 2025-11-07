@@ -210,19 +210,23 @@ __marimo__/
 # Numpy binary data
 *.npy
 
-# mimic_core runtime dir
-outputs/*
-
-*.zarr.zip
-*.pkl
-*.mp4
-*.JPG
-
 # IDE config files
 .vscode/
 .idea/
 
-# video files
+# Video files
 video/raw_videos/*
 video/demos/*
 !video/raw_videos/.gitkeep
+
+# UMI specific ignores
+**/imu_data.json
+**/slam_mask.png
+**/slam_stdout.txt
+**/slam_stderr.txt
+*.zarr.zip
+*.pkl
+*.mp4
+*.MP4
+*.JPG
+

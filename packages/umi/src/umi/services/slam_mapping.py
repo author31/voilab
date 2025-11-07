@@ -430,6 +430,8 @@ class SLAMMappingService(BaseService):
                     cmd = [
                         "ffmpeg",
                         "-i", str(video_path),
+                        "-map_metadata", "0",
+                        "-movflags", "+faststart+use_metadata_tags",
                         "-vf", "fps=60",
                         "-c:v", "libx264",
                         "-preset", "fast",
