@@ -4,16 +4,42 @@ UMI is a comprehensive robotics data processing pipeline for SLAM mapping, ArUco
 voilab has been refactored to use YAML-based configuration, making debugging and parameter tuning easier across different generations of GoPro cameras. While the official implementation only supports GoPro 9, voilab extends compatibility up to GoPro 13.
 ## Quick Start
 
+### Install and Open Docker
+1. Follow the instructions at [Docker's official site](https://docs.docker.com/get-docker/) to install Docker on your system.
+2. Start the Docker service:
+   ```bash
+   sudo systemctl start docker
+   ```
+3. Verify Docker is running:
+   ```bash
+   sudo systemctl status docker
+   ```
+   
+**For WSL2**
+
+Please start Docker Desktop from Windows and ensure it is running.
+If you haven't installed Docker Desktop, you can download it from [here](https://docs.docker.com/desktop/install/windows-install/).
+
 ### Data collection
 1. Please follow the instructions from the official documentation at [here](https://swanky-sphere-ad1.notion.site/UMI-Data-Collection-Tutorial-4db1a1f0f2aa4a2e84d9742720428b4c?pvs=4)
-2. Create a new directory, then add a subdirectory named /raw_videos. Copy all recorded videos into $new_directory/raw_videos.
-3. Update the session_dir argument in the YAML configuration file under the 00_process_video stage.
+2. Place the recorded videos in the `videos/raw_videos/` directory, or any other directory of your choice but with the same structure.
+   We recommend using the following structure:
+   ```
+   <NAME_OF_YOUR_DIR>/
+   ├── raw_videos/
+   │   ├── .gitkeep
+   │   ├── video1.mp4
+   │   └── ...
+   └── ...
+   ```
+3. If you are using a different directory, please update the session_dir argument in the YAML configuration file under the 00_process_video stage.
 4. (Optional) Run the calibration 
-4. Verify and, if necessary, adjust the video_resolution argument in the YAML configuration file.
+5. Verify and, if necessary, adjust the video_resolution argument in the YAML configuration file.
 
 ### Command
 ```bash
-umi run-slam-pipeline umi_pipeline_configs/gopro13_wide_angle_pipeline_config.yaml
+# Run the UMI pipeline with the specified configuration file
+uv run umi run-slam-pipeline umi_pipeline_configs/gopro13_wide_angle_pipeline_config.yaml
 ```
 
 ## Pipeline Configuration

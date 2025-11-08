@@ -27,7 +27,7 @@ class TestIMUExtractionService:
         """Test service initialization with default config"""
         service = IMUExtractionService({})
         assert service.num_workers is not None  # Auto-detected
-        assert service.stream_types == ["ACCL", "GYRO", "GPS5", "CORI", "IORI"]
+        assert service.stream_types == ["ACCL", "GYRO", "GPS5", "GPSP", "GPSU", "GPSF", "GRAV", "MAGN", "CORI", "IORI", "TMPC"]
 
     def test_extract_imu_single_demo(self):
         """Test IMU extraction for single demo"""
@@ -39,7 +39,7 @@ class TestIMUExtractionService:
             input_dir.mkdir()
             demo_dir = input_dir / "demo1"
             demo_dir.mkdir()
-            (demo_dir / "demo1.MP4").write_text(b"mock video data")
+            (demo_dir / "demo1.MP4").write_text("mock video data")
 
             output_dir = tmpdir / "output"
 
@@ -61,11 +61,11 @@ class TestIMUExtractionService:
             # Create multiple demo videos
             demo1_dir = input_dir / "demo1"
             demo1_dir.mkdir()
-            (demo1_dir / "demo1.MP4").write_text(b"video1")
+            (demo1_dir / "demo1.MP4").write_text("video1")
 
             demo2_dir = input_dir / "demo2"
             demo2_dir.mkdir()
-            (demo2_dir / "demo2.mp4").write_text(b"video2")
+            (demo2_dir / "demo2.mp4").write_text("video2")
 
             output_dir = tmpdir / "output"
 
@@ -103,7 +103,7 @@ class TestIMUExtractionService:
             demo_dir = input_dir / "demo1"
             demo_dir.mkdir()
             video_file = demo_dir / "demo1.MP4"
-            video_file.write_text(b"mock video data")
+            video_file.write_text("mock video data")
 
             output_dir = tmpdir / "output"
 
@@ -177,7 +177,7 @@ class TestIMUExtractionService:
             input_dir.mkdir()
             demo_dir = input_dir / "demo1"
             demo_dir.mkdir()
-            (demo_dir / "demo1.MP4").write_text(b"mock video")
+            (demo_dir / "demo1.MP4").write_text("mock video")
 
             output_dir = tmpdir / "output"
 

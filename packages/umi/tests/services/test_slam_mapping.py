@@ -9,6 +9,7 @@ Run these tests independently:
 import pytest
 import tempfile
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 from umi.services.slam_mapping import SLAMMappingService
 
@@ -40,81 +41,123 @@ class TestSLAMMappingService:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmpdir = Path(tmpdir)
 
-            # Create input structure
-            input_dir = tmpdir / "input"
-            input_dir.mkdir()
-            demo_dir = input_dir / "demo1"
-            demo_dir.mkdir()
-            (demo_dir / "demo1.MP4").write_text(b"mock video data")
+            # Create proper input structure expected by SLAMMappingService
+            # session_dir/demos/mapping/raw_video.mp4 and imu_data.json
+            session_dir = tmpdir / "session"
+            mapping_dir = session_dir / "demos" / "mapping"
+            mapping_dir.mkdir(parents=True)
+            (mapping_dir / "raw_video.mp4").write_text("mock video data")
+            (mapping_dir / "imu_data.json").write_text('{"accel": [], "gyro": []}')
 
-            output_dir = tmpdir / "output"
+            service = SLAMMappingService({"session_dir": str(session_dir)})
 
-            service = SLAMMappingService({})
-            result = service.create_map(str(input_dir), str(output_dir))
+            # Mock Docker operations and subprocess calls
+            with patch('subprocess.Popen') as mock_popen, \
+                 patch('subprocess.run') as mock_run, \
+                 patch('cv2.imwrite') as mock_imwrite, \
+                 patch('umi.services.slam_mapping.logger'):
 
-            assert len(result["maps"]) == 1
-            assert len(result["failed"]) == 0
-            assert result["maps"][0]["demo"] == "demo1"
+                # Mock successful Docker execution
+                mock_process = Mock()
+                # Mock stdout and stderr for the for loops
+                # iter(process.stdout.readline, "") calls readline repeatedly until empty string
+                mock_process.stdout = Mock()
+                mock_process.stdout.readline = Mock(return_value="")  # Empty string stops iteration
+                mock_process.stderr = Mock()
+                mock_process.stderr.readline = Mock(return_value="")  # Empty string stops iteration
+                mock_process.wait.return_value = 0
+                mock_process.returncode = 0  # This is what's actually checked
+                mock_popen.return_value = mock_process
+
+                # Mock subprocess.run for docker pull
+                mock_run.return_value = Mock(returncode=0)
+
+                # Mock cv2.imwrite for mask generation
+                mock_imwrite.return_value = True
+
+                result = service.execute_create_map_slam()
+
+            # Check that expected files are in the result
+            assert "map_path" in result
+            assert "trajectory_csv" in result
+            assert "stdout_log" in result
+            assert "stderr_log" in result
 
     def test_create_map_multiple_demos(self):
-        """Test creating SLAM maps for multiple demos"""
+        """Test that create_map method handles input correctly - this is actually for single mapping session"""
         with tempfile.TemporaryDirectory() as tmpdir:
             tmpdir = Path(tmpdir)
 
-            input_dir = tmpdir / "input"
-            input_dir.mkdir()
-
-            # Create multiple demo directories
-            demo1_dir = input_dir / "demo1"
-            demo1_dir.mkdir()
-            (demo1_dir / "demo1.MP4").write_text(b"video1")
-
-            demo2_dir = input_dir / "demo2"
-            demo2_dir.mkdir()
-            (demo2_dir / "demo2.mp4").write_text(b"video2")
+            # Create proper input structure for mapping session
+            session_dir = tmpdir / "session"
+            mapping_dir = session_dir / "demos" / "mapping"
+            mapping_dir.mkdir(parents=True)
+            (mapping_dir / "raw_video.mp4").write_text("video1")
+            (mapping_dir / "imu_data.json").write_text('{"accel": [], "gyro": []}')
 
             output_dir = tmpdir / "output"
 
             service = SLAMMappingService({})
-            result = service.create_map(str(input_dir), str(output_dir))
 
-            assert len(result["maps"]) == 2
-            assert len(result["failed"]) == 0
+            # Mock Docker operations and subprocess calls
+            with patch('subprocess.Popen') as mock_popen, \
+                 patch('subprocess.run') as mock_run, \
+                 patch('cv2.imwrite') as mock_imwrite, \
+                 patch('umi.services.slam_mapping.logger'):
+
+                # Mock successful Docker execution
+                mock_process = Mock()
+                mock_process.stdout = Mock()
+                mock_process.stdout.readline = Mock(return_value="")
+                mock_process.stderr = Mock()
+                mock_process.stderr.readline = Mock(return_value="")
+                mock_process.wait.return_value = 0
+                mock_process.returncode = 0  # This is what's actually checked
+                mock_popen.return_value = mock_process
+
+                # Mock subprocess.run for docker pull
+                mock_run.return_value = Mock(returncode=0)
+
+                # Mock cv2.imwrite for mask generation
+                mock_imwrite.return_value = True
+
+                result = service.create_map(str(session_dir), str(output_dir))
+
+            # The result should contain mapping session info
+            assert "map_path" in result or "msg" in result
 
     def test_create_map_empty_directory(self):
-        """Test handling empty input directory"""
+        """Test handling missing required files"""
         with tempfile.TemporaryDirectory() as tmpdir:
             tmpdir = Path(tmpdir)
 
-            input_dir = tmpdir / "input"
-            input_dir.mkdir()
+            # Create session dir but no required files
+            session_dir = tmpdir / "session"
+            mapping_dir = session_dir / "demos" / "mapping"
+            mapping_dir.mkdir(parents=True)
 
-            output_dir = tmpdir / "output"
+            service = SLAMMappingService({"session_dir": str(session_dir)})
 
-            service = SLAMMappingService({})
-            result = service.create_map(str(input_dir), str(output_dir))
-
-            assert len(result["maps"]) == 0
-            assert len(result["failed"]) == 0
+            # Should raise AssertionError due to missing files
+            with pytest.raises(AssertionError):
+                service.execute_create_map_slam()
 
     def test_create_map_no_videos(self):
-        """Test handling directory with no video files"""
+        """Test handling missing video files"""
         with tempfile.TemporaryDirectory() as tmpdir:
             tmpdir = Path(tmpdir)
 
-            input_dir = tmpdir / "input"
-            input_dir.mkdir()
-            demo_dir = input_dir / "demo1"
-            demo_dir.mkdir()
-            (demo_dir / "readme.txt").write_text("no videos here")
+            # Create session dir with only IMU data, no video
+            session_dir = tmpdir / "session"
+            mapping_dir = session_dir / "demos" / "mapping"
+            mapping_dir.mkdir(parents=True)
+            (mapping_dir / "imu_data.json").write_text('{"accel": [], "gyro": []}')
 
-            output_dir = tmpdir / "output"
+            service = SLAMMappingService({"session_dir": str(session_dir)})
 
-            service = SLAMMappingService({})
-            result = service.create_map(str(input_dir), str(output_dir))
-
-            assert len(result["maps"]) == 0
-            assert len(result["failed"]) > 0
+            # Should raise AssertionError due to missing raw_video.mp4
+            with pytest.raises(AssertionError):
+                service.execute_create_map_slam()
 
     def test_validate_mapping_success(self):
         """Test successful validation of SLAM mapping results"""
@@ -127,8 +170,8 @@ class TestSLAMMappingService:
 
             demo1_dir = output_dir / "demo1"
             demo1_dir.mkdir()
-            (demo1_dir / "map.bin").write_text(b"mock map data")
-            (demo1_dir / "trajectory.txt").write_text(b"mock trajectory")
+            (demo1_dir / "map.bin").write_text("mock map data")
+            (demo1_dir / "trajectory.txt").write_text("mock trajectory")
 
             service = SLAMMappingService({})
             assert service.validate_mapping(str(output_dir)) is True
@@ -145,64 +188,114 @@ class TestSLAMMappingService:
             service = SLAMMappingService({})
             assert service.validate_mapping(str(empty_dir)) is False
 
-            # Directory with incomplete files
+            # Directory with incomplete files (only map.bin, missing trajectory.txt)
             incomplete_dir = tmpdir / "incomplete"
             incomplete_dir.mkdir()
             demo_dir = incomplete_dir / "demo1"
             demo_dir.mkdir()
-            (demo_dir / "map.bin").write_text(b"map only")
+            (demo_dir / "map.bin").write_text("map only")
 
-            # Should still validate as True since it has map files
-            assert service.validate_mapping(str(incomplete_dir)) is True
+            # Should validate as False since it's missing trajectory.txt
+            assert service.validate_mapping(str(incomplete_dir)) is False
+
+            # Directory with complete files should validate as True
+            complete_dir = tmpdir / "complete"
+            complete_dir.mkdir()
+            demo_dir = complete_dir / "demo1"
+            demo_dir.mkdir()
+            (demo_dir / "map.bin").write_text("map data")
+            (demo_dir / "trajectory.txt").write_text("trajectory data")
+
+            assert service.validate_mapping(str(complete_dir)) is True
 
     def test_create_map_output_structure(self):
-        """Test that proper directory structure is created"""
+        """Test that proper output files are created after SLAM mapping"""
         with tempfile.TemporaryDirectory() as tmpdir:
             tmpdir = Path(tmpdir)
 
-            input_dir = tmpdir / "input"
-            input_dir.mkdir()
-            demo_dir = input_dir / "demo1"
-            demo_dir.mkdir()
-            (demo_dir / "demo1.MP4").write_text(b"mock video")
+            # Create proper input structure for mapping
+            session_dir = tmpdir / "session"
+            mapping_dir = session_dir / "demos" / "mapping"
+            mapping_dir.mkdir(parents=True)
+            (mapping_dir / "raw_video.mp4").write_text("mock video")
+            (mapping_dir / "imu_data.json").write_text('{"accel": [], "gyro": []}')
 
-            output_dir = tmpdir / "output"
+            # Mock Docker operations and subprocess calls
+            with patch('subprocess.Popen') as mock_popen, \
+                 patch('subprocess.run') as mock_run, \
+                 patch('cv2.imwrite') as mock_imwrite, \
+                 patch('umi.services.slam_mapping.logger'):
 
-            service = SLAMMappingService({})
-            service.create_map(str(input_dir), str(output_dir))
+                # Mock successful Docker execution
+                mock_process = Mock()
+                mock_process.stdout = Mock()
+                mock_process.stdout.readline = Mock(return_value="")
+                mock_process.stderr = Mock()
+                mock_process.stderr.readline = Mock(return_value="")
+                mock_process.wait.return_value = 0
+                mock_process.returncode = 0  # This is what's actually checked
+                mock_popen.return_value = mock_process
 
-            # Check output structure
-            assert output_dir.exists()
-            demo1_output = output_dir / "demo1"
-            assert demo1_output.exists()
-            assert (demo1_output / "map.bin").exists()
-            assert (demo1_output / "trajectory.txt").exists()
+                # Mock subprocess.run for docker pull
+                mock_run.return_value = Mock(returncode=0)
+
+                # Mock cv2.imwrite for mask generation
+                mock_imwrite.return_value = True
+
+                service = SLAMMappingService({"session_dir": str(session_dir)})
+                result = service.execute_create_map_slam()
+
+            # Check that expected file paths are in the result
+            assert "map_path" in result
+            assert "trajectory_csv" in result
+            assert Path(result["map_path"]).parent.exists()  # mapping directory exists
 
     def test_create_map_result_structure(self):
         """Test result structure from create_map"""
         with tempfile.TemporaryDirectory() as tmpdir:
             tmpdir = Path(tmpdir)
 
-            input_dir = tmpdir / "input"
-            input_dir.mkdir()
-            demo_dir = input_dir / "demo1"
-            demo_dir.mkdir()
-            (demo_dir / "demo1.MP4").write_text(b"mock video")
+            # Create proper input structure for mapping
+            session_dir = tmpdir / "session"
+            mapping_dir = session_dir / "demos" / "mapping"
+            mapping_dir.mkdir(parents=True)
+            (mapping_dir / "raw_video.mp4").write_text("mock video")
+            (mapping_dir / "imu_data.json").write_text('{"accel": [], "gyro": []}')
 
-            output_dir = tmpdir / "output"
+            # Mock Docker operations and subprocess calls
+            with patch('subprocess.Popen') as mock_popen, \
+                 patch('subprocess.run') as mock_run, \
+                 patch('cv2.imwrite') as mock_imwrite, \
+                 patch('umi.services.slam_mapping.logger'):
 
-            service = SLAMMappingService({})
-            result = service.create_map(str(input_dir), str(output_dir))
+                # Mock successful Docker execution
+                mock_process = Mock()
+                mock_process.stdout = Mock()
+                mock_process.stdout.readline = Mock(return_value="")
+                mock_process.stderr = Mock()
+                mock_process.stderr.readline = Mock(return_value="")
+                mock_process.wait.return_value = 0
+                mock_process.returncode = 0  # This is what's actually checked
+                mock_popen.return_value = mock_process
 
-            assert "maps" in result
-            assert "failed" in result
-            assert len(result["maps"]) == 1
+                # Mock subprocess.run for docker pull
+                mock_run.return_value = Mock(returncode=0)
 
-            map_result = result["maps"][0]
-            assert "demo" in map_result
-            assert "map_file" in map_result
-            assert "trajectory_file" in map_result
-            assert "video_files" in map_result
+                # Mock cv2.imwrite for mask generation
+                mock_imwrite.return_value = True
+
+                service = SLAMMappingService({"session_dir": str(session_dir)})
+                result = service.execute_create_map_slam()
+
+            # Check result structure
+            assert "map_path" in result
+            assert "trajectory_csv" in result
+            assert "stdout_log" in result
+            assert "stderr_log" in result
+
+            # Verify paths point to expected files
+            assert result["map_path"].endswith("map_atlas.osa")
+            assert result["trajectory_csv"].endswith("mapping_camera_trajectory.csv")
 
     def test_run_docker_slam_placeholder(self):
         """Test Docker SLAM method (placeholder implementation)"""

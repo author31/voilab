@@ -1,7 +1,8 @@
+
 00_process_video:
   instance: "umi.services.video_organization.VideoOrganizationService"
   config:
-    session_dir: "/home/hcis-s17/author_workdir/voilab/example_demo_session/"
+    session_dir: "video"
     input_patterns: ["*.MP4", "*.mp4"]
   
 01_extract_gopro_imu:
@@ -17,7 +18,9 @@
     timeout_multiple: 16
     max_lost_frames: 60
     slam_process_mode: create_map
-    slam_settings_file: "packages/umi/defaults/orb_slam3_settings/gopro10_maxlens_fisheye_setting_v1_720.yaml"
+    slam_settings_file: "packages/umi/defaults/orb_slam3_settings/gopro13_fisheye_ratio_4-3_2-7k.yaml"
+    resolution: [2028,2704]
+    mask_pts_json_path: "packages/umi/src/umi/asset/mask_4k.json"
 
 03_batch_slam:
   instance: "umi.services.slam_mapping.SLAMMappingService"
@@ -27,7 +30,8 @@
     timeout_multiple: 16
     max_lost_frames: 60
     slam_process_mode: batch_slam
-    slam_settings_file: "packages/umi/defaults/orb_slam3_settings/gopro10_maxlens_fisheye_setting_v1_720.yaml"
+    slam_settings_file: "packages/umi/defaults/orb_slam3_settings/gopro13_fisheye_ratio_4-3_2-7k.yaml"
+    resolution: [2028,2704]
 
 04_detect_aruco:
   instance: "umi.services.aruco_detection.ArucoDetectionService"
@@ -43,22 +47,23 @@
     resolution: [2028,2704]
     tag_id: 13
     dist_to_center_threshold: 0.6
+    nominal_z: 0.04
 
 06_generate_dataset_plan:
   instance: "umi.services.dataset_planning.DatasetPlanningService"
   inherit_config: true
   config:
     dataset_plan_filename: dataset_plan.pkl
-    nominal_z: 0.072
 
 07_generate_replay_buffer:
   instance: "umi.services.replay_buffer.ReplayBufferService"
   inherit_config: true
   config:
     output_filename: dataset.zarr.zip
-    output_resolution: [256, 256]
+    output_resolution: [224, 224]
     output_fov: null
     output_fov_intrinsic_path: null
     compression_level: 99
     no_mirror: false
     mirror_swap: false
+

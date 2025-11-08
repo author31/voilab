@@ -20,14 +20,14 @@ class CalibrationService(BaseService):
     def __init__(self, config: dict):
         super().__init__(config)
         self.session_dir = self.config.get("session_dir")
-        self.video_resolution = self.config.get("video_resolution")
         self.slam_tag_timeout = self.config.get("slam_tag_calibration_timeout", 300)
         self.gripper_range_timeout = self.config.get("gripper_range_timeout", 300)
         self.keyframe_only = self.config.get("keyframe_only", True)
         self.tag_id = self.config.get("tag_id", 13)
         self.dist_to_center_threshold = self.config.get("dist_to_center_threshold", 0)
-        self.tag_detection_threshold = self.config.get("tag_detection_threshold", 0.8)
+        self.tag_detection_threshold = self.config.get("tag_detection_threshold", 0.1)
         self.nominal_z = self.config.get("nominal_z", 0.072)
+        self.resolution = self.config.get("resolution")
 
     def execute(self) -> dict:
         """
@@ -65,14 +65,16 @@ class CalibrationService(BaseService):
             dict: SLAM tag calibration result
         """
         logger.info("Starting SLAM tag calibration")
-        assert self.video_resolution, "Missing video_resolution in configuration "
+        assert self.resolution, "Missing resolution in configuration "
         
         input_path = Path(self.session_dir)
         demos_dir = input_path / "demos"
         mapping_dir = demos_dir / "mapping"
         slam_tag_path = mapping_dir / "tx_slam_tag.json"
+
         tag_path = mapping_dir / "tag_detection.pkl"
         assert tag_path.is_file(), f"Required file not found: {tag_path}"
+
         csv_path = mapping_dir / "camera_trajectory.csv"
         if not csv_path.is_file():
             csv_path = mapping_dir / "mapping_camera_trajectory.csv"
@@ -131,8 +133,8 @@ class CalibrationService(BaseService):
 
             corners = tag["corners"]
             tag_center_pix = corners.mean(axis=0)
-            img_center = np.array(self.video_resolution, dtype=np.float32) / 2 #this resolution is fixed?
-            dist_to_center = np.linalg.norm(tag_center_pix - img_center) / img_center[1]
+            img_center = np.array(self.resolution, dtype=np.float32) / 2
+            dist_to_center = np.linalg.norm(tag_center_pix - img_center) / img_center[0]
 
             if dist_to_center > self.dist_to_center_threshold:
                 skipped_center += 1

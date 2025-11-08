@@ -1,6 +1,5 @@
 import copy
 import importlib
-import logging
 from pathlib import Path
 from typing import Any, Dict
 from loguru import logger
@@ -13,13 +12,15 @@ from .services.base_service import BaseService
 class PipelineExecutor:
     """Pipeline executor for UMI services."""
 
-    def __init__(self, config_path: str):
+    def __init__(self, config_path: str, session_dir_override: str | None = None):
         """Initialize the pipeline executor.
 
         Args:
             config_path: Path to the YAML configuration file
+            session_dir_override: Optional override for session_dir in the config
         """
         self.config_path = Path(config_path)
+        self.session_dir_override = session_dir_override
         self.config: dict = {}
         self.services: dict = {}
 
@@ -105,8 +106,25 @@ class PipelineExecutor:
             with open(self.config_path, "r") as f:
                 self.config = yaml.safe_load(f)
             logger.info(f"Loaded configuration from {self.config_path}")
+
+            # Apply session_dir override if provided
+            if self.session_dir_override:
+                self._apply_session_dir_override()
+
         except yaml.YAMLError as e:
             raise ValueError(f"Invalid YAML configuration: {e}")
+
+    def _apply_session_dir_override(self) -> None:
+        """Apply session_dir override to the configuration."""
+        for stage_name, stage_config in self.config.items():
+            if "config" in stage_config and "session_dir" in stage_config["config"]:
+                original_session_dir = stage_config["config"]["session_dir"]
+                stage_config["config"]["session_dir"] = self.session_dir_override
+                logger.warning(f"Overridden session_dir for stage '{stage_name}': '{original_session_dir}' -> '{self.session_dir_override}'")
+                return
+
+        # If we get here, no session_dir was found
+        logger.warning("No stage with session_dir found in configuration. Override not applied.")
 
     def _import_class(self, class_path: str) -> type:
         """Dynamically import a class from a string path.

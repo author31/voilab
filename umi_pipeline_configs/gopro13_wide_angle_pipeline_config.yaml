@@ -1,7 +1,7 @@
 00_process_video:
   instance: "umi.services.video_organization.VideoOrganizationService"
   config:
-    session_dir: "/home/hcis-s17/author_workdir/voilab/0826_basement_test"
+    session_dir: "video"
     input_patterns: ["*.MP4", "*.mp4"]
   
 01_extract_gopro_imu:
@@ -17,6 +17,9 @@
     timeout_multiple: 16
     max_lost_frames: 60
     slam_process_mode: create_map
+    slam_settings_file: "packages/umi/defaults/orb_slam3_settings/gopro13_fisheye_60fps_2-7k.yaml"
+    resolution: [2028,2704]
+    mask_pts_json_path: "packages/umi/src/umi/asset/mask_4k.json"
 
 03_batch_slam:
   instance: "umi.services.slam_mapping.SLAMMappingService"
@@ -26,6 +29,8 @@
     timeout_multiple: 16
     max_lost_frames: 60
     slam_process_mode: batch_slam
+    slam_settings_file: "packages/umi/defaults/orb_slam3_settings/gopro13_fisheye_60fps_2-7k.yaml"
+    resolution: [2028,2704]
 
 04_detect_aruco:
   instance: "umi.services.aruco_detection.ArucoDetectionService"
@@ -38,7 +43,7 @@
   instance: "umi.services.calibration.CalibrationService"
   inherit_config: true
   config:
-    video_resolution: [4000, 3000]
+    resolution: [2028,2704]
     tag_id: 13
     dist_to_center_threshold: 0.1
     nominal_z: 0.01

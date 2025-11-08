@@ -89,41 +89,47 @@ class DatasetPlanningService(BaseService):
                 if cam_serial in ignore_cam_serials:
                     logger.info(f"Ignored {video_dir.name}")
                     continue
-                else:
-                    csv_path = video_dir / "camera_trajectory.csv"
-                    if not csv_path.is_file():
-                        logger.info(f"Ignored {video_dir.name}, no camera_trajectory.csv")
-                        continue
-                    else:
-                        pkl_path = video_dir / "tag_detection.pkl"
-                        if not pkl_path.is_file():
-                            logger.info(f"Ignored {video_dir.name}, no tag_detection.pkl")
-                            continue
-                        else:
-                            with av.open(str(mp4_path), "r") as container:
-                                stream = container.streams.video[0]
-                                n_frames = stream.frames
-                                if fps is None:
-                                    fps = stream.average_rate
-                                else:
-                                    if fps != stream.average_rate:
-                                        logger.info(
-                                            f"Inconsistent fps: {float(fps)} vs {float(stream.average_rate)} in {video_dir.name}"
-                                        )
-                                        exit(1)
-                        duration_sec = float(n_frames / fps)
-                        end_timestamp = start_timestamp + duration_sec
-                        rows.append(
-                            {
-                                "video_dir": video_dir,
-                                "camera_serial": cam_serial,
-                                "start_date": start_date,
-                                "n_frames": n_frames,
-                                "fps": fps,
-                                "start_timestamp": start_timestamp,
-                                "end_timestamp": end_timestamp,
-                            }
+                csv_path = video_dir / "camera_trajectory.csv"
+                if not csv_path.is_file():
+                    logger.info(f"Ignored {video_dir.name}, no camera_trajectory.csv")
+                    continue
+
+                pkl_path = video_dir / "tag_detection.pkl"
+                if not pkl_path.is_file():
+                    logger.info(f"Ignored {video_dir.name}, no tag_detection.pkl")
+                    continue
+
+                n_frames = 0
+                if (converted_path := video_dir / f"converted_60fps_{mp4_path.name}").is_file():
+                    mp4_path = converted_path
+
+                with av.open(str(mp4_path), "r") as container:
+                    stream = container.streams.video[0]
+                    n_frames = stream.frames
+                    assert stream.average_rate is not None, f"Missing fps info in {video_dir.name}"
+
+                    fps = stream.average_rate
+                    if fps and fps != stream.average_rate:
+                        raise ValueError(
+                            f"Inconsistent fps: {float(fps)} vs {float(stream.average_rate)} in {video_dir.name}"
                         )
+
+                if not fps:
+                    raise ValueError(f"Missing fps info in {video_dir.name}")
+
+                duration_sec = float(n_frames / fps)
+                end_timestamp = start_timestamp + duration_sec
+                rows.append(
+                    {
+                        "video_dir": video_dir,
+                        "camera_serial": cam_serial,
+                        "start_date": start_date,
+                        "n_frames": n_frames,
+                        "fps": fps,
+                        "start_timestamp": start_timestamp,
+                        "end_timestamp": end_timestamp,
+                    }
+                )
         if len(rows) == 0:
             logger.info("No valid videos found!")
             exit(1)
@@ -214,10 +220,11 @@ class DatasetPlanningService(BaseService):
                     left_prob = tag_stats[left_id]
                     right_prob = tag_stats[right_id]
                     gripper_prob = min(left_prob, right_prob)
-                    if gripper_prob <= 0:
-                        continue
-                    else:
-                        gripper_prob_map[gripper_id] = gripper_prob
+
+                    if gripper_prob <= 0: continue
+
+                    gripper_prob_map[gripper_id] = gripper_prob
+
                 gripper_id_by_tag = -1
                 if len(gripper_prob_map) > 0:
                     gripper_probs = sorted(gripper_prob_map.items(), key=lambda x: x[(-1)])
@@ -225,6 +232,7 @@ class DatasetPlanningService(BaseService):
                     gripper_prob = gripper_probs[(-1)][1]
                     if gripper_prob >= finger_tag_det_th:
                         gripper_id_by_tag = gripper_id
+
                 cam_serial_gripper_ids_map[row["camera_serial"]].append(gripper_id_by_tag)
                 vid_idx_gripper_hardware_id_map[vid_idx] = gripper_id_by_tag
         series = pd.Series(
@@ -468,10 +476,14 @@ class DatasetPlanningService(BaseService):
                             if width is not None:
                                 gripper_timestamps.append(td["time"])
                                 gripper_widths.append(gripper_cal_interp(width))
-                        gripper_interp = get_interp1d(
-                            gripper_timestamps,
-                            gripper_widths,
-                        )
+                        try:
+                            gripper_interp = get_interp1d(
+                                gripper_timestamps,
+                                gripper_widths,
+                            )
+                        except Exception as e:
+                            logger.error(f"Failed to create gripper_interp for {video_dir.name}: {e}")
+                            raise
                         gripper_det_ratio = len(gripper_widths) / len(tag_detection_results)
                         if gripper_det_ratio < 0.9:
                             logger.info(
@@ -533,10 +545,13 @@ class DatasetPlanningService(BaseService):
                                     )
                                 video_dir = row["video_dir"]
                                 vid_start_frame = cam_start_frame_idxs[cam_idx]
+                                video_filename = "raw_video.mp4"
+                                if (video_dir / f"converted_60fps_{video_filename}").is_file():
+                                    video_filename = f"converted_60fps_{video_filename}"
                                 cameras.append(
                                     {
                                         "video_path": str(
-                                            video_dir.joinpath("raw_video.mp4").relative_to(video_dir.parent)
+                                            video_dir.joinpath(video_filename).relative_to(video_dir.parent)
                                         ),
                                         "video_start_end": (
                                             start + vid_start_frame,
