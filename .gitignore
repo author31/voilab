@@ -224,6 +224,11 @@ video/demos/*
 **/slam_mask.png
 **/slam_stdout.txt
 **/slam_stderr.txt
+**/*.csv
+**/*.osa
+**/*.json
+**/*.zgroup
+**/*.zarray
 *.zarr.zip
 *.pkl
 *.mp4
