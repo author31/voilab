@@ -66,3 +66,14 @@ install-exiftool:
 			echo "Warning: Expected version $$TARGET_VERSION, but found $$INSTALLED."; \
 		fi; \
 	fi
+
+.PHONY launch-workspace:
+launch-workspace:
+	@echo "Launching Docker workspace for development..."
+	@./launch_workspace.sh
+
+.PHONY launch-workspace-force:
+launch-workspace-force:
+	@echo "Launching Docker workspace for development (force rebuild)..."
+	@./launch_workspace.sh --force-rebuild
+

@@ -1,0 +1,76 @@
+# Use Isaac Sim 5.0.0 as base image (Ubuntu 22.04)
+FROM nvcr.io/nvidia/isaac-sim:5.0.0
+
+# Set shell to bash and switch to root user for installations
+SHELL ["/bin/bash", "-c"]
+USER root
+
+# Prevent apt-get from hanging during Docker build
+ENV DEBIAN_FRONTEND=noninteractive \
+    ACCEPT_EULA=Y \
+    PRIVACY_CONSENT=Y \
+    QT_X11_NO_MITSHM=1
+
+# 1. Set up locale and add ROS 2 Humble repository in a single layer
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        locales \
+        software-properties-common \
+        curl \
+        gnupg \
+        lsb-release && \
+    # Set up locale
+    locale-gen en_US.UTF-8 && \
+    update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 && \
+    # Add ROS 2 GPG key
+    add-apt-repository universe && \
+    curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg && \
+    # Add ROS 2 repository to sources
+    # $(lsb_release -cs) should correctly resolve to 'jammy' for this base image
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/ros2.list > /dev/null && \
+    # Clean up apt cache
+    rm -rf /var/lib/apt/lists/*
+
+# Set language environment variable for all subsequent shells
+ENV LANG=en_US.UTF-8
+
+# 2. Install ROS 2 Humble, explicitly including conflicting dependencies and pinning a version
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        # Explicitly install dependencies that caused conflicts
+        libfreetype6-dev \
+        libfontconfig1-dev \
+        libbrotli1=1.0.9-2build6 --allow-downgrades \
+        # X11 client libraries and display packages
+        libx11-6 \
+        libxext6 \
+        libxrender1 \
+        libxtst6 \
+        libxi6 \
+        libxrandr2 \
+        libxcursor1 \
+        libxdamage1 \
+        libxfixes3 \
+        libxinerama1 \
+        libgl1-mesa-glx \
+        libglu1-mesa \
+        x11-apps \
+        # Now install ROS and other tools
+        ros-humble-desktop-full \
+        ros-dev-tools \
+        build-essential \
+        git \
+        python3-pip && \
+    # Clean up apt cache
+    rm -rf /var/lib/apt/lists/*
+
+# 3. Source ROS 2 setup script for all new bash terminals
+RUN echo "source /opt/ros/humble/setup.bash" >> /etc/bash.bashrc
+
+# 4. Set a default working directory
+WORKDIR /workspace
+
+# 5. Copy and set up entrypoint script for Isaac Sim
+COPY entrypoint.isaacsim.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# 6. Set entrypoint to launch Isaac Sim GUI
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
