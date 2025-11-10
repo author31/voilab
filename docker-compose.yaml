@@ -21,6 +21,8 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
+    runtime: nvidia
+    network_mode: host
 
   voilab-workspace:
     build:
