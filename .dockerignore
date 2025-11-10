@@ -3,5 +3,6 @@
 Dockerfile
 .git
 *.sh
+!entrypoint.isaacsim.sh
 *.conf
 *.yml

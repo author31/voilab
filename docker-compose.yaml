@@ -4,6 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile.isaacsim
     volumes:
+      - .:/workspace/voilab
       - /tmp/.X11-unix:/tmp/.X11-unix
       - /usr/share/vulkan/icd.d:/usr/share/vulkan/icd.d:ro
     stdin_open: true
@@ -14,6 +15,10 @@ services:
       - DISPLAY=${DISPLAY:-:1}
       - VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json
       - NVIDIA_DRIVER_CAPABILITIES=all,graphics,display,utility,compute
+      - XAUTHORITY=${XAUTHORITY:-$HOME/.Xauthority}
+    runtime: nvidia
+    network_mode: host
+    ipc: host
     deploy:
       resources:
         reservations:
@@ -21,6 +26,8 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
+    runtime: nvidia
+    network_mode: host
 
   voilab-workspace:
     build:
