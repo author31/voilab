@@ -1,0 +1,52 @@
+services:
+  isaac-sim:
+    build:
+      context: .
+      dockerfile: Dockerfile.isaacsim
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix
+      - /usr/share/vulkan/icd.d:/usr/share/vulkan/icd.d:ro
+    stdin_open: true
+    tty: true
+    environment:
+      - ACCEPT_EULA=Y
+      - PRIVACY_CONSENT=Y
+      - DISPLAY=${DISPLAY:-:1}
+      - VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json
+      - NVIDIA_DRIVER_CAPABILITIES=all,graphics,display,utility,compute
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  voilab-workspace:
+    build:
+      context: .
+      dockerfile: Dockerfile.client
+    volumes:
+      - .:/workspace/voilab
+      - /tmp/.X11-unix:/tmp/.X11-unix
+      - /usr/share/vulkan/icd.d:/usr/share/vulkan/icd.d:ro
+    stdin_open: true
+    tty: true
+    environment:
+      - ACCEPT_EULA=Y
+      - PRIVACY_CONSENT=Y
+      - DISPLAY=${DISPLAY:-:1}
+      - VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json
+      - NVIDIA_DRIVER_CAPABILITIES=all,graphics,display,utility,compute
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    runtime: nvidia
+    network_mode: host
+    command: >
+      bash -c "source /opt/ros/humble/setup.bash &&
+               tail -f /dev/null"
