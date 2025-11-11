@@ -16,6 +16,8 @@ services:
       - VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json
       - NVIDIA_DRIVER_CAPABILITIES=all,graphics,display,utility,compute
       - XAUTHORITY=${XAUTHORITY:-$HOME/.Xauthority}
+      - ROS_LOCALHOST_ONLY=0
+      - ROS_DOMAIN_ID=0
     ipc: host
     deploy:
       resources:
@@ -43,6 +45,9 @@ services:
       - DISPLAY=${DISPLAY:-:1}
       - VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json
       - NVIDIA_DRIVER_CAPABILITIES=all,graphics,display,utility,compute
+      - ROS_LOCALHOST_ONLY=0
+      - ROS_DOMAIN_ID=0
+    ipc: host
     deploy:
       resources:
         reservations:
