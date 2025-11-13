@@ -2,20 +2,44 @@
 
 """
 Simplified script to publish pose information from dataset.zarr.zip via ROS2.
-Uses inverse kinematics with ikpy to convert end-effector poses to realistic joint angles.
+Uses inverse kinematics with cuRobo to convert end-effector poses to realistic joint angles.
 
 Dataset structure:
+    data/
      ├── camera0_rgb (T, H, W, 3) uint8
      ├── robot0_demo_end_pose (T, 6)
      ├── robot0_demo_start_pose (T, 6)
-     ├── robot0_eef_pos (T, 3)  # POSITIONS IN ARUCO TAG COORDINATE FRAME
-     ├── robot0_eef_rot_axis_angle (T, 3)  # ORIENTATIONS IN ARUCO TAG COORDINATE FRAME
+     ├── robot0_eef_pos (T, 3)
+     ├── robot0_eef_rot_axis_angle (T, 3)
      └── robot0_gripper_width (T, 1)
+    meta/
+     └── attrs: episode_ends (array of episode end indices)
 
-Coordinate Systems:
-    - Dataset poses are in ArUco tag coordinate frame (from dataset_planning.py)
-    - IK solver expects poses in robot base coordinate frame (panda_link0)
-    - This script handles the coordinate transformation automatically
+Episode Handling:
+    - The script respects episode boundaries from meta/episode_ends
+    - At the end of each episode, the robot resets to neutral position
+    - Episode transitions are separated by a configurable delay (default: 2.0s)
+    - Supports looping through all episodes continuously
+
+Coordinate Systems and Transformations:
+    UMI Dataset Collection:
+    - Dataset poses are collected using the Universal Manipulation Interface (UMI) method
+    - UMI uses ORB_SLAM3 visual-inertial SLAM for tracking the handheld gripper
+    - The SLAM system creates an arbitrary, gravity-aligned world frame per demonstration
+    - An ArUco tag is used to establish a consistent reference frame (tx_slam_tag.json)
+    - Final dataset stores end-effector poses in ArUco tag coordinate frame
+    
+    Isaac Sim Replay:
+    - cuRobo IK solver expects poses in robot base frame (panda_link0)
+    - This script transforms poses from tag frame to robot base frame
+    
+    Transformation Configuration (priority order):
+    1. --tx_slam_tag_path: Load calibration from UMI's tx_slam_tag.json file
+    2. --tag_to_robot_pos/quat: Manually specify tag position/orientation in robot frame
+    3. --use_identity_transform: Assume tag frame = robot base frame (default)
+    
+    The default behavior (identity transform) assumes the ArUco tag coordinate system
+    coincides with the robot base frame, meaning poses can be used directly.
 
 Published to /joint_command (sensor_msgs/JointState):
     - header: timestamp and frame_id
@@ -24,44 +48,65 @@ Published to /joint_command (sensor_msgs/JointState):
     - velocity: empty list
     - effort: empty list
 """
-
+import torch
 import argparse
 import time
 import sys
 import os
 import rclpy
 from rclpy.node import Node
-import numpy as np
 from pathlib import Path
 import zarr
 import zipfile
-import json
+from sensor_msgs.msg import JointState as RosJointState
+from diffusion_policy.model.common.rotation_transformer import transform_rotation
+from typing import Tuple, List
+import numpy as np
 from scipy.spatial.transform import Rotation
-from ikpy.chain import Chain
-from sensor_msgs.msg import JointState
+
+# cuRobo
+from curobo.geom.sdf.world import CollisionCheckerType
+from curobo.types.base import TensorDeviceType
+from curobo.types.math import Pose
+from curobo.types.robot import JointState as CuroboJointState
+from curobo.types.robot import RobotConfig
+from curobo.geom.types import WorldConfig
+from curobo.wrap.reacher.motion_gen import MotionGen, MotionGenConfig, MotionGenPlanConfig
+from curobo.wrap.reacher.ik_solver import IKSolver, IKSolverConfig
+from curobo.util_file import (
+    get_robot_configs_path,
+    get_world_configs_path,
+    join_path,
+    load_yaml,
+)
 
 
-class SimpleDatasetPosePublisher(Node):
-    """Simplified ROS2 Node to publish joint states from dataset using IKPy solver."""
+class ReplayBufferPosePublisher(Node):
+    """ROS2 Node to publish joint states from replay buffer using cuRobo solver."""
 
-    def __init__(self, dataset_path, urdf_path, topic, publish_rate, coord_transform_path=None):
-        super().__init__('simple_dataset_pose_publisher')
-
+    def __init__(self, dataset_path, urdf_path, topic, publish_rate, voxel_size=0.005,
+                 tx_slam_tag_path=None, tag_to_robot_pos=None, tag_to_robot_quat=None, 
+                 use_identity_transform=True):
+        super().__init__('replay_buffer_pose_publisher')
+        
+        self.tensor_args = TensorDeviceType()
+        self.voxel_size = voxel_size
         self.dataset_path = dataset_path
         self.urdf_path = urdf_path
         self.topic = topic
         self.publish_rate = publish_rate
-        self.coord_transform_path = coord_transform_path
+
+        # Compute coordinate transformation from ArUco tag frame to robot base frame
+        self.H_robot_tag = self._compute_transform(
+            tx_slam_tag_path, tag_to_robot_pos, tag_to_robot_quat, use_identity_transform
+        )
+        self.get_logger().info(f"Using tag-to-robot transformation:\n{self.H_robot_tag}")
 
         # Create publisher for joint states
-        self.publisher_ = self.create_publisher(JointState, topic, 10)
-
-        # Load coordinate transformation if provided
-        self.coord_transform = self.load_coordinate_transform(coord_transform_path)
+        self.publisher_ = self.create_publisher(RosJointState, topic, 10)
 
         # Load dataset and robot model
-        self.data = self.load_dataset(dataset_path)
-        self.robot_chain = self.load_robot_model(urdf_path)
+        self.data, self.meta = self.load_dataset(dataset_path)
 
         # Get joint names from the robot model - 7 arm joints
         self.joint_names = [
@@ -70,341 +115,340 @@ class SimpleDatasetPosePublisher(Node):
         ]
         self.gripper_joint_names = ["panda_finger_joint1", "panda_finger_joint2"]
 
-        self.get_logger().info(f'Active joints ({len(self.joint_names)}): {self.joint_names}')
+        # Parse episode information
+        self.episode_ends = list(self.meta.episode_ends)
+        self.episode_starts = [0] + self.episode_ends[:-1]
+        self.num_episodes = len(self.episode_ends)
+        self.get_logger().info(f"Dataset contains {self.num_episodes} episodes")
+        self.get_logger().info(f"Episode boundaries: {self.episode_ends}")
 
         # Playback state
+        self.current_episode = 0
         self.current_step = 0
+        self.episode_start_step = 0
+        self.episode_end_step = self.episode_ends[0] if self.episode_ends else 0
         self.total_steps = len(self.data['robot0_eef_pos'])
         self.loop_enabled = False
         self.episode_delay = 2.0
 
+        # Trajectory publishing state
+        self.current_trajectory = []
+        self.current_trajectory_idx = 0
+
         # IK solver state
         self.neutral_joint_angles = self.get_neutral_joint_config()
-        self.last_joint_angles = None
+        self.last_joint_angles = self.neutral_joint_angles.copy()
+        
+        self.init_motion_gen_config()   # Initialize motion gen config
 
-        self.get_logger().info(f'Simple Dataset Pose Publisher started')
-        self.get_logger().info(f'Publishing to topic: {topic}')
-        self.get_logger().info(f'Dataset contains {self.total_steps} timesteps')
+    def init_motion_gen_config(self, robot_cfg: str = "franka.yml", trajopt_tsteps: int = 32):
+        self.get_logger().info(f'Initializing motion gen config')
 
-    def load_coordinate_transform(self, coord_transform_path):
-        """Load coordinate transformation matrix from file."""
-        if coord_transform_path is None:
-            self.get_logger().info("No coordinate transformation provided - assuming dataset poses are in robot base frame")
-            return None
+        motion_gen_config = MotionGenConfig.load_from_robot_config(
+            robot_cfg,
+            world_model=None,
+            tensor_args=self.tensor_args,
+            trajopt_tsteps=trajopt_tsteps,
+            collision_checker_type=CollisionCheckerType.BLOX,
+            use_cuda_graph=False,
+            num_trajopt_seeds=2,
+            num_graph_seeds=2,  
+            evaluate_interpolated_trajectory=True,
+        )
 
-        try:
-            transform_path = Path(coord_transform_path)
-            if not transform_path.exists():
-                self.get_logger().error(f"Coordinate transformation file not found: {transform_path}")
-                return None
+        self.motion_gen = MotionGen(motion_gen_config)
+        self.motion_gen.warmup()
+        self.get_logger().info(f'Motion gen config initialized')
 
-            with open(transform_path, 'r') as f:
-                transform_data = json.load(f)
-
-            # Handle different transformation formats
-            if 'tx_robot_tag' in transform_data:
-                tx_robot_tag = np.array(transform_data['tx_robot_tag'])
-            elif 'tx_tag_robot' in transform_data:
-                # Invert if we have tag-to-robot instead of robot-to-tag
-                tx_tag_robot = np.array(transform_data['tx_tag_robot'])
-                tx_robot_tag = np.linalg.inv(tx_tag_robot)
-            else:
-                self.get_logger().error("Transformation file must contain 'tx_robot_tag' or 'tx_tag_robot'")
-                return None
-
-            self.get_logger().info(f"Loaded coordinate transformation from: {transform_path}")
-            self.get_logger().info(f"Transformation matrix shape: {tx_robot_tag.shape}")
-            return tx_robot_tag
-
-        except Exception as e:
-            self.get_logger().error(f"Failed to load coordinate transformation: {e}")
-            return None
+    def _compute_transform(self, tx_slam_tag_path, tag_to_robot_pos, tag_to_robot_quat, 
+                          use_identity_transform):
+        """
+        Compute the transformation matrix from tag frame to robot base frame.
+        
+        Priority: tx_slam_tag_path > manual pos/quat > identity
+        
+        Args:
+            tx_slam_tag_path: Path to tx_slam_tag.json file
+            tag_to_robot_pos: Position [x, y, z] of tag in robot frame
+            tag_to_robot_quat: Quaternion [x, y, z, w] of tag in robot frame
+            use_identity_transform: Whether to use identity transform
+            
+        Returns:
+            H_robot_tag: 4x4 transformation matrix (robot frame expressed in tag frame)
+        """
+        import json
+        
+        H_tag_to_robot = np.eye(4)
+        
+        # Priority 1: Load from tx_slam_tag.json if provided
+        if tx_slam_tag_path is not None:
+            try:
+                with open(tx_slam_tag_path, 'r') as f:
+                    data = json.load(f)
+                    tx_slam_tag = np.array(data['tx_slam_tag'])
+                    # tx_slam_tag transforms from tag to SLAM frame
+                    # We need the inverse: SLAM to tag
+                    H_tag_to_robot = np.linalg.inv(tx_slam_tag)
+                    self.get_logger().info(f"Loaded transformation from {tx_slam_tag_path}")
+            except Exception as e:
+                self.get_logger().error(f"Failed to load {tx_slam_tag_path}: {e}")
+                raise
+        
+        # Priority 2: Use manual position and quaternion
+        elif not use_identity_transform and tag_to_robot_pos is not None and tag_to_robot_quat is not None:
+            H_tag_to_robot[:3, 3] = tag_to_robot_pos
+            H_tag_to_robot[:3, :3] = Rotation.from_quat(tag_to_robot_quat).as_matrix()
+            self.get_logger().info("Using manually specified tag-to-robot transformation")
+        
+        # Priority 3: Use identity transform (default)
+        else:
+            self.get_logger().info("Using identity transform (tag frame = robot base frame)")
+        
+        # Compute the inverse: robot frame expressed in tag frame
+        H_robot_tag = np.linalg.inv(H_tag_to_robot)
+        return H_robot_tag
 
     def get_neutral_joint_config(self):
         """Get a neutral joint configuration for the Franka Panda robot."""
         # 7 Franka arm joints - all values must be within URDF bounds
         # panda_joint4 has restricted range: (-3.0718, -0.0698), so -2.356 is valid
-        return [0.0, -0.785, 0.0, -2.356, 0.0, 1.571, 0.785]
+        return [0.0, 0.0002, 0.0, -0.0698, 0.0, 0.0005, 0.0]
+    
+    def go_to_home(self):
+        """Go to home position."""
+        self.last_joint_angles = self.neutral_joint_angles.copy()
+        goal = RosJointState()
+        goal.header.stamp = self.get_clock().now().to_msg()
+        goal.header.frame_id = 'panda_link0'
+        goal.name = self.joint_names
+        goal.position = self.neutral_joint_angles
+        goal.velocity = []
+        goal.effort = []
+        self.publisher_.publish(goal)
+        self.get_logger().info(f"Published home position")
 
     def load_dataset(self, zip_path):
-        """Extracts and loads the Zarr dataset from a zip file."""
+        """Extracts and loads the Zarr dataset from a zip file.
+        
+        Returns:
+            Tuple[zarr.Group, zarr.Group]: (data group, meta group)
+        """
         try:
             self.get_logger().info(f"Loading dataset from '{zip_path}'...")
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                 extract_path = os.path.splitext(zip_path)[0]
                 zip_ref.extractall(extract_path)
 
-                zarr_path = os.path.join(extract_path, 'data')
-                data = zarr.open(store=zarr.DirectoryStore(zarr_path), mode='r')
+                zarr_root = zarr.open(store=zarr.DirectoryStore(extract_path), mode='r')
+                data = zarr_root['data']
+                meta = zarr_root['meta']
 
                 self.get_logger().info(f"Dataset loaded successfully")
-                return data
+                return data, meta
         except Exception as e:
             self.get_logger().error(f"Failed to load dataset: {e}")
             raise
 
-    def load_robot_model(self, urdf_path):
-        """Loads the robot kinematics chain from a URDF file using IKPy."""
-        try:
-            self.get_logger().info(f"Loading robot URDF from '{urdf_path}'...")
+    def plan_motion(self, start_state: List[float], target_pos: np.ndarray, target_quat: np.ndarray) -> Tuple[bool, List[List[float]]]:
+        """
+        Plan motion to target end-effector pose using cuRobo motion generation.
+        
+        The target pose is provided in the ArUco tag coordinate frame (from the UMI dataset)
+        and is automatically transformed to the robot base frame using the configured
+        transformation (H_robot_tag) before being passed to the IK solver.
 
-            # Active joints mask for Franka Panda (7 revolute joints only)
-            # This matches the working validation script - fixed joints are handled automatically
-            self.active_joints_mask = [False, True, True, True, True, True, True, True, False]
+        Args:
+            start_state: Start joint state [q1, q2, q3, q4, q5, q6, q7]
+            target_pos: Target EE position [x, y, z] in tag frame (numpy array or list)
+            target_quat: Target EE quaternion [x, y, z, w] in tag frame, scipy format (numpy array or list)
 
-            robot_chain = Chain.from_urdf_file(
-                urdf_path,
-                base_elements=["panda_link0"],
-                active_links_mask=self.active_joints_mask
-            )
+        Returns:
+            Tuple[bool, List[List[float]]]: (success, trajectory_waypoints)
+                - success: True if motion planning succeeded, False otherwise
+                - trajectory_waypoints: List of joint configurations forming the trajectory
+        """
+        # Convert numpy arrays to lists if needed
+        if isinstance(target_pos, np.ndarray):
+            target_pos = target_pos.tolist()
+        if isinstance(target_quat, np.ndarray):
+            target_quat = target_quat.tolist()
+        
+        # Construct target pose in tag frame (from dataset)
+        H_tag_to_eef = np.eye(4)
+        H_tag_to_eef[:3, 3] = target_pos
+        H_tag_to_eef[:3, :3] = Rotation.from_quat(target_quat).as_matrix()
+        
+        # Transform target pose from tag frame to robot base frame
+        # H_robot_tag transforms robot frame to tag frame (computed in __init__)
+        # We want: H_robot_to_eef = H_robot_tag @ H_tag_to_eef
+        H_robot_to_eef = self.H_robot_tag @ H_tag_to_eef
+        new_pos_R_E = H_robot_to_eef[:3, 3]
+        new_quat_xyzw = Rotation.from_matrix(H_robot_to_eef[:3, :3]).as_quat()
+        curobo_quat = [new_quat_xyzw[3], new_quat_xyzw[0], new_quat_xyzw[1], new_quat_xyzw[2]]
 
-            # Debug: Log chain information
-            self.get_logger().info(f"Robot chain loaded successfully")
-            self.get_logger().info(f"Number of links in chain: {len(robot_chain.links)}")
-            self.get_logger().info(f"Active joints count: {sum(self.active_joints_mask)}")
-            self.get_logger().info(f"Expected joint angles length: {sum(self.active_joints_mask)}")
+        # Ensure start_state is a list with correct length (7 joints for Franka)
+        if len(start_state) > 7:
+            start_state = start_state[:7]
 
-            # Debug: Log joint bounds for each link
-            for i, link in enumerate(robot_chain.links):
-                if hasattr(link, 'bounds') and link.bounds is not None:
-                    self.get_logger().info(f"Joint {i} ({link.name}) bounds: {link.bounds}")
+        joint_state = CuroboJointState.from_position(
+            position=self.tensor_args.to_device(start_state).unsqueeze(0),
+            joint_names=self.joint_names
+        )
+        ik_goal = Pose(
+            position=self.tensor_args.to_device(new_pos_R_E),
+            quaternion=self.tensor_args.to_device(curobo_quat)
+        )
+        
+        result = self.motion_gen.plan_single(
+            joint_state, 
+            ik_goal, 
+            MotionGenPlanConfig(max_attempts=3, enable_finetune_trajopt=True)
+        )
+        
+        success = bool(result.success.item())
+        if success:
+            result_trajectory = result.get_interpolated_plan().position.tolist()
+            self.get_logger().info(f"Motion planning succeeded with {len(result_trajectory)} waypoints")
+        else:
+            result_trajectory = [start_state]
+            self.get_logger().warn(f"Motion planning failed for position {target_pos}")
+            
+        return success, result_trajectory
+
+    def plan_next_trajectory(self):
+        """Plan the trajectory for the next dataset step, respecting episode boundaries."""
+        # Check if we've reached the end of the current episode
+        if self.current_step >= self.episode_end_step:
+            self.get_logger().info(f"Episode {self.current_episode} complete at step {self.current_step}")
+            
+            # Reset to neutral position at end of episode
+            self.last_joint_angles = self.neutral_joint_angles.copy()
+            
+            # Move to next episode
+            self.current_episode += 1
+            if self.current_episode >= self.num_episodes:
+                if self.loop_enabled:
+                    self.get_logger().info("All episodes complete, looping back to first episode...")
+                    self.current_episode = 0
+                    self.current_step = 0
+                    self.episode_start_step = 0
+                    self.episode_end_step = self.episode_ends[0]
                 else:
-                    self.get_logger().info(f"Joint {i} ({link.name}) bounds: None")
-
-            return robot_chain
-
-        except Exception as e:
-            self.get_logger().error(f"Failed to load robot model: {e}")
-            raise
-
-    def transform_pose_to_robot_frame(self, pos, rot_axis_angle):
-        """
-        Transform pose from ArUco tag frame to robot base frame.
-
-        Args:
-            pos: Position in ArUco tag frame [x, y, z]
-            rot_axis_angle: Rotation in ArUco tag frame [rx, ry, rz] (axis-angle)
-
-        Returns:
-            tuple: (pos_robot, rot_robot) in robot base frame
-        """
-        if self.coord_transform is None:
-            # No transformation needed - assume dataset is already in robot frame
-            return pos, rot_axis_angle
-
-        try:
-            # Convert axis-angle to rotation matrix
-            rot = Rotation.from_rotvec(rot_axis_angle)
-            rot_matrix = rot.as_matrix()
-
-            # Create 4x4 transformation matrix for the pose
-            pose_tag = np.zeros((4, 4))
-            pose_tag[:3, :3] = rot_matrix
-            pose_tag[:3, 3] = pos
-            pose_tag[3, 3] = 1.0
-
-            # Apply coordinate transformation: pose_robot = tx_robot_tag @ pose_tag
-            pose_robot = self.coord_transform @ pose_tag
-
-            # Extract position and rotation from transformed pose
-            pos_robot = pose_robot[:3, 3]
-            rot_matrix_robot = pose_robot[:3, :3]
-
-            # Convert rotation matrix back to axis-angle
-            rot_robot = Rotation.from_matrix(rot_matrix_robot).as_rotvec()
-
-            return pos_robot, rot_robot
-
-        except Exception as e:
-            self.get_logger().error(f"Failed to transform pose: {e}")
-            return pos, rot_axis_angle  # Return original pose if transformation fails
-
-    def solve_ik(self, target_pos, target_rot):
-        """
-        Solve inverse kinematics for target pose using IKPy.
-
-        Args:
-            target_pos: Target position [x, y, z] (will be transformed to robot frame if needed)
-            target_rot: Target rotation as axis-angle [rx, ry, rz] (will be transformed to robot frame if needed)
-
-        Returns:
-            list of joint angles for active joints, or None if IK fails
-        """
-        try:
-            # Transform pose from ArUco tag frame to robot base frame if needed
-            transformed_pos, transformed_rot = self.transform_pose_to_robot_frame(target_pos, target_rot)
-
-            # Convert axis-angle to rotation matrix
-            rot = Rotation.from_rotvec(transformed_rot)
-            target_orientation_matrix = rot.as_matrix()
-
-            # Use last successful pose as initial guess, otherwise neutral
-            initial_position = self.last_joint_angles if self.last_joint_angles is not None else self.neutral_joint_angles
-
-            # Debug: Log initial position info
-            self.get_logger().debug(f"Initial position length: {len(initial_position)}")
-            self.get_logger().debug(f"Initial position: {initial_position}")
-
-            # Ensure initial position matches expected length for IKPy
-            # We need to match the full chain length (9 links), but only provide values for active joints
-            full_initial_position = [0.0] * len(self.robot_chain.links)
-
-            # Map our 7 active joints to the correct positions in the full chain
-            active_indices = [i for i, active in enumerate(self.active_joints_mask) if active]
-            for i, active_idx in enumerate(active_indices):
-                if i < len(initial_position):
-                    full_initial_position[active_idx] = initial_position[i]
-
-            # Debug: Check initial position against bounds
-            self.get_logger().debug(f"Full initial position for IK: {full_initial_position}")
-            for i, (angle, link) in enumerate(zip(full_initial_position, self.robot_chain.links)):
-                if hasattr(link, 'bounds') and link.bounds is not None:
-                    min_angle, max_angle = link.bounds
-                    if angle < min_angle or angle > max_angle:
-                        self.get_logger().warn(f"Initial position {i} ({angle}) outside bounds for {link.name}: {link.bounds}")
-
-            # transform the target_pos's base to "panda_joint0" base
-            initial_position = full_initial_position
-
-            # Solve IK using IKPy
-            calculated_joints = self.robot_chain.inverse_kinematics(
-                target_position=transformed_pos,
-                target_orientation=target_orientation_matrix,
-                orientation_mode="all",
-                initial_position=initial_position
-            )
-
-            active_joint_angles = [calculated_joints[i] for i, active in enumerate(self.active_joints_mask) if active]
-
-            self.get_logger().debug(f"IK returned {len(calculated_joints)} joint angles")
-            self.get_logger().debug(f"Filtered to {len(active_joint_angles)} active joints: {active_joint_angles}")
-
-            if self.validate_joint_angles(active_joint_angles):
-                self.last_joint_angles = active_joint_angles  # Store for next iteration
-                return active_joint_angles
-
-            self.get_logger().warn(f"Joint angles validation failed: {active_joint_angles}")
-            return None
-
-        except Exception as e:
-            self.get_logger().warn(f"IK solver failed: {e}")
-            self.get_logger().debug(f"Original target position (ArUco frame): {target_pos}")
-            self.get_logger().debug(f"Original target rotation (ArUco frame): {target_rot}")
-            if self.coord_transform is not None:
-                self.get_logger().debug(f"Transformed target position (robot frame): {transformed_pos}")
-                self.get_logger().debug(f"Transformed target rotation (robot frame): {transformed_rot}")
-            return None
-
-    def validate_joint_angles(self, joint_angles):
-        """Validate that joint angles are within reasonable limits for Franka Panda."""
-        if joint_angles is None or len(joint_angles) == 0:
-            return False
-
-        # Franka Panda joint limits from URDF (radians)
-        joint_limits = [
-            (-2.8973, 2.8973),   # panda_joint1
-            (-1.7628, 1.7628),   # panda_joint2
-            (-2.8973, 2.8973),   # panda_joint3
-            (-3.0718, -0.0698),  # panda_joint4
-            (-2.8973, 2.8973),   # panda_joint5
-            (-0.0175, 3.7525),   # panda_joint6
-            (-2.8973, 2.8973),   # panda_joint7
-        ]
-
-        for i, angle in enumerate(joint_angles):
-            if i >= len(joint_limits):
-                break
-            min_angle, max_angle = joint_limits[i]
-            if angle < min_angle - 0.1 or angle > max_angle + 0.1:  # Small tolerance
-                return False
-
-        # Check for NaN or infinite values
-        if any(not np.isfinite(angle) for angle in joint_angles):
-            return False
-
-        return True
-
-    def publish_step(self):
-        """Publish a single timestep from the dataset."""
-        if self.current_step >= self.total_steps:
-            if self.loop_enabled:
-                self.current_step = 0
-                self.get_logger().info("Looping back to first timestep...")
-                self.last_joint_angles = None  # Reset IK state
+                    self.get_logger().info("All episodes published successfully")
+                    return False
             else:
-                self.get_logger().info("All timesteps published successfully")
-                return False
+                # Update episode boundaries
+                self.episode_start_step = self.episode_ends[self.current_episode - 1]
+                self.episode_end_step = self.episode_ends[self.current_episode]
+                self.current_step = self.episode_start_step
+                self.get_logger().info(
+                    f"Starting episode {self.current_episode} "
+                    f"(steps {self.episode_start_step} to {self.episode_end_step})"
+                )
 
         try:
-            # Extract pose data from dataset (in ArUco tag coordinate frame)
-            target_pos = self.data['robot0_eef_pos'][self.current_step]
-            target_rot = self.data['robot0_eef_rot_axis_angle'][self.current_step]
+            # Extract pose data from dataset
+            target_pos = np.array(self.data['robot0_eef_pos'][self.current_step])
+            target_rot_axis_angle = np.array(self.data['robot0_eef_rot_axis_angle'][self.current_step])
             gripper_width = self.data['robot0_gripper_width'][self.current_step][0]
 
-            # Solve IK to get joint angles (handles coordinate transformation internally)
-            joint_angles = self.solve_ik(target_pos, target_rot)
+            self.get_logger().info(
+                f"Episode {self.current_episode}, Step {self.current_step} "
+                f"({self.current_step - self.episode_start_step + 1}/"
+                f"{self.episode_end_step - self.episode_start_step}): "
+                f"Dataset position: {target_pos}"
+            )
 
-            if joint_angles is None:
-                self.get_logger().warn(f"Skipping step {self.current_step} due to IK failure")
+            # Convert axis-angle to quaternion, scipy format [x, y, z, w]
+            target_quat = transform_rotation(
+                target_rot_axis_angle, from_rep='axis_angle', to_rep='quaternion'
+            )
+            
+            success, trajectories = self.plan_motion(self.last_joint_angles, target_pos, target_quat)
+            if not success:
+                self.get_logger().warn(f"Skipping step {self.current_step} due to motion planning failure")
                 self.current_step += 1
                 return True
-
-            # Add gripper joint values
-            final_joint_angles = list(joint_angles)
-            finger_positions = [gripper_width, gripper_width]  # Both fingers same width
-            final_joint_angles.extend(finger_positions)
-
-            # Convert numpy types to native Python floats for ROS2
-            final_joint_angles = [float(angle) for angle in final_joint_angles]
-
-            # Create and publish JointState message
-            msg = JointState()
-            msg.header.stamp = self.get_clock().now().to_msg()
-            msg.header.frame_id = "panda_hand"
-
-            # Use all joint names (arm + gripper) for publishing
-            all_joint_names = self.joint_names + self.gripper_joint_names
-            msg.name = all_joint_names
-            msg.position = final_joint_angles
-            msg.velocity = []
-            msg.effort = []
-
-            self.publisher_.publish(msg)
-
-            # Log progress occasionally
-            if self.current_step % 100 == 0:
-                self.get_logger().info(f"Published step {self.current_step}/{self.total_steps}")
-
+            
+            # Update last joint angles to the final waypoint of the trajectory
+            self.last_joint_angles = trajectories[-1]
+            self.current_step += 1
+            self.current_trajectory = trajectories
+            self.current_trajectory_idx = 0
+            return True
         except Exception as e:
-            self.get_logger().error(f"Error publishing step {self.current_step}: {e}")
+            self.get_logger().error(f"Error planning step {self.current_step}: {e}")
+            return False
 
-        # Move to next step
-        self.current_step += 1
+    def publish_trajectory_waypoint(self):
+        """Publish the next waypoint in the current trajectory."""
+        if self.current_trajectory_idx >= len(self.current_trajectory):
+            return False
+        
+        waypoint = self.current_trajectory[self.current_trajectory_idx]
+        goal = RosJointState()
+        goal.header.stamp = self.get_clock().now().to_msg()
+        goal.header.frame_id = 'panda_link0'
+        goal.name = self.joint_names
+        goal.position = waypoint[:7]
+        goal.velocity = []
+        goal.effort = []
+        self.publisher_.publish(goal)
+        
+        self.get_logger().debug(
+            f"Episode {self.current_episode}: Published waypoint "
+            f"{self.current_trajectory_idx + 1}/{len(self.current_trajectory)} "
+            f"for step {self.current_step - 1}"
+        )
+        
+        self.current_trajectory_idx += 1
         return True
 
     def run_publishing_loop(self):
-        """Simple publishing loop without threading."""
+        """Publishing loop with incremental trajectory waypoint publishing."""
         try:
             publish_interval = 1.0 / self.publish_rate
+            
+            # Plan first trajectory
+            if not self.plan_next_trajectory():
+                self.get_logger().info("No data to publish")
+                return
 
+            previous_episode = self.current_episode
+            
             while rclpy.ok():
-                if not self.publish_step():
-                    if self.loop_enabled:
-                        time.sleep(self.episode_delay)
-                        continue
-                    else:
+                # Publish next waypoint in trajectory
+                result = self.publish_trajectory_waypoint()
+                if not result:
+                    # Current trajectory finished, plan next one
+                    if not self.plan_next_trajectory():
+                        # No more data to publish
                         break
+                    
+                    # Check if we moved to a new episode
+                    if self.current_episode != previous_episode:
+                        self.get_logger().info(
+                            f"Episode transition: {previous_episode} -> {self.current_episode}. "
+                            f"Waiting {self.episode_delay}s..."
+                        )
+                        time.sleep(self.episode_delay)
+                        previous_episode = self.current_episode
+                        self.go_to_home()
+                    
+                    continue
 
                 time.sleep(publish_interval)
 
         except Exception as e:
             self.get_logger().error(f"Error in publishing loop: {e}")
+            import traceback
+            traceback.print_exc()
 
 
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
-        description='Publish joint states from dataset.zarr.zip using inverse kinematics with IKPy'
+        description='Publish joint states from dataset.zarr.zip using inverse kinematics with cuRobo'
     )
     parser.add_argument(
         'dataset_path',
@@ -426,32 +470,51 @@ def parse_args():
     parser.add_argument(
         '--publish_rate',
         type=float,
-        default=10.0,
-        help='Publishing rate in Hz (default: 10.0)'
+        default=100.0,
+        help='Publishing rate in Hz (default: 60.0)'
     )
     parser.add_argument(
         '--loop',
         action='store_true',
-        help='Loop through timesteps continuously'
+        help='Loop through all episodes continuously'
     )
     parser.add_argument(
         '--episode_delay',
         type=float,
         default=2.0,
-        help='Delay between loops in seconds (default: 2.0)'
+        help='Delay between episodes in seconds (default: 2.0)'
     )
     parser.add_argument(
-        '--coord_transform',
+        '--tx_slam_tag_path',
         type=str,
         default=None,
-        help='Path to coordinate transformation JSON file (tx_robot_tag or tx_tag_robot)'
+        help='Path to tx_slam_tag.json calibration file from UMI data collection'
     )
-
+    parser.add_argument(
+        '--tag_to_robot_pos',
+        type=float,
+        nargs=3,
+        default=[0.0, 0.0, 0.0],
+        help='Position of ArUco tag relative to robot base [x, y, z] in meters (default: [0, 0, 0])'
+    )
+    parser.add_argument(
+        '--tag_to_robot_quat',
+        type=float,
+        nargs=4,
+        default=[0.0, 0.0, 0.0, 1.0],
+        help='Orientation of ArUco tag relative to robot base as quaternion [x, y, z, w] (default: [0, 0, 0, 1])'
+    )
+    parser.add_argument(
+        '--use_identity_transform',
+        action='store_true',
+        default=True,
+        help='Use identity transform (no coordinate transformation, assumes tag frame = robot base frame)'
+    )
     return parser.parse_args()
 
 
 def main():
-    """Main function to load dataset and publish joint states using IKPy."""
+    """Main function to load dataset and publish joint states using cuRobo."""
     args = parse_args()
 
     # Determine URDF path
@@ -479,8 +542,12 @@ def main():
         rclpy.init()
 
         # Create publisher node
-        publisher_node = SimpleDatasetPosePublisher(
-            str(dataset_path), str(urdf_path), args.topic, args.publish_rate, args.coord_transform
+        publisher_node = ReplayBufferPosePublisher(
+            str(dataset_path), str(urdf_path), args.topic, args.publish_rate,
+            tx_slam_tag_path=args.tx_slam_tag_path,
+            tag_to_robot_pos=args.tag_to_robot_pos,
+            tag_to_robot_quat=args.tag_to_robot_quat,
+            use_identity_transform=args.use_identity_transform
         )
         publisher_node.loop_enabled = args.loop
         publisher_node.episode_delay = args.episode_delay
