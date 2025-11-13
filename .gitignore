@@ -235,3 +235,5 @@ video/demos/*
 *.MP4
 *.JPG
 
+# Wandb
+wandb/
