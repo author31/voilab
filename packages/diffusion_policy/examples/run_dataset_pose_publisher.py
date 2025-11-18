@@ -24,7 +24,7 @@ Published to /joint_command (sensor_msgs/JointState):
     - velocity: empty list
     - effort: empty list
 """
-
+import torch
 import argparse
 import time
 import sys
@@ -35,34 +35,47 @@ import numpy as np
 from pathlib import Path
 import zarr
 import zipfile
-import json
 from scipy.spatial.transform import Rotation
-from ikpy.chain import Chain
-from sensor_msgs.msg import JointState
+from sensor_msgs.msg import JointState as RosJointState
+
+# cuRobo
+from curobo.types.base import TensorDeviceType
+from curobo.types.math import Pose
+from curobo.types.robot import JointState as CuroboJointState
+from curobo.types.robot import RobotConfig
+from curobo.wrap.reacher.ik_solver import IKSolver, IKSolverConfig
+from curobo.util_file import (
+    get_robot_configs_path,
+    join_path,
+    load_yaml,
+)
+from curobo.geom.types import WorldConfig
+from curobo.geom.sdf.world import CollisionCheckerType
+from curobo.wrap.reacher.motion_gen import MotionGen, MotionGenConfig, MotionGenPlanConfig
 
 
-class SimpleDatasetPosePublisher(Node):
-    """Simplified ROS2 Node to publish joint states from dataset using IKPy solver."""
+class ReplayBufferPosePublisher(Node):
+    """ROS2 Node to publish joint states from replay buffer using cuRobo's IKSolver."""
 
-    def __init__(self, dataset_path, urdf_path, topic, publish_rate, coord_transform_path=None):
-        super().__init__('simple_dataset_pose_publisher')
+    def __init__(self, dataset_path, urdf_path, topic, publish_rate, coord_transform_path=None, start_episode=0):
+        super().__init__('replay_buffer_pose_publisher')
 
+        self.tensor_args = TensorDeviceType()
         self.dataset_path = dataset_path
         self.urdf_path = urdf_path
         self.topic = topic
         self.publish_rate = publish_rate
         self.coord_transform_path = coord_transform_path
+        self.start_episode = start_episode
 
         # Create publisher for joint states
-        self.publisher_ = self.create_publisher(JointState, topic, 10)
+        self.publisher_ = self.create_publisher(RosJointState, topic, 10)
 
         # Load coordinate transformation if provided
-        self.coord_transform = self.load_coordinate_transform(coord_transform_path)
+        self.coord_transform = self.get_transform_from_base_to_tag(y_offset=0.5)
 
         # Load dataset and robot model
-        self.data = self.load_dataset(dataset_path)
-        self.robot_chain = self.load_robot_model(urdf_path)
-
+        self.data, self.meta, self.episode_ends = self.load_dataset(dataset_path)
         # Get joint names from the robot model - 7 arm joints
         self.joint_names = [
             "panda_joint1", "panda_joint2", "panda_joint3",
@@ -72,59 +85,109 @@ class SimpleDatasetPosePublisher(Node):
 
         self.get_logger().info(f'Active joints ({len(self.joint_names)}): {self.joint_names}')
 
-        # Playback state
-        self.current_step = 0
-        self.total_steps = len(self.data['robot0_eef_pos'])
+        # Episode-based playback state
+        self.total_episodes = len(self.episode_ends)
         self.loop_enabled = False
         self.episode_delay = 2.0
 
-        # IK solver state
-        self.neutral_joint_angles = self.get_neutral_joint_config()
+        # Validate start episode
+        if self.start_episode < 0 or self.start_episode >= self.total_episodes:
+            raise ValueError(f"Invalid start episode {self.start_episode}. Must be between 0 and {self.total_episodes - 1}")
+
+        self.current_episode = self.start_episode
+        self.current_episode_step = 0
+
+        # Calculate episode boundaries
+        self.episode_starts = [0] + self.episode_ends[:-1].tolist()
+        self.episode_lengths = [end - start for start, end in zip(self.episode_starts, self.episode_ends)]
+
+        # IK solver
+        # self.ik_solver = self.init_ik_solver()
+
+        # MotionGen
+        self.init_motion_gen()
         self.last_joint_angles = None
 
-        self.get_logger().info(f'Simple Dataset Pose Publisher started')
-        self.get_logger().info(f'Publishing to topic: {topic}')
-        self.get_logger().info(f'Dataset contains {self.total_steps} timesteps')
+    def get_transform_from_base_to_tag(self, y_offset=0.5):
+        """Get the transformation matrix from robot base frame to ArUco tag frame.
+        Assume the ArUco tag is 10 units along the y-axis from the robot base frame.
+        Args:
+            y_offset: The offset along the y-axis in the robot base frame.
+        Returns:
+            The transformation matrix from robot base frame to ArUco tag frame.
+        """
+        H_base_aruco = np.eye(4)
+        H_base_aruco[1, 3] = y_offset # move 10 units along y-axis
+        return H_base_aruco
 
-    def load_coordinate_transform(self, coord_transform_path):
-        """Load coordinate transformation matrix from file."""
-        if coord_transform_path is None:
-            self.get_logger().info("No coordinate transformation provided - assuming dataset poses are in robot base frame")
-            return None
+    def init_ik_solver(self):
+        """Initialize a cuRobo IKSolver for the Franka Panda robot."""
+        self.get_logger().info('Initializing IK solver')
 
-        try:
-            transform_path = Path(coord_transform_path)
-            if not transform_path.exists():
-                self.get_logger().error(f"Coordinate transformation file not found: {transform_path}")
-                return None
+        config_file = load_yaml(join_path(get_robot_configs_path(), "franka.yml"))
+        kinematics_cfg = config_file["robot_cfg"]["kinematics"]
 
-            with open(transform_path, 'r') as f:
-                transform_data = json.load(f)
+        robot_cfg = RobotConfig.from_basic(
+            kinematics_cfg["urdf_path"],
+            kinematics_cfg["base_link"],
+            kinematics_cfg["ee_link"],
+            self.tensor_args,
+        )
 
-            # Handle different transformation formats
-            if 'tx_robot_tag' in transform_data:
-                tx_robot_tag = np.array(transform_data['tx_robot_tag'])
-            elif 'tx_tag_robot' in transform_data:
-                # Invert if we have tag-to-robot instead of robot-to-tag
-                tx_tag_robot = np.array(transform_data['tx_tag_robot'])
-                tx_robot_tag = np.linalg.inv(tx_tag_robot)
-            else:
-                self.get_logger().error("Transformation file must contain 'tx_robot_tag' or 'tx_tag_robot'")
-                return None
+        ik_config = IKSolverConfig.load_from_robot_config(
+            robot_cfg,
+            None,
+            rotation_threshold=0.05,
+            position_threshold=0.005,
+            num_seeds=20,
+            self_collision_check=False,
+            self_collision_opt=False,
+            tensor_args=self.tensor_args,
+            use_cuda_graph=True,
+        )
 
-            self.get_logger().info(f"Loaded coordinate transformation from: {transform_path}")
-            self.get_logger().info(f"Transformation matrix shape: {tx_robot_tag.shape}")
-            return tx_robot_tag
+        ik_solver = IKSolver(ik_config)
+        return ik_solver
 
-        except Exception as e:
-            self.get_logger().error(f"Failed to load coordinate transformation: {e}")
-            return None
+    def init_motion_gen(self):
+        """Initialize a cuRobo MotionGen for the Franka Panda robot."""
+        self.get_logger().info('Initializing MotionGen')
 
-    def get_neutral_joint_config(self):
+        world_model = WorldConfig.from_dict(
+            {
+                "blox": {
+                    "world": {
+                        "pose": [0, 0, 0, 1, 0, 0, 0],
+                        "integrator_type": "occupancy",
+                        "voxel_size": 0.005,
+                    }
+                }
+            }
+        )
+        robot_path = "franka.yml"
+        trajopt_tsteps = 16
+
+        motion_gen_config = MotionGenConfig.load_from_robot_config(
+            robot_path,
+            None,
+            self.tensor_args,
+            trajopt_tsteps=trajopt_tsteps,
+            collision_checker_type=CollisionCheckerType.BLOX,
+            use_cuda_graph=True,
+            num_trajopt_seeds=2,
+            num_graph_seeds=2,
+            evaluate_interpolated_trajectory=True,
+        )
+
+        self.motion_gen = MotionGen(motion_gen_config)
+        self.motion_gen.warmup()
+
+    def get_neutral_joint_angles(self):
         """Get a neutral joint configuration for the Franka Panda robot."""
         # 7 Franka arm joints - all values must be within URDF bounds
         # panda_joint4 has restricted range: (-3.0718, -0.0698), so -2.356 is valid
         return [0.0, -0.785, 0.0, -2.356, 0.0, 1.571, 0.785]
+
 
     def load_dataset(self, zip_path):
         """Extracts and loads the Zarr dataset from a zip file."""
@@ -134,47 +197,22 @@ class SimpleDatasetPosePublisher(Node):
                 extract_path = os.path.splitext(zip_path)[0]
                 zip_ref.extractall(extract_path)
 
-                zarr_path = os.path.join(extract_path, 'data')
-                data = zarr.open(store=zarr.DirectoryStore(zarr_path), mode='r')
+                root = zarr.open(store=zarr.DirectoryStore(extract_path), mode='r')
+
+                # Load both data and meta groups
+                data = root['data']
+                meta = root['meta']
+
+                # Extract episode ends information
+                assert 'episode_ends' in meta
+                episode_ends = meta.episode_ends
 
                 self.get_logger().info(f"Dataset loaded successfully")
-                return data
+                self.get_logger().info(f"Found {len(episode_ends)} episodes")
+                return data, meta, episode_ends
+                
         except Exception as e:
             self.get_logger().error(f"Failed to load dataset: {e}")
-            raise
-
-    def load_robot_model(self, urdf_path):
-        """Loads the robot kinematics chain from a URDF file using IKPy."""
-        try:
-            self.get_logger().info(f"Loading robot URDF from '{urdf_path}'...")
-
-            # Active joints mask for Franka Panda (7 revolute joints only)
-            # This matches the working validation script - fixed joints are handled automatically
-            self.active_joints_mask = [False, True, True, True, True, True, True, True, False]
-
-            robot_chain = Chain.from_urdf_file(
-                urdf_path,
-                base_elements=["panda_link0"],
-                active_links_mask=self.active_joints_mask
-            )
-
-            # Debug: Log chain information
-            self.get_logger().info(f"Robot chain loaded successfully")
-            self.get_logger().info(f"Number of links in chain: {len(robot_chain.links)}")
-            self.get_logger().info(f"Active joints count: {sum(self.active_joints_mask)}")
-            self.get_logger().info(f"Expected joint angles length: {sum(self.active_joints_mask)}")
-
-            # Debug: Log joint bounds for each link
-            for i, link in enumerate(robot_chain.links):
-                if hasattr(link, 'bounds') and link.bounds is not None:
-                    self.get_logger().info(f"Joint {i} ({link.name}) bounds: {link.bounds}")
-                else:
-                    self.get_logger().info(f"Joint {i} ({link.name}) bounds: None")
-
-            return robot_chain
-
-        except Exception as e:
-            self.get_logger().error(f"Failed to load robot model: {e}")
             raise
 
     def transform_pose_to_robot_frame(self, pos, rot_axis_angle):
@@ -188,10 +226,6 @@ class SimpleDatasetPosePublisher(Node):
         Returns:
             tuple: (pos_robot, rot_robot) in robot base frame
         """
-        if self.coord_transform is None:
-            # No transformation needed - assume dataset is already in robot frame
-            return pos, rot_axis_angle
-
         try:
             # Convert axis-angle to rotation matrix
             rot = Rotation.from_rotvec(rot_axis_angle)
@@ -221,7 +255,7 @@ class SimpleDatasetPosePublisher(Node):
 
     def solve_ik(self, target_pos, target_rot):
         """
-        Solve inverse kinematics for target pose using IKPy.
+        Solve inverse kinematics for target pose using cuRobo's IKSolver.
 
         Args:
             target_pos: Target position [x, y, z] (will be transformed to robot frame if needed)
@@ -231,155 +265,126 @@ class SimpleDatasetPosePublisher(Node):
             list of joint angles for active joints, or None if IK fails
         """
         try:
-            # Transform pose from ArUco tag frame to robot base frame if needed
             transformed_pos, transformed_rot = self.transform_pose_to_robot_frame(target_pos, target_rot)
 
-            # Convert axis-angle to rotation matrix
-            rot = Rotation.from_rotvec(transformed_rot)
-            target_orientation_matrix = rot.as_matrix()
+            quat = Rotation.from_rotvec(transformed_rot).as_quat()
 
-            # Use last successful pose as initial guess, otherwise neutral
-            initial_position = self.last_joint_angles if self.last_joint_angles is not None else self.neutral_joint_angles
-
-            # Debug: Log initial position info
-            self.get_logger().debug(f"Initial position length: {len(initial_position)}")
-            self.get_logger().debug(f"Initial position: {initial_position}")
-
-            # Ensure initial position matches expected length for IKPy
-            # We need to match the full chain length (9 links), but only provide values for active joints
-            full_initial_position = [0.0] * len(self.robot_chain.links)
-
-            # Map our 7 active joints to the correct positions in the full chain
-            active_indices = [i for i, active in enumerate(self.active_joints_mask) if active]
-            for i, active_idx in enumerate(active_indices):
-                if i < len(initial_position):
-                    full_initial_position[active_idx] = initial_position[i]
-
-            # Debug: Check initial position against bounds
-            self.get_logger().debug(f"Full initial position for IK: {full_initial_position}")
-            for i, (angle, link) in enumerate(zip(full_initial_position, self.robot_chain.links)):
-                if hasattr(link, 'bounds') and link.bounds is not None:
-                    min_angle, max_angle = link.bounds
-                    if angle < min_angle or angle > max_angle:
-                        self.get_logger().warn(f"Initial position {i} ({angle}) outside bounds for {link.name}: {link.bounds}")
-
-            # transform the target_pos's base to "panda_joint0" base
-            initial_position = full_initial_position
-
-            # Solve IK using IKPy
-            calculated_joints = self.robot_chain.inverse_kinematics(
-                target_position=transformed_pos,
-                target_orientation=target_orientation_matrix,
-                orientation_mode="all",
-                initial_position=initial_position
+            goal = Pose(
+                position=self.tensor_args.to_device(
+                    torch.tensor(transformed_pos, dtype=torch.float32).unsqueeze(0)
+                ),
+                quaternion=self.tensor_args.to_device(
+                    torch.tensor(quat, dtype=torch.float32).unsqueeze(0)
+                ),
             )
 
-            active_joint_angles = [calculated_joints[i] for i, active in enumerate(self.active_joints_mask) if active]
+            result = self.ik_solver.solve_batch(goal)
+            success = bool(result.success.view(-1)[0].item())
+            if not success:
+                return None
 
-            self.get_logger().debug(f"IK returned {len(calculated_joints)} joint angles")
-            self.get_logger().debug(f"Filtered to {len(active_joint_angles)} active joints: {active_joint_angles}")
-
-            if self.validate_joint_angles(active_joint_angles):
-                self.last_joint_angles = active_joint_angles  # Store for next iteration
-                return active_joint_angles
-
-            self.get_logger().warn(f"Joint angles validation failed: {active_joint_angles}")
-            return None
+            joint_tensor = result.solution[0].squeeze(0)
+            joint_angles = joint_tensor.detach().cpu().numpy().tolist()
+            return joint_angles
 
         except Exception as e:
             self.get_logger().warn(f"IK solver failed: {e}")
             self.get_logger().debug(f"Original target position (ArUco frame): {target_pos}")
             self.get_logger().debug(f"Original target rotation (ArUco frame): {target_rot}")
-            if self.coord_transform is not None:
-                self.get_logger().debug(f"Transformed target position (robot frame): {transformed_pos}")
-                self.get_logger().debug(f"Transformed target rotation (robot frame): {transformed_rot}")
+            return None
+    
+    def solve_ik_with_motion_gen(self, target_pos, target_rot):
+        """
+        Solve inverse kinematics for target pose using cuRobo's MotionGen.
+        """
+        try:
+            transformed_pos, transformed_rot = self.transform_pose_to_robot_frame(target_pos, target_rot)
+            quat = Rotation.from_rotvec(transformed_rot).as_quat()
+            curobo_quat = [quat[3], quat[0], quat[1], quat[2]]
+            goal = Pose(
+                position=self.tensor_args.to_device(
+                    torch.tensor(transformed_pos, dtype=torch.float32).unsqueeze(0)
+                ),
+                quaternion=self.tensor_args.to_device(
+                    torch.tensor(curobo_quat, dtype=torch.float32).unsqueeze(0)
+                ),
+            )
+
+            initial_position = self.last_joint_angles if self.last_joint_angles is not None else self.get_neutral_joint_angles()
+
+            start_joint_state = CuroboJointState.from_position(
+                position=self.tensor_args.to_device(initial_position).unsqueeze(0),
+                joint_names=[
+                    "panda_link1", "panda_link2", "panda_link3", "panda_link4",
+                    "panda_link5", "panda_link6", "panda_link7"
+                ]
+            )
+
+            result = self.motion_gen.plan_single(
+                start_joint_state, 
+                goal, 
+                MotionGenPlanConfig(max_attempts=3, enable_finetune_trajopt=True)
+            )
+            success = bool(result.success.view(-1)[0].item())
+            if not success:
+                return None
+
+            trajectories = result.get_interpolated_plan().position.tolist()
+            return trajectories
+
+        except Exception as e:
+            self.get_logger().warn(f"IK solver failed: {e}")
+            self.get_logger().debug(f"Original target position (ArUco frame): {target_pos}")
+            self.get_logger().debug(f"Original target rotation (ArUco frame): {target_rot}")
             return None
 
-    def validate_joint_angles(self, joint_angles):
-        """Validate that joint angles are within reasonable limits for Franka Panda."""
-        if joint_angles is None or len(joint_angles) == 0:
-            return False
-
-        # Franka Panda joint limits from URDF (radians)
-        joint_limits = [
-            (-2.8973, 2.8973),   # panda_joint1
-            (-1.7628, 1.7628),   # panda_joint2
-            (-2.8973, 2.8973),   # panda_joint3
-            (-3.0718, -0.0698),  # panda_joint4
-            (-2.8973, 2.8973),   # panda_joint5
-            (-0.0175, 3.7525),   # panda_joint6
-            (-2.8973, 2.8973),   # panda_joint7
-        ]
-
-        for i, angle in enumerate(joint_angles):
-            if i >= len(joint_limits):
-                break
-            min_angle, max_angle = joint_limits[i]
-            if angle < min_angle - 0.1 or angle > max_angle + 0.1:  # Small tolerance
-                return False
-
-        # Check for NaN or infinite values
-        if any(not np.isfinite(angle) for angle in joint_angles):
-            return False
-
-        return True
-
-    def publish_step(self):
-        """Publish a single timestep from the dataset."""
-        if self.current_step >= self.total_steps:
-            if self.loop_enabled:
-                self.current_step = 0
-                self.get_logger().info("Looping back to first timestep...")
-                self.last_joint_angles = None  # Reset IK state
-            else:
-                self.get_logger().info("All timesteps published successfully")
-                return False
+    def publish_episode_step(self):
+        """Publish a single timestep within the current episode."""
+        episode_start = self.episode_starts[self.current_episode]
+        episode_end = self.episode_ends[self.current_episode]
+        global_step = episode_start + self.current_episode_step
 
         try:
             # Extract pose data from dataset (in ArUco tag coordinate frame)
-            target_pos = self.data['robot0_eef_pos'][self.current_step]
-            target_rot = self.data['robot0_eef_rot_axis_angle'][self.current_step]
-            gripper_width = self.data['robot0_gripper_width'][self.current_step][0]
+            target_pos = self.data['robot0_eef_pos'][global_step]
+            target_rot = self.data['robot0_eef_rot_axis_angle'][global_step]
+            gripper_width = self.data['robot0_gripper_width'][global_step][0]
 
             # Solve IK to get joint angles (handles coordinate transformation internally)
-            joint_angles = self.solve_ik(target_pos, target_rot)
+            trajectories = self.solve_ik_with_motion_gen(target_pos, target_rot)
 
-            if joint_angles is None:
-                self.get_logger().warn(f"Skipping step {self.current_step} due to IK failure")
-                self.current_step += 1
-                return True
+            if trajectories is None:
+                self.get_logger().warn(f"Skipping episode {self.current_episode} step {self.current_episode_step} due to IK failure")
+                self.current_episode_step += 1
+                return True            
 
-            # Add gripper joint values
-            final_joint_angles = list(joint_angles)
-            finger_positions = [gripper_width, gripper_width]  # Both fingers same width
-            final_joint_angles.extend(finger_positions)
-
-            # Convert numpy types to native Python floats for ROS2
-            final_joint_angles = [float(angle) for angle in final_joint_angles]
-
-            # Create and publish JointState message
-            msg = JointState()
-            msg.header.stamp = self.get_clock().now().to_msg()
-            msg.header.frame_id = "panda_hand"
-
-            # Use all joint names (arm + gripper) for publishing
-            all_joint_names = self.joint_names + self.gripper_joint_names
-            msg.name = all_joint_names
-            msg.position = final_joint_angles
-            msg.velocity = []
-            msg.effort = []
-
-            self.publisher_.publish(msg)
+            for trajectory in trajectories:
+                msg = RosJointState()
+                msg.header.stamp = self.get_clock().now().to_msg()
+                msg.header.frame_id = "panda_link0"
+                msg.name = self.joint_names
+                msg.position = [float(angle) for angle in trajectory]
+                msg.velocity = []
+                msg.effort = []
+                self.publisher_.publish(msg)
+                time.sleep(0.01)
+                self.last_joint_angles = trajectory
 
             # Log progress occasionally
-            if self.current_step % 100 == 0:
-                self.get_logger().info(f"Published step {self.current_step}/{self.total_steps}")
+            if self.current_episode_step % 50 == 0:
+                self.get_logger().info(f"Episode {self.current_episode + 1}/{self.total_episodes}, step {self.current_episode_step + 1}/{self.episode_lengths[self.current_episode]}")
 
         except Exception as e:
-            self.get_logger().error(f"Error publishing step {self.current_step}: {e}")
+            self.get_logger().error(f"Error publishing episode {self.current_episode} step {self.current_episode_step}: {e}")
 
-        # Move to next step
-        self.current_step += 1
+        # Move to next step within episode
+        self.current_episode_step += 1
+
+        # Check if episode is complete
+        if self.current_episode_step >= self.episode_lengths[self.current_episode]:
+            self.get_logger().info(f"Episode {self.current_episode + 1} completed successfully")
+            return False
+
         return True
 
     def run_publishing_loop(self):
@@ -388,12 +393,19 @@ class SimpleDatasetPosePublisher(Node):
             publish_interval = 1.0 / self.publish_rate
 
             while rclpy.ok():
-                if not self.publish_step():
+                # Track if we just completed an episode (before calling publish_episode_step)
+                episode_starting = self.current_episode_step == 0 and self.current_episode > 0
+
+                if not self.publish_episode_step():
                     if self.loop_enabled:
                         time.sleep(self.episode_delay)
                         continue
                     else:
                         break
+
+                # Add delay between episodes (when we just started a new episode)
+                if episode_starting:
+                    time.sleep(self.episode_delay)
 
                 time.sleep(publish_interval)
 
@@ -441,10 +453,10 @@ def parse_args():
         help='Delay between loops in seconds (default: 2.0)'
     )
     parser.add_argument(
-        '--coord_transform',
-        type=str,
-        default=None,
-        help='Path to coordinate transformation JSON file (tx_robot_tag or tx_tag_robot)'
+        '--episode',
+        type=int,
+        default=0,
+        help='Episode number to start replay from (0-indexed, default: 0)'
     )
 
     return parser.parse_args()
@@ -479,8 +491,9 @@ def main():
         rclpy.init()
 
         # Create publisher node
-        publisher_node = SimpleDatasetPosePublisher(
-            str(dataset_path), str(urdf_path), args.topic, args.publish_rate, args.coord_transform
+        publisher_node = ReplayBufferPosePublisher(
+            str(dataset_path), str(urdf_path), args.topic, args.publish_rate,
+            start_episode=args.episode
         )
         publisher_node.loop_enabled = args.loop
         publisher_node.episode_delay = args.episode_delay
