@@ -127,7 +127,8 @@ class CalibrationService(BaseService):
             tx_cam_tag = pose_to_mat(pose)
             tx_slam_cam = cam_pose[tum_idx]
             dist_to_cam = np.linalg.norm(tx_cam_tag[:3, 3])
-            if dist_to_cam < 0.3 or dist_to_cam > 2:
+            if dist_to_cam < 0.3 or dist_to_cam > 4:
+                print(f"{dist_to_cam:.2f}m to tag, skipping")
                 skipped_distance += 1
                 continue
 

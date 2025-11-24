@@ -192,7 +192,7 @@ class DatasetPlanningService(BaseService):
         unused_videos = set(video_meta_df.index) - used_videos
         for vid_idx in unused_videos:
             logger.info(f"Warning: video {video_meta_df.loc[vid_idx]['video_dir'].name} unused in any demo")
-        finger_tag_det_th = 0.8
+        finger_tag_det_th = 0.6
         vid_idx_gripper_hardware_id_map = {}
         cam_serial_gripper_ids_map = collections.defaultdict(list)
         for vid_idx, row in video_meta_df.iterrows():

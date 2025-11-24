@@ -208,20 +208,20 @@ def draw_charuco_board(board, dpi=300, padding_mm=15):
 
 
 def get_gripper_width(tag_dict, left_id, right_id, nominal_z=0.072, z_tolerance=0.008):
-    zmax = nominal_z + z_tolerance
+    # zmax = nominal_z + z_tolerance # temporary disable zmax, take all gripper widths greater than zmin
     zmin = nominal_z - z_tolerance
 
     left_x = None
     if left_id in tag_dict:
         tvec = tag_dict[left_id]["tvec"]
         # check if depth is reasonable (to filter outliers)
-        if zmin < tvec[-1] < zmax:
+        if tvec[-1] > zmin:
             left_x = tvec[0]
 
     right_x = None
     if right_id in tag_dict:
         tvec = tag_dict[right_id]["tvec"]
-        if zmin < tvec[-1] < zmax:
+        if tvec[-1] > zmin:
             right_x = tvec[0]
 
     width = None
