@@ -22,6 +22,8 @@ class ArUcoDetectionLoader:
         """
         self.directory_path = Path(directory_path)
         self.video_path = self.directory_path / "raw_video.mp4"
+        if (converted_path:=self.directory_path/f"converted_60fps_{self.video_path.name}").is_file():
+            self.video_path = converted_path
         self.pkl_path = self.directory_path / "tag_detection.pkl"
         
         if not self.video_path.exists():
