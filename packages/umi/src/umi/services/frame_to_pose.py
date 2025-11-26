@@ -157,7 +157,6 @@ def run_frame_to_pose(
             if not success:
                 continue
 
-            # get poses for this frame
             filename = f"frame_{frame_index:04d}.png"
             object_pose_list = process_and_save_with_axes(
                 OBJ_ID,
@@ -168,43 +167,44 @@ def run_frame_to_pose(
                 return_pose_list=True
             )
 
-            # if no tags detected, process_and_save_with_axes returns []
             if not object_pose_list:
                 continue
 
-            # accumulate detections
             for entry in object_pose_list:
                 found_tags[entry["object_name"]] = entry
 
-            # check if all objects found
             if set(found_tags.keys()) == set(OBJ_ID.keys()):
                 logger.info("All tags in OBJ_ID detected in this video.\n")
                 all_found = True
-                break  # don't need to check further frames
+                break  # detect all tags in one video -> done
 
         cap.release()
 
         out_json = os.path.join(save_dir, "object_poses.json")
 
         if all_found:
-            # detect all
             with open(out_json, "w") as f:
                 json.dump(list(found_tags.values()), f, indent=4)
             logger.info(f"Saved full object poses to {out_json}")
-        else:
-            # didn't detect any frame containing all objects
-            if found_tags:
-                # detected partial objects → save partial info
-                logger.info("Not all tags were detected in the same frame. Saving partial JSON.")
-                data = list(found_tags.values())
-            else:
-                # didn't detect any tag → empty array
-                logger.info("No tags detected in any frame. Saving EMPTY JSON.")
-                data = []
+            return   # detect all tags in one video -> done
 
-            with open(out_json, "w") as f:
-                json.dump(data, f, indent=4)
-            logger.info(f"Saved fallback JSON to {out_json}")
+        else:
+            if found_tags:
+                logger.info("Detected partial tags, saving partial JSON.")
+                data = list(found_tags.values())
+                with open(out_json, "w") as f:
+                    json.dump(data, f, indent=4)
+                logger.info(f"Saved partial object poses to {out_json}")
+
+            else:
+                logger.info("No tags detected in this video.")
+    
+    # no tags detected in ANY video
+    out_json = os.path.join(save_dir, "object_poses.json")
+    with open(out_json, "w") as f:
+        json.dump([], f, indent=4)
+    logger.info(f"No tags detected in ANY video. Saved EMPTY JSON to {out_json}")
+
 
 
 class FrameToPoseService(BaseService):
