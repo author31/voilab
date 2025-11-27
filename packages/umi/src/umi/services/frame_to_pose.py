@@ -115,7 +115,6 @@ def run_frame_to_pose(
     marker_size_m: float,
     intrinsics_path: Path,
 ):
-
     # choose OBJ_ID
     if task == "kitchen":
         OBJ_ID = {'pink_cup': 310, 'blue_cup': 309}
@@ -123,21 +122,27 @@ def run_frame_to_pose(
         OBJ_ID = {'fork': 300, 'knife': 303}
     elif task == "living_room":
         OBJ_ID = {'blue_block': 305, 'green_block': 306, 'red_block': 304}
+    else:
+        raise ValueError(f"Unknown task: {task}")
 
     video_dir = session_dir / "raw_videos"
     save_dir = session_dir / "demos/mapping"
     save_dir.mkdir(parents=True, exist_ok=True)
 
-    # --- open video ---
+    # --- open video list ---
     video_paths = sorted(
         glob.glob(os.path.join(video_dir, "*.mp4")) +
         glob.glob(os.path.join(video_dir, "*.MP4"))
     )
+
+    all_video_results = []  # 這裡存每支影片的結果
+
     for video_path in video_paths:
         logger.info(f"\nProcessing video: {video_path}")
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
             raise RuntimeError(f"Cannot open video: {video_path}")
+
         fps = cap.get(cv2.CAP_PROP_FPS)
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         if fps <= 0:
@@ -145,13 +150,11 @@ def run_frame_to_pose(
         else:
             window = int(fps * 1.0)
         end_frame = min(window, total_frames - 1)
-        
-        # --- process frames ---
-        found_tags = {}
+
+        found_tags: dict[str, dict] = {}
         all_found = False
 
         for frame_index in range(0, end_frame + 1):
-
             cap.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
             success, frame = cap.read()
             if not success:
@@ -163,47 +166,56 @@ def run_frame_to_pose(
                 frame,
                 filename,
                 save_dir,
-                marker_size_m=0.018,
-                return_pose_list=True
+                marker_size_m=marker_size_m,
+                return_pose_list=True,
+                intrinsics_path=intrinsics_path,
             )
 
             if not object_pose_list:
                 continue
 
+            # accumulate detections for this video
             for entry in object_pose_list:
                 found_tags[entry["object_name"]] = entry
 
             if set(found_tags.keys()) == set(OBJ_ID.keys()):
                 logger.info("All tags in OBJ_ID detected in this video.\n")
                 all_found = True
-                break  # detect all tags in one video -> done
+                break  # 不用再看後面的 frame 了
 
         cap.release()
 
-        out_json = os.path.join(save_dir, "object_poses.json")
+        video_name = os.path.basename(video_path)
 
         if all_found:
-            with open(out_json, "w") as f:
-                json.dump(list(found_tags.values()), f, indent=4)
-            logger.info(f"Saved full object poses to {out_json}")
-            return   # detect all tags in one video -> done
-
+            logger.info(f"[{video_name}] Saved FULL object poses.")
+            all_video_results.append({
+                "video_name": video_name,
+                "objects": list(found_tags.values()),
+                "status": "full",
+            })
         else:
             if found_tags:
-                logger.info("Detected partial tags, saving partial JSON.")
-                data = list(found_tags.values())
-                with open(out_json, "w") as f:
-                    json.dump(data, f, indent=4)
-                logger.info(f"Saved partial object poses to {out_json}")
-
+                logger.info(f"[{video_name}] Not all tags detected in same frame. Saving PARTIAL poses.")
+                all_video_results.append({
+                    "video_name": video_name,
+                    "objects": list(found_tags.values()),
+                    "status": "partial",
+                })
             else:
-                logger.info("No tags detected in this video.")
-    
-    # no tags detected in ANY video
+                logger.info(f"[{video_name}] No tags detected. Skipping this video.")
+                # 如果你希望連沒偵測到的也記錄，可以取消註解下面：
+                # all_video_results.append({
+                #     "video_name": video_name,
+                #     "objects": [],
+                #     "status": "none",
+                # })
+
+    # --- 最後一次性寫出所有影片的結果 ---
     out_json = os.path.join(save_dir, "object_poses.json")
     with open(out_json, "w") as f:
-        json.dump([], f, indent=4)
-    logger.info(f"No tags detected in ANY video. Saved EMPTY JSON to {out_json}")
+        json.dump(all_video_results, f, indent=4)
+    logger.info(f"Saved object poses for {len(all_video_results)} video(s) to {out_json}")
 
 
 
@@ -226,7 +238,7 @@ class FrameToPoseService(BaseService):
 
         intrinsics_cfg = self.config.get(
             "intrinsics_path",
-            "packages/umi/defaults/calibration/gopro13_intrinsics_2_7k.json",
+            "defaults/calibration/gopro13_intrinsics_2_7k.json",
         )
         self.intrinsics_path = (ROOT / intrinsics_cfg).resolve()
 
@@ -238,4 +250,3 @@ class FrameToPoseService(BaseService):
             marker_size_m=self.marker_size_m,
             intrinsics_path=self.intrinsics_path,
         )
-
