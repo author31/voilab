@@ -133,6 +133,10 @@ def run_frame_to_pose(
         glob.glob(os.path.join(video_dir, "*.mp4")) +
         glob.glob(os.path.join(video_dir, "*.MP4"))
     )
+
+    all_video_results = []  # 這裡存每支影片的結果
+    logger.info(f"task name: {task}")
+
     for video_path in video_paths:
         logger.info(f"\nProcessing video: {video_path}")
         cap = cv2.VideoCapture(video_path)
@@ -186,7 +190,6 @@ def run_frame_to_pose(
             with open(out_json, "w") as f:
                 json.dump(list(found_tags.values()), f, indent=4)
             logger.info(f"Saved full object poses to {out_json}")
-            return   # detect all tags in one video -> done
 
         else:
             if found_tags:
