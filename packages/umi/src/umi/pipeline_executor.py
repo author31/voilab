@@ -12,7 +12,7 @@ from .services.base_service import BaseService
 class PipelineExecutor:
     """Pipeline executor for UMI services."""
 
-    def __init__(self, config_path: str, session_dir_override: str | None = None):
+    def __init__(self, config_path: str, session_dir_override: str | None = None, task_override: str | None = None):
         """Initialize the pipeline executor.
 
         Args:
@@ -21,6 +21,7 @@ class PipelineExecutor:
         """
         self.config_path = Path(config_path)
         self.session_dir_override = session_dir_override
+        self.task_override = task_override
         self.config: dict = {}
         self.services: dict = {}
 
@@ -110,6 +111,14 @@ class PipelineExecutor:
             # Apply session_dir override if provided
             if self.session_dir_override:
                 self._apply_session_dir_override()
+
+            if self.task_override:
+                for stage_name, stage_config in self.config.items():
+                    if "config" in stage_config and "task" in stage_config["config"]:
+                        original_task = stage_config["config"]["task"]
+                        stage_config["config"]["task"] = self.task_override
+                        logger.warning(f"Overridden task for stage '{stage_name}': '{original_task}' -> '{self.task_override}'")
+                        break
 
         except yaml.YAMLError as e:
             raise ValueError(f"Invalid YAML configuration: {e}")
