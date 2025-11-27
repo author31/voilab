@@ -137,6 +137,8 @@ def run_frame_to_pose(
 
     all_video_results = []  # 這裡存每支影片的結果
 
+    logger.info(f"task name: {task}")
+
     for video_path in video_paths:
         logger.info(f"\nProcessing video: {video_path}")
         cap = cv2.VideoCapture(video_path)
