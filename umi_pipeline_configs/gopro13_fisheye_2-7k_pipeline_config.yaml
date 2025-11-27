@@ -55,7 +55,7 @@
   config:
     task: "living_room"
     marker_size_m: 0.018
-    intrinsics_path: "packages/umi/defaults/calibration/gopro13_intrinsics_2_7k.json"
+    intrinsics_path: "defaults/calibration/gopro13_intrinsics_2_7k.json"
 
 07_generate_dataset_plan:
   instance: "umi.services.dataset_planning.DatasetPlanningService"
