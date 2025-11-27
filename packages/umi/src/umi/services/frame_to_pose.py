@@ -181,7 +181,7 @@ def run_frame_to_pose(
             if set(found_tags.keys()) == set(OBJ_ID.keys()):
                 logger.info("All tags in OBJ_ID detected in this video.\n")
                 all_found = True
-                break  # 不用再看後面的 frame 了
+                break
 
         cap.release()
 
@@ -204,14 +204,12 @@ def run_frame_to_pose(
                 })
             else:
                 logger.info(f"[{video_name}] No tags detected. Skipping this video.")
-                # 如果你希望連沒偵測到的也記錄，可以取消註解下面：
-                # all_video_results.append({
-                #     "video_name": video_name,
-                #     "objects": [],
-                #     "status": "none",
-                # })
+                all_video_results.append({
+                    "video_name": video_name,
+                    "objects": [],
+                    "status": "none",
+                })
 
-    # --- 最後一次性寫出所有影片的結果 ---
     out_json = os.path.join(save_dir, "object_poses.json")
     with open(out_json, "w") as f:
         json.dump(all_video_results, f, indent=4)
