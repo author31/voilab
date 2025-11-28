@@ -5,10 +5,13 @@ and refine their collected human demonstrations. It displays:
 - Pipeline stage status
 - Demo quality metrics
 - SLAM trajectory visualization
+- ArUco tag detection visualization
 - Issue identification
 """
 
+import pickle
 import cv2
+import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 from IPython.display import display
@@ -259,6 +262,88 @@ def create_trajectory_plot(df: pd.DataFrame) -> go.FigureWidget:
     return fig
 
 
+def draw_aruco_markers(img: np.ndarray, tag_dict: dict) -> np.ndarray:
+    """Draw ArUco markers and their poses on the image.
+    
+    Args:
+        img: Input image as numpy array (RGB format)
+        tag_dict: Dictionary of detected tags with corners and poses
+        
+    Returns:
+        Image with markers drawn on it
+    """
+    img_with_markers = img.copy()
+
+    for tag_id, tag_data in tag_dict.items():
+        # Draw marker corners with thicker lines
+        corners = tag_data['corners'].astype(int)
+        cv2.polylines(img_with_markers, [corners], True, (0, 255, 0), 4)
+
+        # Draw marker ID with larger font
+        center = np.mean(corners, axis=0).astype(int)
+        cv2.putText(img_with_markers, f"ID: {tag_id}",
+                    (center[0] - 30, center[1] - 15),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+
+        # Draw coordinate axes if pose is available
+        if 'rvec' in tag_data and 'tvec' in tag_data:
+            axis_length = 0.10
+            axis_points = np.array([
+                [0, 0, 0],
+                [axis_length, 0, 0],  # X-axis (red)
+                [0, axis_length, 0],  # Y-axis (green)
+                [0, 0, axis_length]   # Z-axis (blue)
+            ])
+
+            rvec = tag_data['rvec']
+            tvec = tag_data['tvec']
+
+            # Simple orthographic projection for visualization
+            # Scale factor for projecting 3D pose onto 2D image
+            POSE_PROJECTION_SCALE = 800
+            projected_points = []
+            for point in axis_points:
+                rotated = cv2.Rodrigues(rvec)[0] @ point + tvec
+                x_2d = int(center[0] + rotated[0] * POSE_PROJECTION_SCALE)
+                y_2d = int(center[1] + rotated[1] * POSE_PROJECTION_SCALE)
+                projected_points.append([x_2d, y_2d])
+
+            projected_points = np.array(projected_points)
+
+            # Draw axes
+            origin = projected_points[0].astype(int)
+            colors = [(255, 0, 0), (0, 255, 0), (0, 0, 255)]  # RGB
+            labels = ['X', 'Y', 'Z']
+
+            for i in range(1, 4):
+                end_point = projected_points[i].astype(int)
+                cv2.line(img_with_markers, tuple(origin), tuple(end_point), colors[i-1], 3)
+                cv2.putText(img_with_markers, labels[i-1],
+                            tuple(end_point + np.array([5, -5])),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, colors[i-1], 1)
+
+    return img_with_markers
+
+
+def load_tag_detection(demo_path) -> list:
+    """Load tag detection results from a demo directory.
+    
+    Args:
+        demo_path: Path to the demo directory
+        
+    Returns:
+        List of detection results or empty list if not found
+    """
+    tag_path = demo_path / "tag_detection.pkl"
+    if tag_path.exists():
+        try:
+            with open(tag_path, "rb") as f:
+                return pickle.load(f)
+        except (OSError, pickle.PickleError):
+            pass
+    return []
+
+
 def show(session_dir: str):
     """Show the dataset visualizer for a session directory.
 
@@ -395,6 +480,167 @@ def show(session_dir: str):
         else:
             frame_info.value = f"Error reading frame {frame_idx}"
 
+    # ArUco Tag Detection Viewer widgets
+    aruco_dropdown = Dropdown(
+        options=demo_options,
+        value=demo_options[0],
+        description="Select Demo:",
+        layout=Layout(width="400px"),
+    )
+    aruco_image_widget = Image(format="jpeg", width=600, height=450)
+    aruco_frame_slider = IntSlider(
+        min=0, max=100, step=1, value=0, description="Frame", layout=Layout(width="600px")
+    )
+    aruco_info = HTML()
+    aruco_stats = HTML()
+
+    # ArUco viewer state
+    aruco_state = {"cap": None, "n_frames": 0, "tag_data": [], "demo_path": None}
+
+    def update_aruco_viewer(demo_name: str):
+        """Update ArUco detection viewer for selected demo."""
+        # Close previous capture
+        if aruco_state["cap"] is not None:
+            aruco_state["cap"].release()
+            aruco_state["cap"] = None
+            aruco_state["tag_data"] = []
+
+        if demo_name == "(Select a demo)":
+            aruco_info.value = "<p>Please select a demo to view ArUco tag detections.</p>"
+            aruco_stats.value = ""
+            return
+
+        # Find demo info
+        demo_info = None
+        for d in info.demos + info.gripper_calibrations + ([info.mapping] if info.mapping else []):
+            if d and d.name == demo_name:
+                demo_info = d
+                break
+
+        if demo_info is None:
+            aruco_info.value = f"<p style='color: red;'>Demo not found: {demo_name}</p>"
+            return
+
+        if not demo_info.has_video:
+            aruco_info.value = f"<p style='color: orange;'>No video found for {demo_name}</p>"
+            return
+
+        if not demo_info.has_tag_detection:
+            aruco_info.value = f"<p style='color: orange;'>No tag detection data found for {demo_name}</p>"
+            return
+
+        # Load tag detection data
+        tag_data = load_tag_detection(demo_info.path)
+        if not tag_data:
+            aruco_info.value = f"<p style='color: orange;'>Could not load tag detection data for {demo_name}</p>"
+            return
+
+        aruco_state["tag_data"] = tag_data
+        aruco_state["demo_path"] = demo_info.path
+
+        # Open video
+        video_path = demo_info.path / "raw_video.mp4"
+        converted_path = demo_info.path / "converted_60fps_raw_video.mp4"
+
+        if converted_path.exists():
+            video_path = converted_path
+        elif not video_path.exists():
+            aruco_info.value = f"<p style='color: red;'>Video file not found: {video_path}</p>"
+            return
+
+        try:
+            cap = cv2.VideoCapture(str(video_path))
+            n_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            aruco_state["cap"] = cap
+            aruco_state["n_frames"] = n_frames
+
+            aruco_frame_slider.max = max(0, n_frames - 1)
+            aruco_frame_slider.value = 0
+
+            # Calculate detection stats
+            frames_with_tags = sum(1 for frame in tag_data if frame.get("tag_dict", {}))
+            total_tags = sum(len(frame.get("tag_dict", {})) for frame in tag_data)
+            unique_ids = set()
+            for frame in tag_data:
+                unique_ids.update(frame.get("tag_dict", {}).keys())
+
+            detection_rate = frames_with_tags / len(tag_data) if tag_data else 0
+
+            aruco_stats.value = f"""
+            <div style="background-color: #e8f5e9; padding: 10px; border-radius: 5px; margin-bottom: 10px;">
+                <strong>📊 Detection Statistics</strong><br>
+                Total Frames: {len(tag_data)} | Frames with Tags: {frames_with_tags} ({detection_rate:.1%})<br>
+                Total Tag Detections: {total_tags} | Unique Tag IDs: {sorted(unique_ids)}
+            </div>
+            """
+
+            update_aruco_frame(0)
+        except Exception as e:
+            aruco_info.value = f"<p style='color: red;'>Error opening video: {e}</p>"
+
+    def update_aruco_frame(frame_idx: int):
+        """Update ArUco detection frame display."""
+        cap = aruco_state["cap"]
+        tag_data = aruco_state["tag_data"]
+
+        if cap is None:
+            return
+
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+        ret, frame = cap.read()
+
+        if ret:
+            # Convert BGR to RGB
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+            # Get detection for this frame
+            detection = None
+            if frame_idx < len(tag_data):
+                detection = tag_data[frame_idx]
+            
+            # Draw markers if detection exists
+            if detection and detection.get("tag_dict"):
+                frame_rgb = draw_aruco_markers(frame_rgb, detection["tag_dict"])
+                
+                # Build info text
+                tag_dict = detection["tag_dict"]
+                info_lines = [
+                    f"<strong>Frame {frame_idx + 1}/{aruco_state['n_frames']}</strong>",
+                    f"Time: {detection.get('time', 0):.3f}s",
+                    f"<span style='color: green;'>Detected {len(tag_dict)} marker(s)</span>",
+                    ""
+                ]
+                
+                for tag_id, tag_info in tag_dict.items():
+                    tvec = tag_info.get("tvec") or (0, 0, 0)
+                    info_lines.append(f"<strong>Tag {tag_id}:</strong> pos=({tvec[0]:.3f}, {tvec[1]:.3f}, {tvec[2]:.3f})")
+                
+                aruco_info.value = f'<div style="background-color: #e3f2fd; padding: 10px; border-radius: 5px;">{"<br>".join(info_lines)}</div>'
+            else:
+                aruco_info.value = f'<div style="background-color: #ffebee; padding: 10px; border-radius: 5px;"><strong>Frame {frame_idx + 1}/{aruco_state["n_frames"]}</strong><br><span style="color: red;">No markers detected</span></div>'
+
+            # Resize for display
+            h, w = frame_rgb.shape[:2]
+            scale = 600 / max(h, w)
+            new_w, new_h = int(w * scale), int(h * scale)
+            frame_resized = cv2.resize(frame_rgb, (new_w, new_h))
+
+            # Convert RGB back to BGR for JPEG encoding
+            frame_bgr = cv2.cvtColor(frame_resized, cv2.COLOR_RGB2BGR)
+            _, buffer = cv2.imencode(".jpg", frame_bgr)
+            aruco_image_widget.value = buffer.tobytes()
+        else:
+            aruco_info.value = f"<p style='color: red;'>Error reading frame {frame_idx}</p>"
+
+    def on_aruco_dropdown_change(change):
+        """Handle ArUco demo selection change."""
+        demo_name = change["new"]
+        update_aruco_viewer(demo_name)
+
+    def on_aruco_frame_change(change):
+        """Handle ArUco frame slider change."""
+        update_aruco_frame(change["new"])
+
     def on_trajectory_dropdown_change(change):
         """Handle trajectory demo selection change."""
         demo_name = change["new"]
@@ -412,6 +658,8 @@ def show(session_dir: str):
     trajectory_dropdown.observe(on_trajectory_dropdown_change, names="value")
     video_dropdown.observe(on_video_dropdown_change, names="value")
     frame_slider.observe(on_frame_change, names="value")
+    aruco_dropdown.observe(on_aruco_dropdown_change, names="value")
+    aruco_frame_slider.observe(on_aruco_frame_change, names="value")
 
     # Create tabs
     tab = Tab()
@@ -432,11 +680,21 @@ def show(session_dir: str):
                 frame_info,
             ]
         ),
+        VBox(
+            [
+                aruco_dropdown,
+                aruco_stats,
+                aruco_image_widget,
+                aruco_frame_slider,
+                aruco_info,
+            ]
+        ),
     ]
     tab.set_title(0, "Overview")
     tab.set_title(1, "Demos")
     tab.set_title(2, "Trajectory")
     tab.set_title(3, "Video")
+    tab.set_title(4, "ArUco Tags")
 
     # Show initial state
     display(tab)
