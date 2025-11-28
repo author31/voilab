@@ -281,14 +281,21 @@ def show(session_dir: str):
     pipeline_widget.value = create_pipeline_status_html(stages)
     demos_widget.value = create_demos_table_html(info.demos)
 
-    # Create demo selector
+    # Create demo selectors - one for each tab (ipywidgets doesn't allow the same widget in multiple places)
     demo_options = ["(Select a demo)"] + [d.name for d in info.demos]
     if info.mapping:
         demo_options.append(info.mapping.name)
     for gc in info.gripper_calibrations:
         demo_options.append(gc.name)
 
-    demo_dropdown = Dropdown(
+    trajectory_dropdown = Dropdown(
+        options=demo_options,
+        value=demo_options[0],
+        description="Select Demo:",
+        layout=Layout(width="400px"),
+    )
+
+    video_dropdown = Dropdown(
         options=demo_options,
         value=demo_options[0],
         description="Select Demo:",
@@ -388,17 +395,22 @@ def show(session_dir: str):
         else:
             frame_info.value = f"Error reading frame {frame_idx}"
 
-    def on_demo_change(change):
-        """Handle demo selection change."""
+    def on_trajectory_dropdown_change(change):
+        """Handle trajectory demo selection change."""
         demo_name = change["new"]
         update_trajectory(demo_name)
+
+    def on_video_dropdown_change(change):
+        """Handle video demo selection change."""
+        demo_name = change["new"]
         update_video_viewer(demo_name)
 
     def on_frame_change(change):
         """Handle frame slider change."""
         update_frame(change["new"])
 
-    demo_dropdown.observe(on_demo_change, names="value")
+    trajectory_dropdown.observe(on_trajectory_dropdown_change, names="value")
+    video_dropdown.observe(on_video_dropdown_change, names="value")
     frame_slider.observe(on_frame_change, names="value")
 
     # Create tabs
@@ -408,13 +420,13 @@ def show(session_dir: str):
         VBox([demos_widget]),
         VBox(
             [
-                demo_dropdown,
+                trajectory_dropdown,
                 trajectory_output,
             ]
         ),
         VBox(
             [
-                demo_dropdown,
+                video_dropdown,
                 image_widget,
                 frame_slider,
                 frame_info,
