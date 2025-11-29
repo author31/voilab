@@ -233,6 +233,15 @@
     <origin xyz="0 0 0.107" rpy="0 0 0"/> <!-- mount offset relative to panda_link7 -->
   </joint>
 
+  <!-- TCP (Tool Center Point) for UMI gripper -->
+  <!-- Offset from link7: Z=0.107 (gopro mount) + 0.21965 (cam_to_tip), Y=0.086 (cam_to_center_height) -->
+  <link name="umi_tcp"/>
+  <joint name="umi_tcp_joint" type="fixed">
+    <parent link="panda_link7"/>
+    <child link="umi_tcp"/>
+    <origin xyz="0 0.086 0.327" rpy="0 0 0"/>
+  </joint>
+
   <joint name="panda_hand_joint" type="fixed">
     <!--
     <parent link="panda_link8"/>
