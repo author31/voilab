@@ -62,6 +62,7 @@ uv run umi run-slam-pipeline <config_file>
 - **Replay Buffer Viewer** (`nbs/replay_buffer_viewer.ipynb`): Interactive exploration of UMI datasets
 - **ArUco Tag Viewer** (`nbs/aruco_detection_viewer.ipynb`): Marker detection and visualization
 - **SLAM Viewer** (`nbs/slam_viewer.ipynb`): SLAM mapping visualization
+- **Dataset Visualizer** (`nbs/dataset_visualizer.ipynb`): Comprehensive dataset review tool
 
 ### Data Processing Pipeline
 The UMI pipeline processes robotics data through these stages:
