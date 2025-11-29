@@ -1,0 +1,385 @@
+robot_cfg:
+    kinematics:
+        usd_path: "/workspace/voilab/assets/Collected_franka-umi-scene/franka_panda/franka_panda_umi-isaacsim/franka_panda_umi-isaacsim.usd"
+        usd_robot_root: "/robot"
+        isaac_usd_path: ""
+        usd_flip_joints: {}
+        usd_flip_joint_limits: []
+
+        urdf_path: "/workspace/voilab/assets/franka_panda/franka_panda_umi-isaacsim.urdf"
+        asset_root_path: ""
+
+        base_link: "panda_link0"
+        ee_link: "umi_tcp"
+        link_names: null
+        extra_links: null
+
+        collision_link_names: [
+          "panda_link0",
+          "panda_link1",
+          "panda_link2",
+          "panda_link3",
+          "panda_link4",
+          "panda_link5",
+          "panda_link6",
+          "panda_link7"
+        ]
+        collision_spheres:
+          "panda_link0":
+            - "center": [-0.0, -0.0, 0.062]
+              "radius": 0.08989
+          "panda_link1":
+            - "center": [0.001, -0.059, 0.001]
+              "radius": 0.08503
+          "panda_link2":
+            - "center": [-0.0, -0.008, 0.056]
+              "radius": 0.08528
+          "panda_link3":
+            - "center": [0.082, 0.051, -0.001]
+              "radius": 0.0815
+            - "center": [0.082, 0.051, -0.001]
+              "radius": 0.0815
+          "panda_link4":
+            - "center": [-0.082, 0.071, 0.0]
+              "radius": 0.08178
+            - "center": [-0.001, 0.002, 0.05]
+              "radius": 0.08057
+          "panda_link5":
+            - "center": [0.082, 0.051, -0.001]
+              "radius": 0.0815
+          "panda_link6":
+            - "center": [0.087, 0.028, 0.001]
+              "radius": 0.07313
+            - "center": [0.095, -0.017, -0.002]
+              "radius": 0.06459
+            - "center": [0.012, -0.003, 0.029]
+              "radius": 0.05604
+            - "center": [0.039, 0.008, 0.028]
+              "radius": 0.05604
+            - "center": [-0.013, 0.013, 0.026]
+              "radius": 0.05319
+            - "center": [0.068, 0.043, 0.006]
+              "radius": 0.06269
+            - "center": [0.048, -0.018, 0.022]
+              "radius": 0.05224
+            - "center": [-0.004, -0.018, 0.026]
+              "radius": 0.05319
+            - "center": [0.092, -0.003, 0.009]
+              "radius": 0.06554
+            - "center": [0.01, 0.032, 0.02]
+              "radius": 0.04749
+            - "center": [0.093, -0.004, -0.007]
+              "radius": 0.06649
+            - "center": [-0.028, -0.007, 0.021]
+              "radius": 0.04844
+            - "center": [0.086, -0.027, 0.017]
+              "radius": 0.05414
+            - "center": [0.037, 0.047, 0.014]
+              "radius": 0.04654
+            - "center": [0.083, -0.028, -0.018]
+              "radius": 0.05224
+            - "center": [0.026, -0.013, 0.028]
+              "radius": 0.05509
+            - "center": [0.082, 0.048, -0.015]
+              "radius": 0.05604
+            - "center": [0.014, 0.015, 0.028]
+              "radius": 0.05509
+            - "center": [0.005, -0.033, 0.018]
+              "radius": 0.04559
+            - "center": [-0.011, 0.028, 0.02]
+              "radius": 0.04749
+            - "center": [0.091, 0.014, -0.003]
+              "radius": 0.07028
+            - "center": [-0.004, -0.025, -0.006]
+              "radius": 0.0399
+            - "center": [-0.031, -0.013, -0.006]
+              "radius": 0.0399
+            - "center": [0.014, -0.036, -0.006]
+              "radius": 0.0399
+            - "center": [0.057, -0.039, 0.011]
+              "radius": 0.0418
+            - "center": [0.02, -0.009, -0.006]
+              "radius": 0.0399
+            - "center": [-0.029, 0.021, -0.006]
+              "radius": 0.0399
+            - "center": [0.098, 0.041, 0.008]
+              "radius": 0.05984
+            - "center": [-0.002, 0.021, -0.006]
+              "radius": 0.0399
+            - "center": [-0.004, -0.007, -0.006]
+              "radius": 0.0399
+            - "center": [-0.023, -0.02, 0.02]
+              "radius": 0.04749
+            - "center": [0.017, 0.008, -0.006]
+              "radius": 0.0399
+          "panda_link7":
+            - "center": [0.009, 0.004, 0.075]
+              "radius": 0.05452
+            - "center": [-0.021, 0.0, 0.075]
+              "radius": 0.0538
+            - "center": [0.002, -0.021, 0.076]
+              "radius": 0.05452
+            - "center": [-0.007, 0.023, 0.078]
+              "radius": 0.05165
+            - "center": [0.022, -0.003, 0.074]
+              "radius": 0.05309
+            - "center": [0.027, 0.051, 0.083]
+              "radius": 0.04449
+            - "center": [0.055, 0.029, 0.084]
+              "radius": 0.04449
+            - "center": [0.016, 0.019, 0.071]
+              "radius": 0.05022
+            - "center": [0.05, 0.052, 0.084]
+              "radius": 0.04305
+            - "center": [-0.016, -0.022, 0.068]
+              "radius": 0.04735
+          "panda_leftfinger":
+            - "center": [-0.002, 0.026, -0.015]
+              "radius": 0.03589
+            - "center": [0.003, 0.014, -0.015]
+              "radius": 0.03589
+            - "center": [0.007, 0.025, -0.015]
+              "radius": 0.03589
+            - "center": [-0.007, 0.013, -0.015]
+              "radius": 0.03589
+            - "center": [-0.011, 0.022, -0.014]
+              "radius": 0.03486
+            - "center": [-0.01, 0.035, 0.014]
+              "radius": 0.03435
+            - "center": [-0.004, 0.033, 0.024]
+              "radius": 0.03435
+            - "center": [0.008, 0.033, 0.015]
+              "radius": 0.03435
+            - "center": [-0.007, 0.03, -0.014]
+              "radius": 0.03538
+            - "center": [0.0, 0.033, 0.016]
+              "radius": 0.03384
+            - "center": [-0.009, 0.038, -0.009]
+              "radius": 0.03384
+            - "center": [0.0, 0.035, 0.003]
+              "radius": 0.03384
+            - "center": [0.003, 0.036, -0.005]
+              "radius": 0.03384
+            - "center": [0.006, 0.03, 0.032]
+              "radius": 0.03384
+            - "center": [-0.006, 0.029, 0.038]
+              "radius": 0.03384
+            - "center": [-0.004, 0.037, -0.002]
+              "radius": 0.03384
+            - "center": [-0.011, 0.014, -0.016]
+              "radius": 0.03538
+            - "center": [0.008, 0.037, -0.008]
+              "radius": 0.03384
+            - "center": [-0.011, 0.03, 0.033]
+              "radius": 0.03384
+            - "center": [0.009, 0.026, 0.046]
+              "radius": 0.03384
+            - "center": [0.007, 0.029, 0.037]
+              "radius": 0.03384
+            - "center": [-0.01, 0.027, 0.048]
+              "radius": 0.03333
+            - "center": [-0.006, 0.022, -0.015]
+              "radius": 0.03589
+            - "center": [0.008, 0.019, 0.066]
+              "radius": 0.03333
+            - "center": [-0.009, 0.021, 0.062]
+              "radius": 0.03333
+            - "center": [0.002, 0.035, 0.009]
+              "radius": 0.03384
+            - "center": [0.003, 0.023, 0.056]
+              "radius": 0.03333
+            - "center": [0.005, 0.031, 0.027]
+              "radius": 0.03384
+            - "center": [-0.001, 0.025, 0.05]
+              "radius": 0.03333
+            - "center": [0.008, 0.012, -0.017]
+              "radius": 0.03435
+            - "center": [-0.01, 0.023, 0.058]
+              "radius": 0.03333
+            - "center": [-0.008, 0.035, 0.01]
+              "radius": 0.03384
+            - "center": [0.009, 0.034, 0.012]
+              "radius": 0.03384
+            - "center": [0.004, 0.021, 0.061]
+              "radius": 0.03333
+            - "center": [-0.003, 0.004, -0.012]
+              "radius": 0.03281
+            - "center": [0.001, 0.03, -0.013]
+              "radius": 0.03435
+            - "center": [-0.007, 0.018, 0.072]
+              "radius": 0.03281
+            - "center": [0.005, 0.023, -0.015]
+              "radius": 0.03589
+            - "center": [0.01, 0.03, -0.018]
+              "radius": 0.03333
+            - "center": [0.0, 0.018, 0.069]
+              "radius": 0.03281
+            - "center": [-0.002, 0.014, 0.079]
+              "radius": 0.03281
+            - "center": [0.007, 0.004, -0.018]
+              "radius": 0.03281
+            - "center": [0.004, 0.003, -0.012]
+              "radius": 0.03281
+            - "center": [-0.012, 0.016, 0.076]
+              "radius": 0.03281
+            - "center": [0.001, 0.038, -0.017]
+              "radius": 0.03281
+            - "center": [-0.012, 0.003, -0.018]
+              "radius": 0.03281
+            - "center": [-0.012, 0.038, 0.003]
+              "radius": 0.03281
+            - "center": [0.008, 0.038, -0.018]
+              "radius": 0.03281
+            - "center": [-0.001, 0.026, 0.047]
+              "radius": 0.03333
+            - "center": [-0.003, 0.016, 0.075]
+              "radius": 0.03281
+          "panda_rightfinger":
+            - "center": [0.006, -0.012, -0.015]
+              "radius": 0.03586
+            - "center": [-0.004, -0.025, -0.015]
+              "radius": 0.03586
+            - "center": [-0.005, -0.017, -0.015]
+              "radius": 0.03586
+            - "center": [0.003, -0.026, -0.015]
+              "radius": 0.03586
+            - "center": [-0.01, -0.028, -0.015]
+              "radius": 0.03586
+            - "center": [0.006, -0.017, -0.015]
+              "radius": 0.03586
+            - "center": [-0.005, -0.032, 0.024]
+              "radius": 0.03434
+            - "center": [-0.011, -0.033, 0.014]
+              "radius": 0.03434
+            - "center": [-0.004, -0.036, -0.007]
+              "radius": 0.03383
+            - "center": [-0.009, -0.01, -0.017]
+              "radius": 0.03434
+            - "center": [0.003, -0.027, 0.043]
+              "radius": 0.03383
+            - "center": [0.007, -0.031, 0.023]
+              "radius": 0.03383
+            - "center": [-0.006, -0.035, 0.008]
+              "radius": 0.03383
+            - "center": [-0.006, -0.029, 0.035]
+              "radius": 0.03383
+            - "center": [0.002, -0.029, 0.034]
+              "radius": 0.03383
+            - "center": [0.006, -0.034, 0.004]
+              "radius": 0.03383
+            - "center": [-0.01, -0.026, 0.044]
+              "radius": 0.03383
+            - "center": [-0.012, -0.036, -0.007]
+              "radius": 0.03383
+            - "center": [-0.004, -0.021, 0.06]
+              "radius": 0.03332
+            - "center": [-0.011, -0.019, 0.065]
+              "radius": 0.03332
+            - "center": [0.003, -0.035, -0.002]
+              "radius": 0.03383
+            - "center": [0.004, -0.03, -0.013]
+              "radius": 0.03434
+            - "center": [-0.012, -0.025, 0.049]
+              "radius": 0.03383
+            - "center": [0.006, -0.024, 0.049]
+              "radius": 0.03332
+            - "center": [0.006, -0.032, 0.017]
+              "radius": 0.03332
+            - "center": [-0.004, -0.037, -0.011]
+              "radius": 0.03383
+            - "center": [0.005, -0.03, 0.031]
+              "radius": 0.03383
+            - "center": [-0.012, -0.019, -0.017]
+              "radius": 0.03383
+            - "center": [-0.001, -0.03, 0.027]
+              "radius": 0.03383
+            - "center": [-0.012, -0.035, -0.001]
+              "radius": 0.03383
+            - "center": [0.002, -0.022, 0.056]
+              "radius": 0.03332
+            - "center": [-0.005, -0.024, 0.05]
+              "radius": 0.03332
+            - "center": [-0.005, -0.034, 0.013]
+              "radius": 0.03383
+            - "center": [0.001, -0.035, 0.004]
+              "radius": 0.03383
+            - "center": [-0.004, -0.035, -0.003]
+              "radius": 0.03383
+            - "center": [-0.01, -0.023, 0.055]
+              "radius": 0.03332
+            - "center": [0.007, -0.002, -0.018]
+              "radius": 0.03281
+            - "center": [0.002, -0.02, 0.063]
+              "radius": 0.03332
+            - "center": [0.007, -0.013, 0.08]
+              "radius": 0.03281
+            - "center": [-0.013, -0.003, -0.012]
+              "radius": 0.03281
+            - "center": [0.0, -0.016, -0.015]
+              "radius": 0.03586
+            - "center": [-0.005, -0.03, -0.013]
+              "radius": 0.03434
+            - "center": [-0.002, -0.016, 0.074]
+              "radius": 0.03281
+            - "center": [-0.002, -0.013, 0.08]
+              "radius": 0.03281
+            - "center": [-0.013, -0.016, 0.071]
+              "radius": 0.03281
+            - "center": [0.008, -0.018, 0.067]
+              "radius": 0.03281
+            - "center": [-0.01, -0.002, -0.016]
+              "radius": 0.03281
+            - "center": [0.003, -0.002, -0.016]
+              "radius": 0.03281
+            - "center": [-0.003, -0.022, 0.056]
+              "radius": 0.03332
+            - "center": [-0.013, -0.015, 0.075]
+              "radius": 0.03281
+        collision_sphere_buffer: 0.005
+        extra_collision_spheres: {}
+        self_collision_ignore: {
+          "panda_link0": ["panda_link1", "panda_link2"],
+          "panda_link1": ["panda_link2" , "panda_link3", "panda_link4"],
+          "panda_link2": ["panda_link3", "panda_link4"],
+          "panda_link3": ["panda_link4", "panda_link6"],
+          "panda_link4": ["panda_link5", "panda_link6", "panda_link7", "panda_link8"],
+          "panda_link5": ["panda_link6", "panda_link7", "panda_hand","panda_leftfinger", "panda_rightfinger"],
+          "panda_link6": ["panda_link7", "panda_hand", "attached_object", "panda_leftfinger", "panda_rightfinger"],
+          "panda_link7": ["panda_hand", "attached_object", "panda_leftfinger", "panda_rightfinger"],
+          "panda_hand": ["panda_leftfinger", "panda_rightfinger"],
+          "panda_leftfinger": ["panda_rightfinger"],
+          "panda_rightfinger": [],
+
+        } # Dict[str, List[str]]
+        self_collision_buffer: {
+          "panda_link0": 0.005,
+          "panda_link1": 0.005,
+          "panda_link2": 0.005,
+          "panda_link3": 0.005,
+          "panda_link4": 0.005,
+          "panda_link5": 0.005,
+          "panda_link6": 0.005,
+          "panda_link7": 0.005,
+          "panda_leftfinger": 0.005,
+          "panda_rightfinger": 0.005,
+        }
+
+        use_global_cumul: True
+        mesh_link_names: null # List[str]
+
+        cspace:
+          joint_names: [
+            "panda_joint1",
+            "panda_joint2",
+            "panda_joint3",
+            "panda_joint4",
+            "panda_joint5",
+            "panda_joint6",
+            "panda_joint7"
+          ] # List[str]
+          retract_config: [0.0, -1.3, 0.0, -2.5, 0.0, 1.0, 0., 0.04, 0.04]
+          null_space_weight: [1,1,1,1,1,1,1,1,1]
+          cspace_distance_weight: [1,1,1,1,1,1,1,1,1]
+
+          max_jerk: 500.0
+          max_acceleration: 15.0
