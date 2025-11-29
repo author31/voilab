@@ -79,6 +79,26 @@ The interactive visualization tools are built as Jupyter notebooks that can be r
       - Performs ArUco marker detection on each image frame.
   ![ArUco Tag Viewer](./media/aruco_tag_viewer.png)
 
+#### Example: Dataset Visualizer
+
+  - **Location**: `nbs/dataset_visualizer.ipynb`
+  - **Goal**: A visualization tool for data collectors to review and refine their collected human demonstrations. Helps identify issues such as lost SLAM frames, low ArUco detection rates, and trajectory anomalies before final processing.
+  - **Features**:
+      - **Pipeline Status**: Overview of which UMI processing stages have completed
+      - **Demo Quality Metrics**: Detection rates, lost frames, and trajectory quality for each demo
+      - **Trajectory & Video**: Side-by-side 3D camera trajectory visualization and frame-by-frame video preview
+      - **ArUco Tags**: ArUco marker detection viewer with detection statistics and marker overlays
+  - **CLI Usage**:
+    ```bash
+    # Launch the dataset visualizer web app
+    uv run voilab launch-dataset-visualizer
+    ```
+  - **Python Usage**:
+    ```python
+    from voilab.applications.dataset_visualizer import show
+    show("/path/to/session/directory")
+    ```
+
 ### 3. Viewing Robot Models (Built-in URDF Viewer)
 
 The JupyterLab environment comes with a built-in viewer for Universal Robot Description Format (URDF) files.
