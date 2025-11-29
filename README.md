@@ -8,11 +8,16 @@ Voilab provides a set of tools to interactively view and debug robotics data. Th
 
 -----
 
-## Packages
+## Documentation
 
-This repository contains several packages. For more detailed information on each, please refer to their respective README files:
+This repository contains several packages. For more detailed information on each, please refer to their respective documentation files:
 
-  - [`packages/umi`](./UMI_README.md): Tools and configurations for running SLAM pipelines with UMI datasets.
+  - [`packages/umi`](./docs/UMI_README.md): Tools and configurations for running SLAM pipelines with UMI datasets.
+  - [`packages/diffusion_policy`](./docs/diffusion_policy.md): To train the diffusion policy with UMI datasets.
+  - [`diffusion_policy_layers`](./docs/diffusion_policy_layers.md): Overview of the diffusion policy package layers.
+  - [`ros2_integration`](./docs/ros2_integration.md): Overview of the ROS2 integration.
+  - [`Isaac Sim docker setup`](./docs/DOCKER.md): How to setup the Docker containers for Isaac Sim.
+
 
 -----
 
