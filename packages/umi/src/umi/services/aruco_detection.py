@@ -45,6 +45,7 @@ class ArucoDetectionService(BaseService):
                 video_path = video_dir / "raw_video.mp4"
                 if (converted_path:=video_dir/f"converted_60fps_{video_path.name}").is_file():
                     video_path = converted_path
+                    breakpoint()
 
                 pkl_path = video_dir / "tag_detection.pkl"
                 if pkl_path.is_file():

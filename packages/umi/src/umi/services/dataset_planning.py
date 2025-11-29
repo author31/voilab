@@ -100,7 +100,8 @@ class DatasetPlanningService(BaseService):
                     continue
 
                 n_frames = 0
-                if (converted_path := video_dir / f"converted_60fps_{mp4_path.name}").is_file():
+                converted_path = video_dir/ f"converted_60fps_{mp4_path.name}"
+                if converted_path.is_file():
                     mp4_path = converted_path
 
                 with av.open(str(mp4_path), "r") as container:
@@ -131,8 +132,10 @@ class DatasetPlanningService(BaseService):
                     }
                 )
         if len(rows) == 0:
-            logger.info("No valid videos found!")
-            exit(1)
+            msg = "No valid videos found!"
+            logger.info(msg)
+            raise Exception(msg)
+
         video_meta_df = pd.DataFrame(data=rows)
         serial_count = video_meta_df["camera_serial"].value_counts()
         logger.info("Found following cameras:")
@@ -282,13 +285,19 @@ class DatasetPlanningService(BaseService):
                         vid_dir = row["video_dir"]
                         csv_path = vid_dir / "camera_trajectory.csv"
 
-                        if not csv_path.is_file(): break
+                        if not csv_path.is_file(): 
+                            logger.warning(f"Skipping {vid_idx}, missing camera_trajectory.csv")
+                            break
 
                         csv_df = pd.read_csv(csv_path)
 
-                        if csv_df["is_lost"].sum() > 10: break
+                        if csv_df["is_lost"].sum() > 10:
+                            logger.warning(f"{csv_path} has {csv_df['is_lost'].sum()} lost frames")
+                            break
 
-                        if (~csv_df["is_lost"]).sum() < 60: break
+                        if (~csv_df["is_lost"]).sum() < 60:
+                            logger.warning(f"{csv_path} has {csv_df['is_lost'].sum()} lost frames")
+                            break
 
                         df = csv_df.loc[~csv_df["is_lost"]]
                         pose_interp = self.pose_interp_from_df(
@@ -301,6 +310,7 @@ class DatasetPlanningService(BaseService):
                 if len(pose_interps) != n_gripper_cams:
                     logger.info(f"Excluded demo {demo_idx} from left/right disambiguation.")
                     continue
+
                 n_samples = 100
                 t_samples = np.linspace(start_timestamp, end_timestamp, n_samples)
                 pose_samples = [pose_to_mat(interp(t_samples)) for interp in pose_interps]
