@@ -661,11 +661,9 @@ def show(session_dir: str):
     aruco_dropdown.observe(on_aruco_dropdown_change, names="value")
     aruco_frame_slider.observe(on_aruco_frame_change, names="value")
 
-    # Create tabs
-    tab = Tab()
-    tab.children = [
-        VBox([summary_widget, pipeline_widget]),
-        VBox([demos_widget]),
+    # Create inner tab for Trajectory and Video (merged into one tab)
+    trajectory_video_tab = Tab()
+    trajectory_video_tab.children = [
         VBox(
             [
                 trajectory_dropdown,
@@ -680,6 +678,16 @@ def show(session_dir: str):
                 frame_info,
             ]
         ),
+    ]
+    trajectory_video_tab.set_title(0, "Trajectory")
+    trajectory_video_tab.set_title(1, "Video")
+
+    # Create main tabs
+    tab = Tab()
+    tab.children = [
+        VBox([summary_widget, pipeline_widget]),
+        VBox([demos_widget]),
+        trajectory_video_tab,
         VBox(
             [
                 aruco_dropdown,
@@ -692,9 +700,8 @@ def show(session_dir: str):
     ]
     tab.set_title(0, "Overview")
     tab.set_title(1, "Demos")
-    tab.set_title(2, "Trajectory")
-    tab.set_title(3, "Video")
-    tab.set_title(4, "ArUco Tags")
+    tab.set_title(2, "Trajectory & Video")
+    tab.set_title(3, "ArUco Tags")
 
     # Show initial state
     display(tab)
