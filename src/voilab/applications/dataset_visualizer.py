@@ -18,6 +18,7 @@ from IPython.display import display
 from ipywidgets import (
     HTML,
     Dropdown,
+    HBox,
     IntSlider,
     Layout,
     Output,
@@ -661,33 +662,37 @@ def show(session_dir: str):
     aruco_dropdown.observe(on_aruco_dropdown_change, names="value")
     aruco_frame_slider.observe(on_aruco_frame_change, names="value")
 
-    # Create inner tab for Trajectory and Video (merged into one tab)
-    trajectory_video_tab = Tab()
-    trajectory_video_tab.children = [
-        VBox(
-            [
-                trajectory_dropdown,
-                trajectory_output,
-            ]
-        ),
-        VBox(
-            [
-                video_dropdown,
-                image_widget,
-                frame_slider,
-                frame_info,
-            ]
-        ),
-    ]
-    trajectory_video_tab.set_title(0, "Trajectory")
-    trajectory_video_tab.set_title(1, "Video")
+    # Create side-by-side layout for Trajectory and Video
+    trajectory_video_hbox = HBox(
+        [
+            VBox(
+                [
+                    HTML("<h4>📈 Trajectory</h4>"),
+                    trajectory_dropdown,
+                    trajectory_output,
+                ],
+                layout=Layout(width="50%", padding="10px"),
+            ),
+            VBox(
+                [
+                    HTML("<h4>📹 Video</h4>"),
+                    video_dropdown,
+                    image_widget,
+                    frame_slider,
+                    frame_info,
+                ],
+                layout=Layout(width="50%", padding="10px"),
+            ),
+        ],
+        layout=Layout(width="100%"),
+    )
 
     # Create main tabs
     tab = Tab()
     tab.children = [
         VBox([summary_widget, pipeline_widget]),
         VBox([demos_widget]),
-        trajectory_video_tab,
+        trajectory_video_hbox,
         VBox(
             [
                 aruco_dropdown,
