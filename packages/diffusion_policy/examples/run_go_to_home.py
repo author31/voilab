@@ -184,9 +184,8 @@ class GoToHomePublisher(Node):
         """Solve IK for the target home pose using current joint states."""
         self.get_logger().info('Solving IK for target pose with current joint states...')
 
-        # Target pose: position [0.6, 0, 0.0], quaternion [0, 1, 0, 0]
         target_pos = np.array([0.61, 0.0, 0.56])
-        target_quat = np.array([0.0, 0.0, 1.0, 0.0])  # w, x, y, z
+        target_quat = np.array([0.0, 0.0, 1.0, 0.0])
 
         if self.current_joint_states:
             self.target_joint_angles = solve_ik_for_target_pose(

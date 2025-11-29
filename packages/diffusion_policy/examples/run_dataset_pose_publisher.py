@@ -363,7 +363,7 @@ class UmiPosePublisher(Node):
         if self.current_joint_states is None:
             self.get_logger().info("Waiting for joint states...")
             return
-        
+
         # Compute calibration on first joint states received
         # The robot must be in calibration pose at this moment!
         if not self.calibration_complete:
