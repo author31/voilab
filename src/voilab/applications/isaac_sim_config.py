@@ -1,4 +1,3 @@
-from typing import Dict, Any, List
 import numpy as np
 
 # Task-specific camera configurations
@@ -17,7 +16,7 @@ TASK_CONFIGURATIONS = {
         "camera_position": np.array([1.8, 2.2, 1.8]),
         "camera_target": np.array([0.0, 0.0, 0.7]),
         "environment_vars": {
-            "TASK_NAME": "dining_table",
+            "TASK_NAME": "dining-table",
             "SCENE_CONFIG": "dining_scene"
         }
     },
@@ -26,7 +25,7 @@ TASK_CONFIGURATIONS = {
         "camera_position": np.array([3.2, 1.2, 1.9]),
         "camera_target": np.array([0.0, 0.5, 0.8]),
         "environment_vars": {
-            "TASK_NAME": "living_room",
+            "TASK_NAME": "living-room",
             "SCENE_CONFIG": "living_scene"
         }
     }

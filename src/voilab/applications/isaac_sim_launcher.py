@@ -1,21 +1,18 @@
 import os
-import sys
 import subprocess
 from pathlib import Path
-from typing import Optional, Dict, Any
-import numpy as np
+from typing import Dict
 
 from .isaac_sim_config import TASK_CONFIGURATIONS, ISAAC_SIM_CONFIG
 
 
 class IsaacSimLauncher:
-    def __init__(self, task: str, use_docker: bool = True, enable_gpu: bool = True):
+    def __init__(self, task: str, use_docker: bool = True):
         if task not in TASK_CONFIGURATIONS:
             raise ValueError(f"Unknown task: {task}. Available tasks: {list(TASK_CONFIGURATIONS.keys())}")
 
         self.task = task
         self.use_docker = use_docker
-        self.enable_gpu = enable_gpu
         self.config = TASK_CONFIGURATIONS[task].copy()
 
     def setup_environment(self) -> Dict[str, str]:
@@ -58,7 +55,7 @@ class IsaacSimLauncher:
             "--ipc", "host",
             "--rm", "-it",
             "nvcr.io/nvidia/isaac-sim:5.0.0",
-            "python3", "/workspace/voilab/src/voilab/applications/isaac_sim_runner.py",
+            "python3", "/workspace/voilab/scripts/launch_isaacsim_workspace.py",
             "--task", self.task
         ]
 

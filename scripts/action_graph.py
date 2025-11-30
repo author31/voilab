@@ -1,5 +1,4 @@
 import omni.graph.core as og
-from typing import Dict, Any
 
 
 class IsaacSimActionGraph:
@@ -17,7 +16,7 @@ class IsaacSimActionGraph:
         # Define node creation configurations
         keys = og.Controller.Keys
 
-        (graph_handle, nodes, _) = og.Controller.edit(
+        (graph_handle, nodes, _, _) = og.Controller.edit(
             {
                 "graph_path": "/World/ROS_JointStates",
                 "evaluator_name": "execution",
