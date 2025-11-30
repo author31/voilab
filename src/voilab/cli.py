@@ -83,8 +83,6 @@ def launch_simulator(task, width, height):
         ]
 
         click.echo(f"Launching Isaac Sim in Docker container...")
-        click.echo(f"Task: {task}")
-        click.echo(f"Resolution: {width}x{height}")
 
         # Launch Docker container
         subprocess.run(docker_cmd, env=env_vars, check=True)
