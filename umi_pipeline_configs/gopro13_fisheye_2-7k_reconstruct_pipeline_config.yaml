@@ -49,13 +49,21 @@
     dist_to_center_threshold: 0.6
     nominal_z: 0.01
 
-06_generate_dataset_plan:
+06_frame_to_pose:
+  instance: "umi.services.frame_to_pose.FrameToPoseService"
+  inherit_config: true
+  config:
+    task: "living_room"
+    marker_size_m: 0.018
+    intrinsics_path: "defaults/calibration/gopro13_intrinsics_2_7k.json"
+
+07_generate_dataset_plan:
   instance: "umi.services.dataset_planning.DatasetPlanningService"
   inherit_config: true
   config:
     dataset_plan_filename: dataset_plan.pkl
 
-07_generate_replay_buffer:
+08_generate_replay_buffer:
   instance: "umi.services.replay_buffer.ReplayBufferService"
   inherit_config: true
   config:
