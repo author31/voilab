@@ -23,6 +23,7 @@ def process_and_save_with_axes(
     marker_size_m=0.018,
     return_pose_list=False,
     intrinsics_path=intrinsics_path,
+    tx_slam_tag=None,
 ):
     # --- load camera intrinsics from JSON ---
     with open(intrinsics_path, "r") as f:
@@ -33,7 +34,7 @@ def process_and_save_with_axes(
     # 1. 焦距與主點
     fx = intr["focal_length"]
     aspect_ratio = intr["aspect_ratio"]
-    fy = fx * aspect_ratio          # 通常是這樣：fy = fx * aspect_ratio
+    fy = fx * aspect_ratio
     cx = intr["principal_pt_x"]
     cy = intr["principal_pt_y"]
 
@@ -100,6 +101,29 @@ def process_and_save_with_axes(
             logger.info(f"{filename}: PnP failed for ID {id_val}")
             continue
 
+        # ---------------------------
+        # camera frame -> SLAM tag frame
+        # ---------------------------
+        R_cam_obj, _ = cv2.Rodrigues(rvec)
+        T_cam_obj = np.eye(4, dtype=np.float64)
+        T_cam_obj[:3, :3] = R_cam_obj
+        T_cam_obj[:3, 3] = tvec.reshape(3)
+
+        
+        T_slamTag_cam = tx_slam_tag
+        T_out = T_slamTag_cam @ T_cam_obj
+
+        R_out = T_out[:3, :3]
+        t_out = T_out[:3, 3]
+        rvec_out, _ = cv2.Rodrigues(R_out)
+
+        object_pose_list.append({
+            "object_name": get_key_from_value(OBJ_ID, id_val),
+            "rvec": rvec_out.reshape(3).tolist(),
+            "tvec": t_out.reshape(3).tolist(),
+        })
+
+
         object_pose_list.append({
             "object_name": get_key_from_value(OBJ_ID, id_val),
             "rvec": rvec.reshape(3).tolist(),
@@ -119,7 +143,7 @@ def run_frame_to_pose(
     if task == "kitchen":
         OBJ_ID = {'pink_cup': 310, 'blue_cup': 309}
     elif task == "dining_room":
-        OBJ_ID = {'fork': 300, 'knife': 303}
+        OBJ_ID = {'fork': 300, 'knife': 303, 'plate': 302}
     elif task == "living_room":
         OBJ_ID = {'blue_block': 305, 'green_block': 306, 'red_block': 304}
     else:
@@ -129,13 +153,24 @@ def run_frame_to_pose(
     save_dir = session_dir / "demos/mapping"
     save_dir.mkdir(parents=True, exist_ok=True)
 
+    # --- load SLAM tag transform ---
+    tx_slam_tag_path = save_dir / "tx_slam_tag.json"
+    if not tx_slam_tag_path.is_file():
+        raise FileNotFoundError(f"tx_slam_tag.json not found at {tx_slam_tag_path}")
+
+    with open(tx_slam_tag_path, "r") as f:
+        tx_data = json.load(f)
+
+    tx_slam_tag = np.array(tx_data["tx_slam_tag"], dtype=np.float64).reshape(4, 4)
+
+
     # --- open video list ---
     video_paths = sorted(
         glob.glob(os.path.join(video_dir, "*.mp4")) +
         glob.glob(os.path.join(video_dir, "*.MP4"))
     )
 
-    all_video_results = []  # 這裡存每支影片的結果
+    all_video_results = []
 
     logger.info(f"task name: {task}")
 
@@ -171,6 +206,7 @@ def run_frame_to_pose(
                 marker_size_m=marker_size_m,
                 return_pose_list=True,
                 intrinsics_path=intrinsics_path,
+                tx_slam_tag=tx_slam_tag,
             )
 
             if not object_pose_list:
