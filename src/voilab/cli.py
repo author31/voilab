@@ -67,7 +67,7 @@ def launch_simulator(task, width, height):
             "--rm",
             "isaac-sim",
             "python3",
-            "/workspace/voilab/scripts/launch_v2.py",
+            "/workspace/voilab/scripts/launch_isaacsim_workspace.py",
             "--task", task
         ]
         subprocess.run(compose_run_cmd, env=env_vars, check=True)
