@@ -77,3 +77,8 @@ launch-workspace-force:
 	@echo "Launching Docker workspace for development (force rebuild)..."
 	@./launch_workspace.sh --force-rebuild
 
+.PHONY make-init-submodule:
+init-submodule:
+	@echo "Initializing submodules..."
+	@git submodule update --init --recursive
+	@echo "Submodules initialized successfully"
