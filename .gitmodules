@@ -1,0 +1,3 @@
+[submodule "submodules/isaac-ros-ws"]
+	path = submodules/isaac-ros-ws
+	url = https://github.com/isaac-sim/IsaacSim-ros_workspaces.git

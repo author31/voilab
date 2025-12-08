@@ -1,76 +1,130 @@
-# Use Isaac Sim 5.0.0 as base image (Ubuntu 22.04)
-FROM nvcr.io/nvidia/isaac-sim:5.0.0
+FROM nvidia/cuda:12.2.0-devel-ubuntu22.04
 
-# Set shell to bash and switch to root user for installations
-SHELL ["/bin/bash", "-c"]
-USER root
+ENV ROS_DISTRO=humble \
+    ROS_ROOT=humble_ws \
+    ROS_PYTHON_VERSION=3 \
+    DEBIAN_FRONTEND=noninteractive \
+    LANG=en_US.UTF-8 \
+    LC_ALL=en_US.UTF-8 \
+    PYTHONPATH=/usr/local/lib/python3.11/dist-packages \
+    PYTHON_EXECUTABLE=/usr/bin/python3.11 \
+    Python3_EXECUTABLE=/usr/bin/python3.11 \
+    PYTHON_INCLUDE_DIR=/usr/include/python3.11 \
+    PYTHON_LIBRARY=/usr/lib/x86_64-linux-gnu/libpython3.11.so
 
-# Prevent apt-get from hanging during Docker build
-ENV DEBIAN_FRONTEND=noninteractive \
-    ACCEPT_EULA=Y \
-    PRIVACY_CONSENT=Y \
-    QT_X11_NO_MITSHM=1
-
-# 1. Set up locale and add ROS 2 Humble repository in a single layer
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        locales \
-        software-properties-common \
-        curl \
-        gnupg \
-        lsb-release && \
-    # Set up locale
-    locale-gen en_US.UTF-8 && \
-    update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 && \
-    # Add ROS 2 GPG key
-    add-apt-repository universe && \
-    curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg && \
-    # Add ROS 2 repository to sources
-    # $(lsb_release -cs) should correctly resolve to 'jammy' for this base image
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/ros2.list > /dev/null && \
-    # Clean up apt cache
-    rm -rf /var/lib/apt/lists/*
-
-# Set language environment variable for all subsequent shells
-ENV LANG=en_US.UTF-8
-
-# 2. Install ROS 2 Humble, explicitly including conflicting dependencies and pinning a version
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        # Explicitly install dependencies that caused conflicts
-        libfreetype6-dev \
-        libfontconfig1-dev \
-        libbrotli1=1.0.9-2build6 --allow-downgrades \
-        # X11 client libraries and display packages
-        libx11-6 \
-        libxext6 \
-        libxrender1 \
-        libxtst6 \
-        libxi6 \
-        libxrandr2 \
-        libxcursor1 \
-        libxdamage1 \
-        libxfixes3 \
-        libxinerama1 \
-        libgl1-mesa-glx \
-        libglu1-mesa \
-        x11-apps \
-        # Now install ROS and other tools
-        ros-humble-desktop-full \
-        ros-dev-tools \
-        build-essential \
-        git \
-        python3-pip && \
-    # Clean up apt cache
-    rm -rf /var/lib/apt/lists/*
-
-# 3. Source ROS 2 setup script for all new bash terminals
-RUN echo "source /opt/ros/humble/setup.bash" >> /etc/bash.bashrc
-
-# 4. Set a default working directory
 WORKDIR /workspace
 
-# 5. Copy and set up entrypoint script for Isaac Sim
-COPY entrypoint.isaacsim.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
+# ---------------------------------------------------------------------------
+# LAYER 1: SYSTEM DEPENDENCIES
+# ---------------------------------------------------------------------------
+RUN apt-get update && apt-get upgrade -y && \
+    # 1. Install Basic Setup Tools
+    apt-get install -y --no-install-recommends \
+        git cmake build-essential curl wget gnupg2 lsb-release \
+        software-properties-common locales pkg-config \
+    # 2. Setup Locales
+    && locale-gen en_US en_US.UTF-8 \
+    && update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 \
+    # 3. Add Python PPA
+    && add-apt-repository -y ppa:deadsnakes/ppa \
+    # 4. Add ROS 2 Repository
+    && wget https://raw.githubusercontent.com/ros/rosdistro/master/ros.asc && apt-key add ros.asc \
+    && sh -c 'echo "deb [arch=$(dpkg --print-architecture)] http://packages.ros.org/ros2/ubuntu $(lsb_release -cs) main" > /etc/apt/sources.list.d/ros2-latest.list' \
+    && apt-get update \
+    # 5. Install ALL System Libraries
+    && apt-get install -y --no-install-recommends \
+        # Python 3.11
+        python3.11 python3.11-dev python3.11-distutils python3.11-venv \
+        # Boost (OMPL)
+        libboost-all-dev libboost-dev libboost-filesystem-dev libboost-program-options-dev \
+        libboost-system-dev libboost-thread-dev libboost-serialization-dev libboost-date-time-dev \
+        libboost-regex-dev libboost-python-dev \
+        # Geometric Shapes & Octomap
+        libqhull-dev libassimp-dev liboctomap-dev libconsole-bridge-dev libfcl-dev \
+        # Eigen
+        libeigen3-dev \
+        # Graphics / X11
+        libx11-dev libxaw7-dev libxrandr-dev libgl1-mesa-dev libglu1-mesa-dev libglew-dev \
+        libgles2-mesa-dev libopengl-dev libfreetype-dev libfreetype6-dev libfontconfig1-dev \
+        # Qt5 (RViz)
+        qtbase5-dev qtchooser qt5-qmake qtbase5-dev-tools \
+        libqt5core5a libqt5gui5 libqt5opengl5 libqt5widgets5 \
+        libxcursor-dev libxinerama-dev libxi-dev libyaml-cpp-dev libzzip-dev \
+        freeglut3-dev libogre-1.9-dev libpng-dev libjpeg-dev python3-pyqt5.qtwebengine \
+        # ROS Tools & Utils
+        python3-yaml cmake-extras python3-pip python3-pytest-cov python3-rosinstall-generator \
+        ros-dev-tools libbullet-dev libasio-dev libtinyxml2-dev libcunit1-dev \
+        libacl1-dev python3-empy libpython3-dev libfmt-dev \
+    # 6. Cleanup to reduce image size
+    && apt-get clean && rm -rf /var/lib/apt/lists/* \
+    # 7. Set Python 3.11 as default
+    && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
 
-# 6. Set entrypoint to launch Isaac Sim GUI
-ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+# ---------------------------------------------------------------------------
+# LAYER 2: PYTHON LIBRARIES (Fused)
+# Install pip, Isaac Sim, and build tools
+# ---------------------------------------------------------------------------
+RUN curl -s https://bootstrap.pypa.io/get-pip.py -o get-pip.py && \
+    python3.11 get-pip.py --force-reinstall && \
+    rm get-pip.py && \
+    # Install Build Tools
+    python3.11 -m pip install --no-cache-dir setuptools==70.0.0 wheel && \
+    # Install Isaac Sim (Heavy Layer)
+    python3.11 -m pip install "isaacsim[all,extscache,isaacsim-gui,isaacsim-kernel,isaacsim-app,isaacsim-ros2]==5.1.0" --extra-index-url https://pypi.nvidia.com && \
+    # Install ROS python dependencies
+    python3.11 -m pip uninstall -y em empy numpy || true && \
+    python3.11 -m pip install --no-cache-dir \
+        empy==3.3.4 \
+        numpy \
+        pybind11[global] \
+        PyYAML \
+        argcomplete \
+        flake8-blind-except flake8-builtins flake8-class-newline flake8-comprehensions \
+        flake8-deprecated flake8-docstrings flake8-import-order flake8-quotes \
+        pytest-repeat pytest-rerunfailures pytest lark netifaces && \
+    ln -sf /usr/include/python3.11 /usr/include/python
+
+# ---------------------------------------------------------------------------
+# LAYER 3: ROS 2 CORE BUILD (Source)
+# ---------------------------------------------------------------------------
+RUN mkdir -p ${ROS_ROOT}/src && \
+    cd ${ROS_ROOT} && \
+    rosinstall_generator --deps --rosdistro ${ROS_DISTRO} rosidl_runtime_c rcutils rcl rmw tf2 tf2_msgs common_interfaces geometry_msgs nav_msgs std_msgs rosgraph_msgs sensor_msgs vision_msgs rclpy ros2topic ros2pkg ros2doctor ros2run ros2node ros_environment ackermann_msgs example_interfaces > ros2.rosinstall && \
+    vcs import src < ros2.rosinstall && \
+    # Patch rclpy for Python 3.11
+    find src -name rclpy -type d | xargs -I{} /bin/bash -c 'if [ -f {}/CMakeLists.txt ]; then \
+        sed -i "s/include_directories(\${PYTHON_INCLUDE_DIRS})/include_directories(\/usr\/include\/python3.11)/" {}/CMakeLists.txt; \
+        sed -i "s/\${PYTHON_LIBRARY}/python3.11/" {}/CMakeLists.txt; \
+    fi' && \
+    rosdep init && rosdep update && \
+    # Build ROS 2 Core
+    colcon build --cmake-args \
+        "-DPython3_EXECUTABLE=/usr/bin/python3.11" \
+        "-DPYTHON_EXECUTABLE=/usr/bin/python3.11" \
+        "-DPYTHON_INCLUDE_DIR=/usr/include/python3.11" \
+        "-DPYTHON_LIBRARY=/usr/lib/x86_64-linux-gnu/libpython3.11.so" \
+        --merge-install && \
+    # Copy compatibility libs
+    cp /usr/lib/x86_64-linux-gnu/libtinyxml2.so* /workspace/${ROS_ROOT}/install/lib/ || true && \
+    cp /usr/lib/x86_64-linux-gnu/libssl.so* /workspace/${ROS_ROOT}/install/lib/ || true && \
+    cp /usr/lib/x86_64-linux-gnu/libcrypto.so* /workspace/${ROS_ROOT}/install/lib/ || true
+
+# ---------------------------------------------------------------------------
+# LAYER 4: USER WORKSPACE BUILD
+# ---------------------------------------------------------------------------
+WORKDIR /workspace
+
+# Copy ONLY source code to cache bust from this point onward
+COPY submodules/isaac-ros-ws/humble_ws/src /workspace/build_ws/src
+
+RUN rm -rf /workspace/build_ws/src/moveit && \
+    /bin/bash -c "source ${ROS_ROOT}/install/setup.sh && \
+    cd build_ws && \
+    colcon build --cmake-args \
+    '-DPython3_EXECUTABLE=/usr/bin/python3.11' \
+    '-DPYTHON_EXECUTABLE=/usr/bin/python3.11' \
+    '-DPYTHON_INCLUDE_DIR=/usr/include/python3.11' \
+    '-DPYTHON_LIBRARY=/usr/lib/x86_64-linux-gnu/libpython3.11.so'"
+
+COPY entrypoint.sh /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]

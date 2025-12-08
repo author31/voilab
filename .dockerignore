@@ -1,8 +1,9 @@
-.venv
+.venv/*
 
 Dockerfile
 .git
 *.sh
 !entrypoint.isaacsim.sh
+!entrypoint.sh
 *.conf
 *.yml
