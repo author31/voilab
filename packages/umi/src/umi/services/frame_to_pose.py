@@ -15,6 +15,25 @@ def get_key_from_value(d, value):
 ROOT = Path(__file__).resolve().parents[3]
 intrinsics_path = ROOT / "defaults" / "calibration" / "gopro13_intrinsics_2_7k.json"
 
+# REGISTRY: Maps task names to their corresponding object ID configurations
+# Add new tasks here for future expansion
+REGISTRY = {
+    "kitchen": {
+        "pink_cup": 310,
+        "blue_cup": 309,
+    },
+    "dining_room": {
+        "fork": 300,
+        "knife": 303,
+        "plate": 302,
+    },
+    "living_room": {
+        "blue_block": 305,
+        "green_block": 306,
+        "red_block": 304,
+    },
+}
+
 def process_and_save_with_axes(
     OBJ_ID,
     frame,
@@ -139,15 +158,11 @@ def run_frame_to_pose(
     marker_size_m: float,
     intrinsics_path: Path,
 ):
-    # choose OBJ_ID
-    if task == "kitchen":
-        OBJ_ID = {'pink_cup': 310, 'blue_cup': 309}
-    elif task == "dining_room":
-        OBJ_ID = {'fork': 300, 'knife': 303, 'plate': 302}
-    elif task == "living_room":
-        OBJ_ID = {'blue_block': 305, 'green_block': 306, 'red_block': 304}
-    else:
-        raise ValueError(f"Unknown task: {task}")
+    # choose OBJ_ID from REGISTRY
+    if task not in REGISTRY:
+        raise ValueError(f"Unknown task: {task}. Available tasks: {list(REGISTRY.keys())}")
+    
+    OBJ_ID = REGISTRY[task]
 
     video_dir = session_dir / "raw_videos"
     save_dir = session_dir / "demos/mapping"
