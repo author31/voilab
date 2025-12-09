@@ -1,16 +1,16 @@
-import glob
-import os
+import pickle
 import cv2
 from cv2 import aruco
 import numpy as np
-import argparse
 import json
 from pathlib import Path
 from loguru import logger
 from .base_service import BaseService
 
+
 def get_key_from_value(d, value):
     return next(k for k, v in d.items() if v == value)
+
 
 ROOT = Path(__file__).resolve().parents[3]
 intrinsics_path = ROOT / "defaults" / "calibration" / "gopro13_intrinsics_2_7k.json"
@@ -34,37 +34,39 @@ REGISTRY = {
     },
 }
 
-def process_and_save_with_axes(
+
+def process_frame_for_poses(
     OBJ_ID,
     frame,
     filename,
-    save_dir,
     marker_size_m=0.018,
-    return_pose_list=False,
     intrinsics_path=intrinsics_path,
     tx_slam_tag=None,
 ):
+    """
+    Process a single frame to detect ArUco markers and estimate object poses.
+    
+    Returns:
+        list: List of detected object poses [{object_name, rvec, tvec}, ...]
+    """
     # --- load camera intrinsics from JSON ---
     with open(intrinsics_path, "r") as f:
         data = json.load(f)
 
     intr = data["intrinsics"]
 
-    # 1. 焦距與主點
     fx = intr["focal_length"]
     aspect_ratio = intr["aspect_ratio"]
     fy = fx * aspect_ratio
     cx = intr["principal_pt_x"]
     cy = intr["principal_pt_y"]
 
-    # 2. 組成 K
     K = np.array([
         [fx, 0.0, cx],
         [0.0, fy,  cy],
         [0.0, 0.0, 1.0]
     ], dtype=np.float64)
 
-    # 3. Fisheye 畸變係數
     D_fish = np.array([
         intr["radial_distortion_1"],
         intr["radial_distortion_2"],
@@ -93,8 +95,8 @@ def process_and_save_with_axes(
     detector = aruco.ArucoDetector(aruco_dict, parameters)
     corners, ids, _ = detector.detectMarkers(undist)
     if ids is None or len(ids) == 0:
-        logger.info(f"{filename}: detected none")
-        return [] if return_pose_list else None
+        logger.debug(f"{filename}: detected none")
+        return []
 
     # --- tag 3D corner layout ---
     s = marker_size_m
@@ -117,7 +119,7 @@ def process_and_save_with_axes(
         if not ok:
             ok, rvec, tvec = cv2.solvePnP(pts3D, pts2D, new_K, None, flags=cv2.SOLVEPNP_ITERATIVE)
         if not ok:
-            logger.info(f"{filename}: PnP failed for ID {id_val}")
+            logger.debug(f"{filename}: PnP failed for ID {id_val}")
             continue
 
         # ---------------------------
@@ -128,7 +130,6 @@ def process_and_save_with_axes(
         T_cam_obj[:3, :3] = R_cam_obj
         T_cam_obj[:3, 3] = tvec.reshape(3)
 
-        
         T_slamTag_cam = tx_slam_tag
         T_out = T_slamTag_cam @ T_cam_obj
 
@@ -142,29 +143,37 @@ def process_and_save_with_axes(
             "tvec": t_out.reshape(3).tolist(),
         })
 
+    return object_pose_list
 
-        object_pose_list.append({
-            "object_name": get_key_from_value(OBJ_ID, id_val),
-            "rvec": rvec.reshape(3).tolist(),
-            "tvec": tvec.reshape(3).tolist()
-        })
 
-    if return_pose_list:
-        return object_pose_list
-
-def run_frame_to_pose(
+def run_frame_to_pose_from_plan(
     task: str,
     session_dir: Path,
     marker_size_m: float,
     intrinsics_path: Path,
+    dataset_plan_filename: str,
 ):
-    # choose OBJ_ID from REGISTRY
+    """
+    Run frame-to-pose extraction using dataset_plan.pkl.
+    
+    For each episode in the plan, processes all camera segments and detects
+    object poses. Stops processing an episode once all expected tags are found.
+    
+    Outputs object_poses.json with schema:
+    {
+        "video_name": str,
+        "episode_range": [global_start_frame, global_end_frame],
+        "objects": [{object_name, rvec, tvec}, ...],
+        "status": "full" | "partial" | "none"
+    }
+    """
+    # Choose OBJ_ID from REGISTRY
     if task not in REGISTRY:
         raise ValueError(f"Unknown task: {task}. Available tasks: {list(REGISTRY.keys())}")
     
     OBJ_ID = REGISTRY[task]
 
-    video_dir = session_dir / "raw_videos"
+    demos_dir = session_dir / "demos"
     save_dir = session_dir / "demos/mapping"
     save_dir.mkdir(parents=True, exist_ok=True)
 
@@ -178,100 +187,145 @@ def run_frame_to_pose(
 
     tx_slam_tag = np.array(tx_data["tx_slam_tag"], dtype=np.float64).reshape(4, 4)
 
+    # --- load dataset plan ---
+    plan_path = session_dir / dataset_plan_filename
+    if not plan_path.is_file():
+        raise FileNotFoundError(f"Dataset plan not found at {plan_path}")
 
-    # --- open video list ---
-    video_paths = sorted(
-        glob.glob(os.path.join(video_dir, "*.mp4")) +
-        glob.glob(os.path.join(video_dir, "*.MP4"))
-    )
+    with open(plan_path, "rb") as f:
+        plan = pickle.load(f)
 
-    all_video_results = []
+    logger.info(f"Loaded dataset plan with {len(plan)} episodes")
+    logger.info(f"Task: {task}, expected objects: {list(OBJ_ID.keys())}")
 
-    logger.info(f"task name: {task}")
+    all_episode_results = []
+    global_frame_start = 0
 
-    for video_path in video_paths:
-        logger.info(f"\nProcessing video: {video_path}")
-        cap = cv2.VideoCapture(video_path)
-        if not cap.isOpened():
-            raise RuntimeError(f"Cannot open video: {video_path}")
+    for episode_idx, plan_episode in enumerate(plan):
+        cameras = plan_episode["cameras"]
+        
+        # Determine frame count for this episode (all cameras should have same frame count)
+        n_frames = None
+        for camera in cameras:
+            video_start, video_end = camera["video_start_end"]
+            cam_frames = video_end - video_start
+            if n_frames is None:
+                n_frames = cam_frames
+            else:
+                assert n_frames == cam_frames, f"Inconsistent frame counts in episode {episode_idx}"
 
-        fps = cap.get(cv2.CAP_PROP_FPS)
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        if fps <= 0:
-            window = total_frames
-        else:
-            window = int(fps * 1.0)
-        end_frame = min(window, total_frames - 1)
+        global_frame_end = global_frame_start + n_frames
+        episode_range = [global_frame_start, global_frame_end]
 
+        logger.info(f"\nProcessing episode {episode_idx + 1}/{len(plan)}, "
+                   f"global frames [{global_frame_start}, {global_frame_end})")
+
+        # Track found tags for this episode across all cameras
         found_tags: dict[str, dict] = {}
         all_found = False
+        video_names = []
 
-        for frame_index in range(0, end_frame + 1):
-            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
-            success, frame = cap.read()
-            if not success:
-                continue
-
-            filename = f"frame_{frame_index:04d}.png"
-            object_pose_list = process_and_save_with_axes(
-                OBJ_ID,
-                frame,
-                filename,
-                save_dir,
-                marker_size_m=marker_size_m,
-                return_pose_list=True,
-                intrinsics_path=intrinsics_path,
-                tx_slam_tag=tx_slam_tag,
-            )
-
-            if not object_pose_list:
-                continue
-
-            # accumulate detections for this video
-            for entry in object_pose_list:
-                found_tags[entry["object_name"]] = entry
-
-            if set(found_tags.keys()) == set(OBJ_ID.keys()):
-                logger.info("All tags in OBJ_ID detected in this video.\n")
-                all_found = True
+        # Process each camera segment in the episode
+        for cam_idx, camera in enumerate(cameras):
+            if all_found:
                 break
 
-        cap.release()
+            video_path_rel = camera["video_path"]
+            video_path = demos_dir.joinpath(video_path_rel).absolute()
+            
+            if not video_path.is_file():
+                logger.warning(f"Video not found: {video_path}")
+                continue
 
-        video_name = os.path.basename(video_path)
+            video_name = video_path.name
+            if video_name not in video_names:
+                video_names.append(video_name)
 
+            video_start, video_end = camera["video_start_end"]
+            
+            logger.info(f"  Camera {cam_idx}: {video_name} frames [{video_start}, {video_end})")
+
+            cap = cv2.VideoCapture(str(video_path))
+            if not cap.isOpened():
+                logger.error(f"Cannot open video: {video_path}")
+                continue
+
+            # Process frames in the planned range
+            for frame_idx in range(video_start, video_end):
+                if all_found:
+                    break
+
+                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+                success, frame = cap.read()
+                if not success:
+                    continue
+
+                filename = f"ep{episode_idx}_cam{cam_idx}_frame{frame_idx}"
+                object_pose_list = process_frame_for_poses(
+                    OBJ_ID,
+                    frame,
+                    filename,
+                    marker_size_m=marker_size_m,
+                    intrinsics_path=intrinsics_path,
+                    tx_slam_tag=tx_slam_tag,
+                )
+
+                if not object_pose_list:
+                    continue
+
+                # Accumulate detections for this episode
+                for entry in object_pose_list:
+                    found_tags[entry["object_name"]] = entry
+
+                # Check if all tags found
+                if set(found_tags.keys()) == set(OBJ_ID.keys()):
+                    logger.info(f"  All tags detected in episode {episode_idx + 1}")
+                    all_found = True
+                    break
+
+            cap.release()
+
+        # Determine status and build result
+        video_name_str = ",".join(video_names) if video_names else "unknown"
+        
         if all_found:
-            logger.info(f"[{video_name}] Saved FULL object poses.")
-            all_video_results.append({
-                "video_name": video_name,
-                "objects": list(found_tags.values()),
-                "status": "full",
-            })
+            status = "full"
+            logger.info(f"[Episode {episode_idx + 1}] FULL - all object poses found")
+        elif found_tags:
+            status = "partial"
+            logger.info(f"[Episode {episode_idx + 1}] PARTIAL - found: {list(found_tags.keys())}")
         else:
-            if found_tags:
-                logger.info(f"[{video_name}] Not all tags detected in same frame. Saving PARTIAL poses.")
-                all_video_results.append({
-                    "video_name": video_name,
-                    "objects": list(found_tags.values()),
-                    "status": "partial",
-                })
-            else:
-                logger.info(f"[{video_name}] No tags detected. Skipping this video.")
-                all_video_results.append({
-                    "video_name": video_name,
-                    "objects": [],
-                    "status": "none",
-                })
+            status = "none"
+            logger.info(f"[Episode {episode_idx + 1}] NONE - no tags detected")
 
-    out_json = os.path.join(save_dir, "object_poses.json")
+        all_episode_results.append({
+            "video_name": video_name_str,
+            "episode_range": episode_range,
+            "objects": list(found_tags.values()),
+            "status": status,
+        })
+
+        # Update global frame counter
+        global_frame_start = global_frame_end
+
+    # Save results
+    out_json = save_dir / "object_poses.json"
     with open(out_json, "w") as f:
-        json.dump(all_video_results, f, indent=4)
-    logger.info(f"Saved object poses for {len(all_video_results)} video(s) to {out_json}")
+        json.dump(all_episode_results, f, indent=4)
+    
+    logger.info(f"\nSaved object poses for {len(all_episode_results)} episode(s) to {out_json}")
+    
+    # Summary statistics
+    full_count = sum(1 for r in all_episode_results if r["status"] == "full")
+    partial_count = sum(1 for r in all_episode_results if r["status"] == "partial")
+    none_count = sum(1 for r in all_episode_results if r["status"] == "none")
+    logger.info(f"Summary: {full_count} full, {partial_count} partial, {none_count} none")
 
+    return all_episode_results
 
 
 class FrameToPoseService(BaseService):
-    """Pipeline service wrapper for frame-to-pose."""
+    """Pipeline service wrapper for frame-to-pose using dataset_plan.pkl."""
 
     def __init__(self, config: dict):
         super().__init__(config)
@@ -286,6 +340,10 @@ class FrameToPoseService(BaseService):
             )
 
         self.marker_size_m = float(self.config.get("marker_size_m", 0.018))
+        
+        self.dataset_plan_filename = self.config.get(
+            "dataset_plan_filename", "dataset_plan.pkl"
+        )
 
         intrinsics_cfg = self.config.get(
             "intrinsics_path",
@@ -294,10 +352,18 @@ class FrameToPoseService(BaseService):
         self.intrinsics_path = (ROOT / intrinsics_cfg).resolve()
 
     def execute(self):
-        logger.info("[FrameToPose] Service run() called.")
-        run_frame_to_pose(
+        logger.info("[FrameToPose] Service execute() called.")
+        results = run_frame_to_pose_from_plan(
             task=self.task,
             session_dir=self.session_dir,
             marker_size_m=self.marker_size_m,
             intrinsics_path=self.intrinsics_path,
+            dataset_plan_filename=self.dataset_plan_filename,
         )
+        return {
+            "status": "success",
+            "num_episodes": len(results),
+            "full_count": sum(1 for r in results if r["status"] == "full"),
+            "partial_count": sum(1 for r in results if r["status"] == "partial"),
+            "none_count": sum(1 for r in results if r["status"] == "none"),
+        }
