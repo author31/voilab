@@ -51,10 +51,10 @@ def process_frame_for_poses(
         OBJ_ID: Dictionary mapping object names to marker IDs
         frame: Input frame to process
         filename: Filename for logging
-        K: Camera intrinsics matrix, shape (3, 3), dtype float64
-        D_fish: Fisheye distortion coefficients, shape (4,), dtype float64
+        K: Camera intrinsics matrix, shape (3, 3), dtype np.float64
+        D_fish: Fisheye distortion coefficients, shape (4,), dtype np.float64
         marker_size_m: Size of ArUco markers in meters
-        tx_slam_tag: Transform from SLAM tag frame to camera frame, shape (4, 4), dtype float64
+        tx_slam_tag: Transform from SLAM tag frame to camera frame, shape (4, 4), dtype np.float64
     
     Returns:
         list: List of detected object poses [{object_name, rvec, tvec}, ...]
