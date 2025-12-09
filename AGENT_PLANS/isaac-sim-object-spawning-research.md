@@ -245,91 +245,72 @@ xform_op.Set(gf_matrix)
 
 ## JSON Data Structure
 
-### Expected `object_poses.json` Format
+### Actual `object_poses.json` Format (Per-Episode Reconstruction)
 
-Based on the problem statement and common robotics conventions:
+The reconstruction system generates per-episode object pose data with the following structure:
 
 ```json
 {
+  "video_name": "converted_60fps_raw_video.mp4",
+  "episode_range": [1878, 2285],
   "objects": [
     {
-      "name": "cup",
-      "asset_path": "cup_finalized.usd",
-      "translation": [0.45, 0.2, 0.85],
-      "rotation": {
-        "quaternion": [1.0, 0.0, 0.0, 0.0]
-      }
+      "object_name": "blue_cup",
+      "rvec": [-1.7764613338639368, -0.35174590123848837, -0.2668578462849374],
+      "tvec": [-0.017231631611681134, -0.2640980962680338, 0.11816561790000263]
     },
     {
-      "name": "plate",
-      "asset_path": "plate.usd",
-      "translation": [0.3, -0.1, 0.82],
-      "rotation": {
-        "quaternion": [0.9239, 0.0, 0.0, 0.3827]
-      }
-    },
-    {
-      "name": "knife",
-      "asset_path": "knife_final.usd",
-      "translation": [0.35, 0.0, 0.83],
-      "rotation": {
-        "quaternion": [0.7071, 0.0, 0.0, 0.7071]
-      }
+      "object_name": "plate",
+      "rvec": [-1.234, 0.456, 0.789],
+      "tvec": [0.3, -0.1, 0.82]
     }
   ],
-  "metadata": {
-    "coordinate_frame": "world",
-    "units": "meters",
-    "quaternion_format": "wxyz"
-  }
+  "status": "partial"
 }
 ```
 
-### Alternative Format (Axis-Angle or Euler)
+**Key Fields:**
+- `video_name`: Source video file for this episode
+- `episode_range`: Frame range [start, end] for this episode
+- `objects`: List of reconstructed objects with poses
+  - `object_name`: Name identifier for the object
+  - `rvec`: Rotation vector (axis-angle representation) [x, y, z] in radians
+  - `tvec`: Translation vector [x, y, z] in meters
+- `status`: Reconstruction status ("partial", "complete", etc.)
+
+**Important Notes:**
+- **Rotation Format**: `rvec` is a **rotation vector** (also called axis-angle or Rodrigues vector)
+  - The direction of the vector is the rotation axis
+  - The magnitude (length) is the rotation angle in radians
+  - This is OpenCV's standard representation from `cv2.Rodrigues()`
+- **Translation Format**: `tvec` is in meters, representing object position in the camera/world frame
+- **File Location**: `$SESSION_DIR/demos/$EPISODE/object_poses.json`
+
+### Example with Multiple Objects
 
 ```json
 {
+  "video_name": "converted_60fps_raw_video.mp4",
+  "episode_range": [1878, 2285],
   "objects": [
     {
-      "name": "fork",
-      "asset_path": "fork_final.usd",
-      "translation": [0.4, 0.15, 0.83],
-      "rotation": {
-        "type": "axis_angle",
-        "axis": [0, 0, 1],
-        "angle": 1.5708
-      }
+      "object_name": "blue_cup",
+      "rvec": [-1.7764613338639368, -0.35174590123848837, -0.2668578462849374],
+      "tvec": [-0.017231631611681134, -0.2640980962680338, 0.11816561790000263]
     },
     {
-      "name": "spoon",
-      "asset_path": "spoon.usd",
-      "translation": [0.25, 0.15, 0.83],
-      "rotation": {
-        "type": "euler",
-        "angles": [0, 0, 90],
-        "sequence": "xyz",
-        "degrees": true
-      }
-    }
-  ]
-}
-```
-
-### Minimal Format
-
-```json
-{
-  "objects": [
+      "object_name": "white_plate",
+      "rvec": [0.123, -0.456, 0.789],
+      "tvec": [0.25, -0.15, 0.80]
+    },
     {
-      "asset": "cup_finalized.usd",
-      "pose": {
-        "position": [0.45, 0.2, 0.85],
-        "orientation": [1.0, 0.0, 0.0, 0.0]
-      }
+      "object_name": "fork",
+      "rvec": [0.0, 0.0, 1.5708],
+      "tvec": [0.35, 0.0, 0.83]
     }
-  ]
+  ],
+  "status": "complete"
 }
-```
 
 ---
 
@@ -394,23 +375,27 @@ class ObjectPoseLoader:
         pass
 ```
 
-#### 2. **Pose Conversion Utilities** (New Module)
+#### 2. **Pose Conversion Utilities** (Updated for rvec/tvec Format)
 
 ```python
-def json_to_quaternion(rotation_data: dict) -> np.ndarray:
-    """Convert various rotation formats to quaternion WXYZ"""
+def rvec_to_quaternion_wxyz(rvec: np.ndarray) -> np.ndarray:
+    """Convert rotation vector (rvec) to quaternion WXYZ format"""
     pass
 
 def quaternion_xyzw_to_wxyz(quat: np.ndarray) -> np.ndarray:
     """Convert quaternion from XYZW to WXYZ format"""
     pass
 
-def euler_to_quaternion(angles: list, sequence: str = 'xyz', degrees: bool = False) -> np.ndarray:
-    """Convert Euler angles to quaternion WXYZ"""
+def validate_quaternion(quat: np.ndarray) -> np.ndarray:
+    """Validate and normalize quaternion"""
     pass
 
-def axis_angle_to_quaternion(axis: list, angle: float) -> np.ndarray:
-    """Convert axis-angle to quaternion WXYZ"""
+def rvec_tvec_to_transform_matrix(rvec: np.ndarray, tvec: np.ndarray) -> np.ndarray:
+    """Convert rvec/tvec to 4x4 transformation matrix"""
+    pass
+
+def map_object_name_to_asset(object_name: str) -> str:
+    """Map object name from reconstruction to USD asset filename"""
     pass
 ```
 
@@ -418,13 +403,14 @@ def axis_angle_to_quaternion(axis: list, angle: float) -> np.ndarray:
 
 ## Code Examples
 
-### Example 1: Basic Object Loading
+### Example 1: Basic Object Loading (Updated for Actual Format)
 
 ```python
 import json
 import os
 import numpy as np
 from pathlib import Path
+from scipy.spatial.transform import Rotation as R
 import isaacsim.core.utils.stage as stage_utils
 from isaacsim.core.api import World
 from isaacsim.core.prims import XFormPrim
@@ -433,9 +419,12 @@ def load_objects_from_json(json_path: str, assets_dir: str, world: World):
     """
     Load objects from object_poses.json and spawn them in the scene.
     
+    The JSON format uses rvec (rotation vector) and tvec (translation vector)
+    from the reconstruction system.
+    
     Args:
-        json_path: Path to object_poses.json
-        assets_dir: Base directory for CAD assets
+        json_path: Path to object_poses.json (per-episode)
+        assets_dir: Base directory for CAD assets (e.g., /workspace/voilab/assets/CADs)
         world: Isaac Sim World instance
     """
     # Load JSON
@@ -443,28 +432,34 @@ def load_objects_from_json(json_path: str, assets_dir: str, world: World):
         data = json.load(f)
     
     objects = data.get('objects', [])
+    print(f"[ObjectLoader] Found {len(objects)} objects in {json_path}")
     
     # Spawn each object
     for idx, obj in enumerate(objects):
-        name = obj.get('name', f'object_{idx}')
-        asset_path = obj.get('asset_path', obj.get('asset'))
-        translation = np.array(obj.get('translation', obj.get('pose', {}).get('position', [0, 0, 0])))
+        object_name = obj.get('object_name', f'object_{idx}')
+        rvec = np.array(obj.get('rvec', [0, 0, 0]))
+        tvec = np.array(obj.get('tvec', [0, 0, 0]))
         
-        # Handle rotation
-        rotation_data = obj.get('rotation', obj.get('pose', {}).get('orientation'))
-        if isinstance(rotation_data, dict):
-            quat = np.array(rotation_data.get('quaternion', [1, 0, 0, 0]))
-        else:
-            quat = np.array(rotation_data)
+        # Convert rotation vector (axis-angle) to quaternion WXYZ
+        # rvec is a rotation vector where:
+        # - Direction is the axis of rotation
+        # - Magnitude is the angle in radians
+        rot = R.from_rotvec(rvec)
+        quat_xyzw = rot.as_quat()  # scipy returns [x, y, z, w]
+        quat_wxyz = np.array([quat_xyzw[3], quat_xyzw[0], quat_xyzw[1], quat_xyzw[2]])
         
-        # Ensure quaternion is WXYZ format
-        if len(quat) == 4 and quat[0] < 1.0:  # Heuristic check
-            # Might be XYZW, convert to WXYZ
-            quat = np.array([quat[3], quat[0], quat[1], quat[2]])
+        # Map object_name to USD asset file
+        # This mapping should be customized based on your asset naming convention
+        asset_filename = map_object_name_to_asset(object_name)
+        full_asset_path = os.path.join(assets_dir, asset_filename)
         
-        # Construct full paths
-        full_asset_path = os.path.join(assets_dir, asset_path)
-        prim_path = f"/World/objects/{name}_{idx}"
+        # Check if asset exists
+        if not os.path.exists(full_asset_path):
+            print(f"[ObjectLoader] WARNING: Asset not found: {full_asset_path}, skipping {object_name}")
+            continue
+        
+        # Create unique prim path
+        prim_path = f"/World/objects/{object_name}_{idx}"
         
         # Add reference to stage
         stage_utils.add_reference_to_stage(
@@ -473,87 +468,165 @@ def load_objects_from_json(json_path: str, assets_dir: str, world: World):
         )
         
         # Create XFormPrim and set pose
-        obj_prim = XFormPrim(prim_path=prim_path, name=f"{name}_{idx}")
-        obj_prim.set_world_pose(position=translation, orientation=quat)
+        obj_prim = XFormPrim(prim_path=prim_path, name=f"{object_name}_{idx}")
+        obj_prim.set_world_pose(position=tvec, orientation=quat_wxyz)
         
         # Add to world scene
         world.scene.add(obj_prim)
         
-        print(f"[ObjectLoader] Spawned {name} at {translation}")
+        print(f"[ObjectLoader] Spawned {object_name} at position {tvec}")
+
+def map_object_name_to_asset(object_name: str) -> str:
+    """
+    Map object name from reconstruction to USD asset filename.
+    
+    Args:
+        object_name: Name from object_poses.json (e.g., "blue_cup", "white_plate")
+        
+    Returns:
+        str: USD filename (e.g., "cup_finalized.usd")
+    """
+    # Define mapping from object names to USD files
+    # Customize this based on your asset library
+    name_to_asset = {
+        'blue_cup': 'cup_finalized.usd',
+        'cup': 'cup_finalized.usd',
+        'white_plate': 'plate.usd',
+        'plate': 'plate.usd',
+        'fork': 'fork_final.usd',
+        'knife': 'knife_final.usd',
+        'spoon': 'spoon.usd',
+        'storage_box': 'storage_box.usd',
+        'table': 'table.usd',
+    }
+    
+    # Try exact match first
+    if object_name in name_to_asset:
+        return name_to_asset[object_name]
+    
+    # Try partial match (e.g., "blue_cup" contains "cup")
+    for key, asset in name_to_asset.items():
+        if key in object_name.lower():
+            return asset
+    
+    # Default: try to construct filename from object_name
+    # e.g., "blue_cup" -> "cup.usd"
+    base_name = object_name.lower().split('_')[-1]  # Get last word
+    return f"{base_name}.usd"
 ```
 
-### Example 2: Robust Rotation Conversion
+### Example 2: Rotation Vector (rvec) to Quaternion Conversion
 
 ```python
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
-def parse_rotation_to_quaternion_wxyz(rotation_data):
+def rvec_to_quaternion_wxyz(rvec: np.ndarray) -> np.ndarray:
     """
-    Convert various rotation formats to quaternion WXYZ.
+    Convert rotation vector (Rodrigues/axis-angle) to quaternion WXYZ.
+    
+    The rotation vector format (used in OpenCV and the reconstruction system):
+    - The direction of the vector is the axis of rotation
+    - The magnitude (length) is the rotation angle in radians
+    - Example: [0, 0, 1.5708] = 90° rotation around Z-axis
     
     Args:
-        rotation_data: Dict with rotation information or list/array
+        rvec: Rotation vector [x, y, z] where magnitude = angle (radians)
         
     Returns:
         np.ndarray: Quaternion in WXYZ format [w, x, y, z]
     """
-    # If already a list/array, assume it's a quaternion
-    if isinstance(rotation_data, (list, np.ndarray)):
-        quat = np.array(rotation_data)
-        # Check if it's XYZW (common) or WXYZ (Isaac Sim)
-        # Heuristic: if first element > last element, likely WXYZ already
-        if len(quat) == 4:
-            if quat[0] > quat[3]:  # Likely WXYZ
-                return quat
-            else:  # Likely XYZW, convert
-                return np.array([quat[3], quat[0], quat[1], quat[2]])
+    rvec = np.array(rvec)
     
-    # Handle dict with type specification
-    if isinstance(rotation_data, dict):
-        rot_type = rotation_data.get('type', 'quaternion')
-        
-        if rot_type == 'quaternion' or 'quaternion' in rotation_data:
-            quat = np.array(rotation_data.get('quaternion', [1, 0, 0, 0]))
-            # Assume WXYZ if w is first
-            format_hint = rotation_data.get('format', 'wxyz')
-            if format_hint == 'xyzw':
-                return np.array([quat[3], quat[0], quat[1], quat[2]])
-            return quat
-        
-        elif rot_type == 'euler':
-            angles = rotation_data.get('angles', [0, 0, 0])
-            sequence = rotation_data.get('sequence', 'xyz')
-            degrees = rotation_data.get('degrees', False)
-            
-            if degrees:
-                angles = np.deg2rad(angles)
-            
-            rot = R.from_euler(sequence, angles)
-            quat_xyzw = rot.as_quat()
-            return np.array([quat_xyzw[3], quat_xyzw[0], quat_xyzw[1], quat_xyzw[2]])
-        
-        elif rot_type == 'axis_angle':
-            axis = np.array(rotation_data.get('axis', [0, 0, 1]))
-            angle = rotation_data.get('angle', 0.0)
-            
-            rot = R.from_rotvec(axis * angle)
-            quat_xyzw = rot.as_quat()
-            return np.array([quat_xyzw[3], quat_xyzw[0], quat_xyzw[1], quat_xyzw[2]])
-        
-        elif rot_type == 'matrix':
-            matrix = np.array(rotation_data.get('matrix'))
-            rot = R.from_matrix(matrix)
-            quat_xyzw = rot.as_quat()
-            return np.array([quat_xyzw[3], quat_xyzw[0], quat_xyzw[1], quat_xyzw[2]])
+    # Handle zero rotation (identity)
+    if np.allclose(rvec, 0):
+        return np.array([1.0, 0.0, 0.0, 0.0])
     
-    # Default: identity rotation
-    return np.array([1.0, 0.0, 0.0, 0.0])
+    # Convert to rotation matrix using scipy
+    rot = R.from_rotvec(rvec)
+    
+    # Get quaternion in XYZW format (scipy default)
+    quat_xyzw = rot.as_quat()
+    
+    # Convert to WXYZ format (Isaac Sim convention)
+    quat_wxyz = np.array([
+        quat_xyzw[3],  # w
+        quat_xyzw[0],  # x
+        quat_xyzw[1],  # y
+        quat_xyzw[2]   # z
+    ])
+    
+    return quat_wxyz
+
+def validate_and_normalize_quaternion(quat: np.ndarray) -> np.ndarray:
+    """
+    Validate and normalize a quaternion.
+    
+    Args:
+        quat: Quaternion in WXYZ format [w, x, y, z]
+        
+    Returns:
+        np.ndarray: Normalized quaternion in WXYZ format
+    """
+    quat = np.array(quat)
+    
+    if len(quat) != 4:
+        raise ValueError(f"Invalid quaternion length: {len(quat)}, expected 4")
+    
+    # Calculate magnitude
+    norm = np.linalg.norm(quat)
+    
+    if norm < 0.001:
+        # Nearly zero quaternion, return identity
+        print("WARNING: Near-zero quaternion detected, using identity rotation")
+        return np.array([1.0, 0.0, 0.0, 0.0])
+    
+    # Normalize
+    return quat / norm
+
+def rvec_tvec_to_transform_matrix(rvec: np.ndarray, tvec: np.ndarray) -> np.ndarray:
+    """
+    Convert rotation vector and translation vector to 4x4 transform matrix.
+    
+    Args:
+        rvec: Rotation vector [x, y, z]
+        tvec: Translation vector [x, y, z]
+        
+    Returns:
+        np.ndarray: 4x4 transformation matrix
+    """
+    rvec = np.array(rvec)
+    tvec = np.array(tvec)
+    
+    # Convert rvec to rotation matrix
+    rot = R.from_rotvec(rvec)
+    rot_matrix = rot.as_matrix()
+    
+    # Build 4x4 transformation matrix
+    T = np.eye(4)
+    T[:3, :3] = rot_matrix
+    T[:3, 3] = tvec
+    
+    return T
+
+# Example usage with actual data format:
+example_rvec = np.array([-1.7764613338639368, -0.35174590123848837, -0.2668578462849374])
+example_tvec = np.array([-0.017231631611681134, -0.2640980962680338, 0.11816561790000263])
+
+# Convert to quaternion for Isaac Sim
+quat_wxyz = rvec_to_quaternion_wxyz(example_rvec)
+print(f"Quaternion (WXYZ): {quat_wxyz}")
+
+# Or get full transform matrix
+T = rvec_tvec_to_transform_matrix(example_rvec, example_tvec)
+print(f"Transform matrix:\n{T}")
 ```
 
-### Example 3: Integration into main()
+### Example 3: Integration into main() (Updated for Actual Path Structure)
 
 ```python
+import os
+
 def main():
     print(f"[Main] Starting with task: {args.task}")
     
@@ -576,22 +649,32 @@ def main():
     world.scene.add(panda)
     
     # Load objects from JSON if session_dir provided
+    # Path structure: $SESSION_DIR/demos/$EPISODE/object_poses.json
+    # Example: datasets/1124_gopro3_kitchen/demos/ampping/object_poses.json
     if args.session_dir:
+        # Convert episode to string if it's an integer
+        episode_name = str(args.episode) if isinstance(args.episode, int) else args.episode
+        
+        # Construct path to object_poses.json
         object_poses_path = os.path.join(
             args.session_dir, 
             'demos',
-            args.episode if isinstance(args.episode, str) else f'demo_{args.episode}',
+            episode_name,
             'object_poses.json'
         )
+        
+        print(f"[Main] Looking for object poses at: {object_poses_path}")
         
         if os.path.exists(object_poses_path):
             print(f"[Main] Loading objects from: {object_poses_path}")
             assets_dir = "/workspace/voilab/assets/CADs"
             load_objects_from_json(object_poses_path, assets_dir, world)
         else:
-            print(f"[Main] WARNING: object_poses.json not found at {object_poses_path}")
+            print(f"[Main] INFO: object_poses.json not found at {object_poses_path}")
+            print(f"[Main] Continuing without spawned objects")
     
     # Set camera and reset world
+    # IMPORTANT: Objects must be added BEFORE world.reset()
     set_camera_view(camera_translation, franka_translation)
     world.reset()
     
@@ -606,7 +689,15 @@ def main():
         world.step(render=True)
     
     # Continue with replay logic...
+    # ... rest of the simulation loop
 ```
+
+**Key Points for Integration:**
+1. **Path Construction**: Use `os.path.join()` to construct the path properly
+2. **Episode Handling**: The episode can be a string (e.g., "ampping") or integer
+3. **Timing**: Objects must be spawned AFTER robot but BEFORE `world.reset()`
+4. **Error Handling**: Gracefully continue if `object_poses.json` doesn't exist
+5. **Asset Directory**: Use absolute path to CADs directory
 
 ---
 
@@ -753,15 +844,17 @@ def load_json_safe(json_path: str) -> dict:
 1. **Minimal Changes**: Modify only `launch_isaacsim_workspace.py`
 2. **Use Existing Patterns**: Follow patterns from robot loading
 3. **Robust Error Handling**: Gracefully handle missing files/assets
-4. **Flexible JSON Format**: Support multiple rotation representations
-5. **Clear Logging**: Print what objects are loaded and where
+4. **Handle rvec Format**: Use scipy to convert rotation vectors to quaternions
+5. **Object Name Mapping**: Create mapping from object names to USD asset files
+6. **Clear Logging**: Print what objects are loaded and where
 
 ### Key API Functions to Use
 
 1. `stage_utils.add_reference_to_stage()` - Object spawning
 2. `XFormPrim.set_world_pose()` - Pose application
 3. `World.scene.add()` - Scene management
-4. `scipy.spatial.transform.Rotation` - Rotation conversions
+4. `scipy.spatial.transform.Rotation.from_rotvec()` - Convert rvec to rotation
+5. `Rotation.as_quat()` - Get quaternion (XYZW format, needs conversion to WXYZ)
 
 ### Integration Points in launch_isaacsim_workspace.py
 
@@ -777,11 +870,13 @@ if args.session_dir:
 
 ### Testing Strategy
 
-1. Create sample `object_poses.json` in expected location
+1. Create sample `object_poses.json` with actual format (rvec/tvec) in expected location
+   - Path: `$SESSION_DIR/demos/$EPISODE/object_poses.json`
 2. Run launcher with `--session_dir` and `--episode` arguments
 3. Verify objects appear in scene at correct positions
 4. Test with missing files (graceful degradation)
-5. Test with various rotation formats
+5. Test rvec to quaternion conversion with known rotations
+6. Verify object name to asset file mapping works correctly
 
 ---
 
@@ -808,15 +903,33 @@ Isaac Sim consistently uses **WXYZ** format:
 - This matches the Pixar USD Gf.Quatd convention
 - SciPy uses XYZW, so conversion is often needed
 
+### Rotation Vector (rvec) Format
+
+The reconstruction system uses **rotation vectors** (Rodrigues representation):
+- Format: `[x, y, z]` where the vector direction is the rotation axis
+- Magnitude: The length of the vector is the rotation angle in radians
+- Conversion: Use `scipy.spatial.transform.Rotation.from_rotvec()` to convert to quaternion
+- This is the standard OpenCV representation from `cv2.Rodrigues()`
+
 ---
 
 ## Conclusion
 
 This research provides a comprehensive guide to implementing object loading from `object_poses.json` using Isaac Sim V5.1.0 standalone API. The recommended approach uses:
 
-1. `stage_utils.add_reference_to_stage()` for spawning
-2. `XFormPrim.set_world_pose()` for pose application
-3. `scipy.spatial.transform.Rotation` for rotation conversion
-4. Robust error handling for production use
+1. **Object Data Format**: Per-episode JSON with `rvec` (rotation vector) and `tvec` (translation vector)
+2. **Path Structure**: `$SESSION_DIR/demos/$EPISODE/object_poses.json`
+3. **Spawning**: `stage_utils.add_reference_to_stage()` for USD reference loading
+4. **Pose Application**: `XFormPrim.set_world_pose()` with WXYZ quaternions
+5. **Rotation Conversion**: `scipy.spatial.transform.Rotation.from_rotvec()` to convert rvec to quaternion
+6. **Object Mapping**: Custom mapping function to match object names to USD asset files
+7. **Error Handling**: Graceful degradation if objects or files are missing
+
+**Key Implementation Steps:**
+1. Parse `object_poses.json` to extract objects with rvec/tvec
+2. Convert rvec to quaternion WXYZ using scipy
+3. Map object_name to USD asset file (e.g., "blue_cup" → "cup_finalized.usd")
+4. Spawn objects using `add_reference_to_stage()` after robot, before `world.reset()`
+5. Apply poses using `set_world_pose()` with converted quaternions
 
 The implementation should be minimal, focused, and follow existing patterns in the codebase.
