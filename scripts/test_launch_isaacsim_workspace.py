@@ -5,8 +5,10 @@ Unit tests for launch_isaacsim_workspace.py functions
 These tests validate the object pose loading and conversion logic
 without requiring Isaac Sim to be installed.
 
-Note: We test these functions by extracting them as standalone code since
-the main module requires Isaac Sim to be imported.
+Note: Functions are duplicated here rather than imported because
+launch_isaacsim_workspace.py imports Isaac Sim modules at the top level,
+which are not available in the test environment. This duplication is
+intentional to enable testing without Isaac Sim dependencies.
 """
 
 import json

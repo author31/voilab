@@ -14,7 +14,6 @@ config = {
 }
 simulation_app = SimulationApp(config)
 
-import numpy as np
 import cv2
 from isaacsim.core.api import World
 import isaacsim.core.utils.stage as stage_utils
