@@ -2,9 +2,10 @@ services:
   isaac-sim:
     build:
       context: .
-      dockerfile: Dockerfile.isaacsim
+      dockerfile: Dockerfile
     volumes:
       - .:/workspace/voilab
+      - /workspace/voilab/.venv
       - /tmp/.X11-unix:/tmp/.X11-unix
       - /usr/share/vulkan/icd.d:/usr/share/vulkan/icd.d:ro
     stdin_open: true
