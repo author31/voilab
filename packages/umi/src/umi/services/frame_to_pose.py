@@ -39,40 +39,26 @@ def process_frame_for_poses(
     OBJ_ID,
     frame,
     filename,
+    K,
+    D_fish,
     marker_size_m=0.018,
-    intrinsics_path=intrinsics_path,
     tx_slam_tag=None,
 ):
     """
     Process a single frame to detect ArUco markers and estimate object poses.
     
+    Args:
+        OBJ_ID: Dictionary mapping object names to marker IDs
+        frame: Input frame to process
+        filename: Filename for logging
+        K: Camera intrinsics matrix (3x3)
+        D_fish: Fisheye distortion coefficients (4,)
+        marker_size_m: Size of ArUco markers in meters
+        tx_slam_tag: Transform from SLAM tag frame to camera frame
+    
     Returns:
         list: List of detected object poses [{object_name, rvec, tvec}, ...]
     """
-    # --- load camera intrinsics from JSON ---
-    with open(intrinsics_path, "r") as f:
-        data = json.load(f)
-
-    intr = data["intrinsics"]
-
-    fx = intr["focal_length"]
-    aspect_ratio = intr["aspect_ratio"]
-    fy = fx * aspect_ratio
-    cx = intr["principal_pt_x"]
-    cy = intr["principal_pt_y"]
-
-    K = np.array([
-        [fx, 0.0, cx],
-        [0.0, fy,  cy],
-        [0.0, 0.0, 1.0]
-    ], dtype=np.float64)
-
-    D_fish = np.array([
-        intr["radial_distortion_1"],
-        intr["radial_distortion_2"],
-        intr["radial_distortion_3"],
-        intr["radial_distortion_4"],
-    ], dtype=np.float64)
 
     # --- fisheye to pinhole ---
     h, w = frame.shape[:2]
@@ -177,6 +163,31 @@ def run_frame_to_pose_from_plan(
     save_dir = session_dir / "demos/mapping"
     save_dir.mkdir(parents=True, exist_ok=True)
 
+    # --- load camera intrinsics from JSON (once for all frames) ---
+    with open(intrinsics_path, "r") as f:
+        data = json.load(f)
+
+    intr = data["intrinsics"]
+
+    fx = intr["focal_length"]
+    aspect_ratio = intr["aspect_ratio"]
+    fy = fx * aspect_ratio
+    cx = intr["principal_pt_x"]
+    cy = intr["principal_pt_y"]
+
+    K = np.array([
+        [fx, 0.0, cx],
+        [0.0, fy,  cy],
+        [0.0, 0.0, 1.0]
+    ], dtype=np.float64)
+
+    D_fish = np.array([
+        intr["radial_distortion_1"],
+        intr["radial_distortion_2"],
+        intr["radial_distortion_3"],
+        intr["radial_distortion_4"],
+    ], dtype=np.float64)
+
     # --- load SLAM tag transform ---
     tx_slam_tag_path = save_dir / "tx_slam_tag.json"
     if not tx_slam_tag_path.is_file():
@@ -268,8 +279,9 @@ def run_frame_to_pose_from_plan(
                     OBJ_ID,
                     frame,
                     filename,
+                    K,
+                    D_fish,
                     marker_size_m=marker_size_m,
-                    intrinsics_path=intrinsics_path,
                     tx_slam_tag=tx_slam_tag,
                 )
 
