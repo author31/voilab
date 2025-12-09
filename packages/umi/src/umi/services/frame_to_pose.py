@@ -214,6 +214,9 @@ def run_frame_to_pose_from_plan(
             else:
                 assert n_frames == cam_frames, f"Inconsistent frame counts in episode {episode_idx}"
 
+        if n_frames is None:
+            logger.warning(f"Skipping episode {episode_idx} because cameras list is empty.")
+            continue
         global_frame_end = global_frame_start + n_frames
         episode_range = [global_frame_start, global_frame_end]
 
