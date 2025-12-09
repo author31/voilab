@@ -29,16 +29,17 @@ def launch_dataset_visualizer():
 @cli.command()
 @click.option('--task', type=click.Choice(['kitchen', 'dining-table', 'living-room']),
               required=True, help='Task environment to load')
+@click.option('--session_dir', type=str, help='Path to UMI session directory for trajectory replay')
+@click.option('--episode', default=0, type=int, help='Episode to replay')
 @click.option('--width', default=1280, help='Window width')
 @click.option('--height', default=720, help='Window height')
-def launch_simulator(task, width, height):
+def launch_simulator(task, session_dir, episode, width, height):
     """Launch Isaac Sim with ROS2 bridge enabled"""
-    
     try:
         # Prepare environment
         env_vars = os.environ.copy()
         env_vars.update({
-            "ACCEPT_EULA": "Y",
+            "OMNI_KIT_ACCEPT_EULA": "Y",
             "PRIVACY_CONSENT": "Y",
             "DISPLAY": os.getenv("DISPLAY", ":1"),
             "NVIDIA_VISIBLE_DEVICES": "all",
@@ -62,13 +63,13 @@ def launch_simulator(task, width, height):
         # Run container with host network
         click.echo("[CLI] Starting Docker container with host network...")
         compose_run_cmd = [
-            "docker", "compose", "run",
-            "-e", "OMNI_KIT_ACCEPT_EULA=yes",
-            "--rm",
+            "docker", "compose", "run", "--rm",
             "isaac-sim",
             "python3",
             "/workspace/voilab/scripts/launch_isaacsim_workspace.py",
-            "--task", task
+            "--task", task,
+            "--session_dir", session_dir,
+            "--episode", str(episode)
         ]
         subprocess.run(compose_run_cmd, env=env_vars, check=True)
 
