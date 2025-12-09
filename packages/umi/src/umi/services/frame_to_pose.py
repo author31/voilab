@@ -36,13 +36,13 @@ REGISTRY = {
 
 
 def process_frame_for_poses(
-    OBJ_ID,
-    frame,
-    filename,
-    K,
-    D_fish,
-    marker_size_m=0.018,
-    tx_slam_tag=None,
+    OBJ_ID: dict,
+    frame: np.ndarray,
+    filename: str,
+    K: np.ndarray,
+    D_fish: np.ndarray,
+    marker_size_m: float = 0.018,
+    tx_slam_tag: np.ndarray = None,
 ):
     """
     Process a single frame to detect ArUco markers and estimate object poses.
@@ -51,10 +51,10 @@ def process_frame_for_poses(
         OBJ_ID: Dictionary mapping object names to marker IDs
         frame: Input frame to process
         filename: Filename for logging
-        K: Camera intrinsics matrix (3x3)
-        D_fish: Fisheye distortion coefficients (4,)
+        K: Camera intrinsics matrix, shape (3, 3), dtype float64
+        D_fish: Fisheye distortion coefficients, shape (4,), dtype float64
         marker_size_m: Size of ArUco markers in meters
-        tx_slam_tag: Transform from SLAM tag frame to camera frame
+        tx_slam_tag: Transform from SLAM tag frame to camera frame, shape (4, 4), dtype float64
     
     Returns:
         list: List of detected object poses [{object_name, rvec, tvec}, ...]
