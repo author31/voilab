@@ -1,3 +1,4 @@
+import os
 import registry
 import argparse
 import numpy as np
@@ -28,6 +29,7 @@ from isaacsim.robot.manipulators.grippers import ParallelGripper
 from isaacsim.robot.manipulators import SingleManipulator
 from isaacsim.core.utils.viewports import set_camera_view
 from umi_replay import UMIReplay
+from object_loader import load_objects_from_json
 
 
 enable_extension("isaacsim.robot_motion.motion_generation")
@@ -36,6 +38,7 @@ enable_extension("isaacsim.robot_motion.motion_generation")
 BASE_SCENE_FP = "/workspace/voilab/assets/ED305_scene/ED305.usd"
 FRANKA_PANDA_FP = "/workspace/voilab/assets/Collected_franka-umi-scene/panda.usd"
 FRANKA_PANDA_PRIM_PATH = "/World/panda"
+ASSETS_DIR = "/workspace/voilab/assets/CADs"
 
 # CORRECTED: Use these paths in the solver initialization
 LULA_ROBOT_DESCRIPTION_PATH = "/workspace/voilab/assets/lula/frank_umi_descriptor.yaml"
@@ -105,6 +108,17 @@ def main():
 
     panda = SingleArticulation(FRANKA_PANDA_PRIM_PATH, name="panda_robot")
     world.scene.add(panda)
+
+    # Load objects from object_poses.json if session_dir provided
+    if args.session_dir:
+        object_poses_path = os.path.join(args.session_dir, 'demos', 'mapping', 'object_poses.json')
+        print(f"[Main] Looking for object poses at: {object_poses_path}")
+        if os.path.exists(object_poses_path):
+            print(f"[Main] Loading objects from: {object_poses_path}")
+            load_objects_from_json(object_poses_path, ASSETS_DIR, world, episode_index=args.episode)
+        else:
+            print(f"[Main] INFO: object_poses.json not found at {object_poses_path}")
+            print(f"[Main] Continuing without spawned objects")
 
     set_camera_view(camera_translation, franka_translation)
     world.reset()
