@@ -6076,7 +6076,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "anywidget", marker = "extra == 'dev'", specifier = ">=0.9.18" },
-    { name = "click", specifier = ">=8.2.1" },
+    { name = "click", specifier = ">=8.1.7" },
     { name = "diffusion-policy", editable = "packages/diffusion_policy" },
     { name = "docker", specifier = ">=6.0.0" },
     { name = "imagecodecs", specifier = ">=2023.9.18" },

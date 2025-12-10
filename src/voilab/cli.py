@@ -59,17 +59,16 @@ def launch_simulator(task, session_dir, episode, width, height):
         click.echo("[CLI] Building Docker image...")
         build_cmd = ["docker", "compose", "build", "isaac-sim"]
         subprocess.run(build_cmd, env=env_vars, check=True)
+
+        container_command = f".venv/bin/python scripts/launch_isaacsim_workspace.py --task {task} --session_dir {session_dir} --episode {episode}"
         
         # Run container with host network
         click.echo("[CLI] Starting Docker container with host network...")
         compose_run_cmd = [
             "docker", "compose", "run", "--rm",
             "isaac-sim",
-            "python3",
-            "/workspace/voilab/scripts/launch_isaacsim_workspace.py",
-            "--task", task,
-            "--session_dir", session_dir,
-            "--episode", str(episode)
+            "/bin/bash", "-c",
+            container_command
         ]
         subprocess.run(compose_run_cmd, env=env_vars, check=True)
 
