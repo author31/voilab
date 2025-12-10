@@ -61,22 +61,12 @@ COPY . /workspace/voilab
 
 # Upgrade uv itself inside the venv and install the heavy packages
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --python ${VIRTUAL_ENV} && \
-    uv pip install --system \
-        setuptools==70.0.0 wheel && \
-    uv pip install --python ${VIRTUAL_ENV}\
+    uv sync --frozen --python ${VIRTUAL_ENV}
+
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --python ${VIRTUAL_ENV} \
         "isaacsim[all,extscache]==5.1.0" \
-        --extra-index-url https://pypi.nvidia.com  && \
-    uv pip install --python ${VIRTUAL_ENV}\
-        empy==3.3.4 \
-        numpy \
-        pybind11[global] \
-        PyYAML \
-        argcomplete \
-        flake8-blind-except flake8-builtins flake8-class-newline \
-        flake8-comprehensions flake8-deprecated flake8-docstrings \
-        flake8-import-order flake8-quotes \
-        pytest-repeat pytest-rerunfailures pytest lark netifaces
+        --extra-index-url https://pypi.nvidia.com
 
 # Symlink so that CMake/find_package(Python3 ...) still works
 RUN ln -sf /usr/include/python3.11 /usr/include/python3
