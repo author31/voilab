@@ -57,9 +57,21 @@ RUN uv venv --python /usr/bin/python3.11 ${VIRTUAL_ENV} && \
     # Make the venv active for all subsequent RUN commands
     echo "source ${VIRTUAL_ENV}/bin/activate" >> /etc/bash.bashrc
 
-COPY . /workspace/voilab
+# Copy dependency definitions first to leverage Docker cache
+COPY pyproject.toml uv.lock /workspace/voilab/
+COPY packages/umi/pyproject.toml /workspace/voilab/packages/umi/
+COPY packages/diffusion_policy/pyproject.toml /workspace/voilab/packages/diffusion_policy/
+COPY deps/ /workspace/voilab/deps/
 
-# Upgrade uv itself inside the venv and install the heavy packages
+# Copy minimal source structure (__init__.py) so uv export can validate workspace packages
+COPY src/voilab/__init__.py /workspace/voilab/src/voilab/__init__.py
+COPY README.md /workspace/voilab/README.md
+COPY packages/umi/src/umi/__init__.py /workspace/voilab/packages/umi/src/umi/__init__.py
+COPY packages/umi/README.md /workspace/voilab/packages/umi/README.md
+COPY packages/diffusion_policy/src/diffusion_policy/__init__.py /workspace/voilab/packages/diffusion_policy/src/diffusion_policy/__init__.py
+COPY packages/diffusion_policy/README.md /workspace/voilab/packages/diffusion_policy/README.md
+
+# Install dependencies (excluding workspace packages themselves)
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --python ${VIRTUAL_ENV}
 
@@ -67,6 +79,9 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --python ${VIRTUAL_ENV} \
         "isaacsim[all,extscache]==5.1.0" \
         --extra-index-url https://pypi.nvidia.com
+
+# Copy the rest of the source code
+COPY . /workspace/voilab
 
 # Symlink so that CMake/find_package(Python3 ...) still works
 RUN ln -sf /usr/include/python3.11 /usr/include/python3
