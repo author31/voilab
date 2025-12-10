@@ -19,6 +19,8 @@ services:
       - XAUTHORITY=${XAUTHORITY:-$HOME/.Xauthority}
       - ROS_LOCALHOST_ONLY=0
       - ROS_DOMAIN_ID=0
+      - UV_HTTP_TIMEOUT=600
+      - UV_HTTP_RETRIES=10
     ipc: host
     deploy:
       resources:
