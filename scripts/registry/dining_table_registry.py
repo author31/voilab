@@ -8,6 +8,10 @@ class DiningTableTaskRegistry:
     """Registry for dining table task configuration"""
 
     TASK_NAME = "dining-table"
+    # ArUco tag pose
+    ARUCO_TAG_TRANSLATION = np.array([(1.7562751943015695, 11.317383010588898, 0.8532326509384047)])
+    ARUCO_TAG_ROTATION_EULER = np.array([0.0, 0.0, 0.0])
+    ARUCO_TAG_ROTATION_QUAT = Rotation.from_euler('xyz', ARUCO_TAG_ROTATION_EULER, degrees=True).as_quat() # x,y,z,w
 
     # Robot poses (Franka)
     FRANKA_TRANSLATION = np.array([1.4471314866267897, 4.953638444125494, 0.7547650876392805])

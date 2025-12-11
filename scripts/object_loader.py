@@ -4,18 +4,20 @@ Loads objects from object_poses.json and spawns them in the scene.
 """
 
 import json
+import time
 import os
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 import isaacsim.core.utils.stage as stage_utils
 from isaacsim.core.api import World
-from isaacsim.core.prims import XFormPrim
+from isaacsim.core.prims import SingleXFormPrim
+from utils import set_prim_scale, pose_to_transform_matrix
+
 
 # Registry mapping object names to USD asset filenames
-# This should be customized based on the actual asset library
 OBJECT_NAME_TO_ASSET = {
-    'blue_cup': 'cup_finalized.usd',
-    'cup': 'cup_finalized.usd',
+    'blue_cup': 'storage_box.usd',
+    'cup': 'storage_box.usd',
     'white_plate': 'plate.usd',
     'plate': 'plate.usd',
     'fork': 'fork_final.usd',
@@ -51,7 +53,7 @@ def map_object_name_to_asset(object_name: str) -> str:
     return f"{base_name}.usd"
 
 
-def load_objects_from_json(json_path: str, assets_dir: str, world: World, episode_index: int = 0):
+def load_objects_from_json(json_path: str, assets_dir: str, world: World, episode_index: int = 0, aruco_tag_pose: dict = None):
     """
     Load objects from a specific episode in object_poses.json and spawn them in the scene.
 
@@ -63,6 +65,10 @@ def load_objects_from_json(json_path: str, assets_dir: str, world: World, episod
         assets_dir: Base directory for CAD assets (e.g., /workspace/voilab/assets/CADs)
         world: Isaac Sim World instance
         episode_index: Index of the episode to load (default 0)
+        aruco_tag_pose: Aruco tag pose dict with 'translation' (3D position) and 
+                    'rotation_quat' (quaternion WXYZ). Object poses will be
+                    transformed from aruco tag frame to world frame using
+                    homogeneous transformation: T_world = T_aruco_tag @ T_object
     """
     # Load JSON with error handling
     try:
@@ -96,19 +102,42 @@ def load_objects_from_json(json_path: str, assets_dir: str, world: World, episod
     total_objects = 0
     for idx, obj in enumerate(objects):
         object_name = obj.get('object_name', f'object_{idx}')
-        rvec = np.array(obj.get('rvec', [0, 0, 0]))
-        tvec = np.array(obj.get('tvec', [0, 0, 0]))
+        assert obj.get('rvec') is not None, f"rvec is None for object {object_name}"
+        assert obj.get('tvec') is not None, f"tvec is None for object {object_name}"
+        assert len(obj.get('rvec')) == 3, f"rvec must be a 3D vector for object {object_name}"
+        assert len(obj.get('tvec')) == 3, f"tvec must be a 3D vector for object {object_name}"
 
-        # Convert rotation vector (axis-angle) to quaternion WXYZ
-        # rvec is a rotation vector where:
-        # - Direction is the axis of rotation
-        # - Magnitude is the angle in radians
+        rvec = np.array(obj.get('rvec'))
+        tvec = np.array(obj.get('tvec'))
+
+        # Build object transformation matrix from rvec/tvec
         rot = R.from_rotvec(rvec)
-        quat_xyzw = rot.as_quat()  # scipy returns [x, y, z, w]
-        quat_wxyz = np.array([quat_xyzw[3], quat_xyzw[0], quat_xyzw[1], quat_xyzw[2]])
+        T_object = np.eye(4)
+        T_object[:3, :3] = rot.as_matrix()
+        T_object[:3, 3] = tvec
+
+        # Transform from robot base frame to world frame using homogeneous transformation
+        if aruco_tag_pose is not None:
+            aruco_tag_position = np.array(aruco_tag_pose.get('translation', [0, 0, 0]))
+            aruco_tag_quat_wxyz = np.array(aruco_tag_pose.get('rotation_quat', [1, 0, 0, 0]))
+            T_aruco_tag = pose_to_transform_matrix(aruco_tag_position, aruco_tag_quat_wxyz)
+            
+            # Matrix multiplication: T_world = T_aruco_tag @ T_object
+            T_world = T_aruco_tag @ T_object
+            
+            # Extract world position and orientation
+            world_position = T_world[:3, 3]
+            world_rot = R.from_matrix(T_world[:3, :3])
+            quat_xyzw = world_rot.as_quat()
+            quat_wxyz = np.array([quat_xyzw[3], quat_xyzw[0], quat_xyzw[1], quat_xyzw[2]])
+        else:
+            world_position = tvec
+            quat_xyzw = rot.as_quat()
+            quat_wxyz = np.array([quat_xyzw[3], quat_xyzw[0], quat_xyzw[1], quat_xyzw[2]])
 
         # Map object_name to USD asset file
         asset_filename = map_object_name_to_asset(object_name)
+        print(f"[ObjectLoader] Asset filename: {asset_filename}")
         full_asset_path = os.path.join(assets_dir, asset_filename)
         # Check if asset exists
         if not os.path.exists(full_asset_path):
@@ -116,9 +145,8 @@ def load_objects_from_json(json_path: str, assets_dir: str, world: World, episod
             continue
 
         # Create unique prim path
-        prim_path = f"/World/objects/{object_name}_{total_objects}"
+        prim_path = f"/World/{object_name}_{total_objects}"
 
-        # Add reference to stage
         try:
             stage_utils.add_reference_to_stage(
                 usd_path=full_asset_path,
@@ -127,15 +155,16 @@ def load_objects_from_json(json_path: str, assets_dir: str, world: World, episod
         except Exception as e:
             print(f"[ObjectLoader] ERROR: Failed to load asset {full_asset_path}: {str(e)}")
             continue
-
-        # Create XFormPrim and set pose
-        obj_prim = XFormPrim(prim_path=prim_path, name=f"{object_name}_{total_objects}")
-        obj_prim.set_world_pose(position=tvec, orientation=quat_wxyz)
-
+        
+        # Create SingleXFormPrim and set pose
+        obj_prim = SingleXFormPrim(prim_path=prim_path, name=f"{object_name}_{total_objects}")
+        set_prim_scale(obj_prim, 0.01)
         # Add to world scene
+        
         world.scene.add(obj_prim)
+        obj_prim.set_world_pose(position=world_position, orientation=quat_wxyz)
 
-        print(f"[ObjectLoader] Spawned {object_name} at position {tvec}")
+        print(f"[ObjectLoader] Spawned {object_name} at world position {world_position}")
         total_objects += 1
 
     print(f"[ObjectLoader] Total objects spawned: {total_objects}")

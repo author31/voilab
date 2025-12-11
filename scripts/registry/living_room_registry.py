@@ -8,6 +8,10 @@ class LivingRoomTaskRegistry:
     """Registry for living room task configuration"""
 
     TASK_NAME = "living-room"
+    # ArUco tag pose
+    ARUCO_TAG_TRANSLATION = np.array([1.62, 4.96, 0.75])
+    ARUCO_TAG_ROTATION_EULER = np.array([0.0, 0.0, 0.0])
+    ARUCO_TAG_ROTATION_QUAT = Rotation.from_euler('xyz', ARUCO_TAG_ROTATION_EULER, degrees=True).as_quat() # x,y,z,w
 
     # Robot poses (Franka)
     FRANKA_TRANSLATION = np.array([1.475993595877246, 11.351613434539319, 0.8570439802062628])

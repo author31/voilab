@@ -9,9 +9,14 @@ class KitchenTaskRegistry:
     """Registry for kitchen task configuration"""
 
     TASK_NAME = "kitchen"
+    # ArUco tag pose
+    ARUCO_TAG_TRANSLATION = np.array([4.9652, 2.57, 0.9])
+    ARUCO_TAG_ROTATION_EULER = np.array([0.0, 0.0, 0.0])
+    ARUCO_TAG_ROTATION_QUAT = Rotation.from_euler('xyz', ARUCO_TAG_ROTATION_EULER, degrees=True).as_quat() # x,y,z,w
+
     # Robot poses (Franka)
     FRANKA_TRANSLATION = np.array([4.90000007301569, 3.2254199483665964, 0.9000000134110451])
-    FRANKA_ROTATION_EULER = np.array([0.0, 0.0, 0.0])
+    FRANKA_ROTATION_EULER = np.array([0.0, 0.0, 270.0])
     FRANKA_ROTATION_QUAT = Rotation.from_euler('xyz', FRANKA_ROTATION_EULER, degrees=True).as_quat() # x,y,z,w
 
     # Camera poses (enhanced from current)
@@ -22,15 +27,20 @@ class KitchenTaskRegistry:
     @classmethod
     def get_config(cls) -> Dict[str, Any]:
         return {
+            "aruco_tag_pose": {
+                "translation": cls.ARUCO_TAG_TRANSLATION,
+                "rotation_euler_deg": cls.ARUCO_TAG_ROTATION_EULER,
+                "rotation_quat": cls.xyzw_to_wxyz(cls.ARUCO_TAG_ROTATION_QUAT),
+            },
             "camera_pose": {
                 "translation": cls.CAMERA_TRANSLATION,
                 "rotation_euler_deg": cls.CAMERA_ROTATION_EULER,
-                "rotation_quat": cls.xyzw_to_wxyz(cls.FRANKA_ROTATION_QUAT),
+                "rotation_quat": cls.xyzw_to_wxyz(cls.CAMERA_ROTATION_QUAT),
             },
             "franka_pose": {
                 "translation": cls.FRANKA_TRANSLATION,
                 "rotation_euler_deg": cls.FRANKA_ROTATION_EULER,
-                "rotation_quat": cls.xyzw_to_wxyz(cls.CAMERA_ROTATION_QUAT),
+                "rotation_quat": cls.xyzw_to_wxyz(cls.FRANKA_ROTATION_QUAT),
             },
             "environment_vars": {
                 "TASK_NAME": cls.TASK_NAME,
