@@ -16,8 +16,8 @@ from utils import set_prim_scale, pose_to_transform_matrix
 
 # Registry mapping object names to USD asset filenames
 OBJECT_NAME_TO_ASSET = {
-    'blue_cup': 'storage_box.usd',
-    'cup': 'storage_box.usd',
+    'blue_cup': 'cup_blue.usd',
+    'pink_cup': 'cup_pink.usd',
     'white_plate': 'plate.usd',
     'plate': 'plate.usd',
     'fork': 'fork_final.usd',
@@ -26,6 +26,8 @@ OBJECT_NAME_TO_ASSET = {
     'storage_box': 'storage_box.usd',
     'table': 'table.usd',
 }
+
+MAXIMUM_Z_HEIGHT = 0.9
 
 
 def map_object_name_to_asset(object_name: str) -> str:
@@ -53,7 +55,7 @@ def map_object_name_to_asset(object_name: str) -> str:
     return f"{base_name}.usd"
 
 
-def load_objects_from_json(json_path: str, assets_dir: str, world: World, episode_index: int = 0, aruco_tag_pose: dict = None):
+def load_objects_from_json(json_path: str, assets_dir: str, world: World, episode_index: int = 0, aruco_tag_pose: dict = None, cfg: dict = None):
     """
     Load objects from a specific episode in object_poses.json and spawn them in the scene.
 
@@ -69,6 +71,7 @@ def load_objects_from_json(json_path: str, assets_dir: str, world: World, episod
                     'rotation_quat' (quaternion WXYZ). Object poses will be
                     transformed from aruco tag frame to world frame using
                     homogeneous transformation: T_world = T_aruco_tag @ T_object
+        cfg: Configuration dictionary containing object maximum z height
     """
     # Load JSON with error handling
     try:
@@ -99,9 +102,13 @@ def load_objects_from_json(json_path: str, assets_dir: str, world: World, episod
     objects = episode.get('objects', [])
     print(f"[ObjectLoader] Found {len(objects)} objects in episode {episode_index}")
 
+    object_maximum_z_height = cfg.get("environment_vars", {}).get("OBJECT_MAXIMUM_Z_HEIGHT", 0.0)
+
     total_objects = 0
     for idx, obj in enumerate(objects):
-        object_name = obj.get('object_name', f'object_{idx}')
+        assert obj.get('object_name') is not None, f"object_name is None"
+        object_name = obj.get('object_name')
+
         assert obj.get('rvec') is not None, f"rvec is None for object {object_name}"
         assert obj.get('tvec') is not None, f"tvec is None for object {object_name}"
         assert len(obj.get('rvec')) == 3, f"rvec must be a 3D vector for object {object_name}"
@@ -158,11 +165,9 @@ def load_objects_from_json(json_path: str, assets_dir: str, world: World, episod
         
         # Create SingleXFormPrim and set pose
         obj_prim = SingleXFormPrim(prim_path=prim_path, name=f"{object_name}_{total_objects}")
-        set_prim_scale(obj_prim, 0.01)
-        # Add to world scene
-        
         world.scene.add(obj_prim)
-        obj_prim.set_world_pose(position=world_position, orientation=quat_wxyz)
+        world_position[2] = min(world_position[2], object_maximum_z_height)
+        obj_prim.set_world_pose(position=world_position)
 
         print(f"[ObjectLoader] Spawned {object_name} at world position {world_position}")
         total_objects += 1

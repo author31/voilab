@@ -10,18 +10,18 @@ class KitchenTaskRegistry:
 
     TASK_NAME = "kitchen"
     # ArUco tag pose
-    ARUCO_TAG_TRANSLATION = np.array([4.9652, 2.57, 0.9])
-    ARUCO_TAG_ROTATION_EULER = np.array([0.0, 0.0, 0.0])
+    ARUCO_TAG_TRANSLATION = np.array([4.9652, 2.45, 0.9])
+    ARUCO_TAG_ROTATION_EULER = np.array([0.0, 0.0, 180.0])
     ARUCO_TAG_ROTATION_QUAT = Rotation.from_euler('xyz', ARUCO_TAG_ROTATION_EULER, degrees=True).as_quat() # x,y,z,w
 
     # Robot poses (Franka)
-    FRANKA_TRANSLATION = np.array([4.90000007301569, 3.2254199483665964, 0.9000000134110451])
-    FRANKA_ROTATION_EULER = np.array([0.0, 0.0, 270.0])
+    FRANKA_TRANSLATION = np.array([4.5, 2.7, 0.9000000134110451])
+    FRANKA_ROTATION_EULER = np.array([0.0, 0.0, 0.0])
     FRANKA_ROTATION_QUAT = Rotation.from_euler('xyz', FRANKA_ROTATION_EULER, degrees=True).as_quat() # x,y,z,w
 
     # Camera poses (enhanced from current)
-    CAMERA_TRANSLATION = np.array([2.974631262928433, 2.68664950400609, 1.966344261667377])
-    CAMERA_ROTATION_EULER = np.array([75.43, 0.0, -91.64])
+    CAMERA_TRANSLATION = np.array([7.5, 2.68664950400609, 2.2])
+    CAMERA_ROTATION_EULER = np.array([71.30, 0.0, 89.])
     CAMERA_ROTATION_QUAT = Rotation.from_euler('xyz', CAMERA_ROTATION_EULER, degrees=True).as_quat() # x,y,z,w
 
     @classmethod
@@ -45,6 +45,7 @@ class KitchenTaskRegistry:
             "environment_vars": {
                 "TASK_NAME": cls.TASK_NAME,
                 "SCENE_CONFIG": "kitchen_scene",
+                "OBJECT_MAXIMUM_Z_HEIGHT": 1.1,
             }
         }
 

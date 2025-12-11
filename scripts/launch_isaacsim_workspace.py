@@ -151,7 +151,7 @@ def main():
             gripper=gripper,
         )
     )
-    # panda.gripper.set_default_state(panda.gripper.joint_opened_positions)
+    world.reset()
 
     # Set robot position after world reset
     panda.set_world_pose(
@@ -171,7 +171,8 @@ def main():
                 ASSETS_DIR, 
                 world, 
                 episode_index=args.episode,
-                aruco_tag_pose=aruco_tag_pose
+                aruco_tag_pose=aruco_tag_pose,
+                cfg=cfg
             )
         else:
             print(f"[Main] INFO: object_poses.json not found at {object_poses_path}")
@@ -196,7 +197,6 @@ def main():
         replay = UMIReplay(panda, args.session_dir, args.episode, lula, art_kine_solver)
 
     print("Starting simulation loop...")
-    world.reset()
     
 
     while simulation_app.is_running():
