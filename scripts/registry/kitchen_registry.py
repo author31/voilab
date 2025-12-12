@@ -25,12 +25,12 @@ class KitchenTaskRegistry:
             "camera_pose": {
                 "translation": cls.CAMERA_TRANSLATION,
                 "rotation_euler_deg": cls.CAMERA_ROTATION_EULER,
-                "rotation_quat": cls.xyzw_to_wxyz(cls.FRANKA_ROTATION_QUAT),
+                "rotation_quat": cls.xyzw_to_wxyz(cls.CAMERA_ROTATION_QUAT),
             },
             "franka_pose": {
                 "translation": cls.FRANKA_TRANSLATION,
                 "rotation_euler_deg": cls.FRANKA_ROTATION_EULER,
-                "rotation_quat": cls.xyzw_to_wxyz(cls.CAMERA_ROTATION_QUAT),
+                "rotation_quat": cls.xyzw_to_wxyz(cls.FRANKA_ROTATION_QUAT),
             },
             "environment_vars": {
                 "TASK_NAME": cls.TASK_NAME,

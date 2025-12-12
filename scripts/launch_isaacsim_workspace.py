@@ -1,6 +1,12 @@
 import registry
 import argparse
 import numpy as np
+import os
+import imageio
+import zarr
+from zarr.storage import ZipStore
+from numcodecs import Blosc
+from scipy.spatial.transform import Rotation as R
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--task", type=str, choices=["kitchen", "dining-table", "living-room"], required=True)
@@ -27,6 +33,8 @@ from isaacsim.robot_motion.motion_generation import LulaKinematicsSolver, Articu
 from isaacsim.robot.manipulators.grippers import ParallelGripper
 from isaacsim.robot.manipulators import SingleManipulator
 from isaacsim.core.utils.viewports import set_camera_view
+from isaacsim.sensors.camera import Camera
+from isaacsim.core.utils.rotations import rot_matrix_to_quat
 from umi_replay import UMIReplay
 
 
@@ -87,6 +95,65 @@ def setup_robot_drives(panda):
     panda.set_joint_positions(positions=positions_array, joint_indices=indices_array)
     return indices_array, positions_array
 
+def get_end_effector_pose(panda, lula, art_kine_solver): 
+
+    # Run fk to obtain end-effector pose 
+    base_pos, base_quat = panda.get_world_pose() 
+    lula.set_robot_base_pose( robot_position=base_pos, 
+                             robot_orientation=base_quat) 
+    ee_pos, ee_rot_matrix = art_kine_solver.compute_end_effector_pose() 
+    eef_rot = R.from_matrix(ee_rot_matrix[:3, :3]).as_rotvec()
+
+    return np.concatenate([ee_pos.astype(np.float64), eef_rot.astype(np.float64)])
+
+def save_dataset(output_path,
+                  rgb_list,
+                  eef_pos_list,
+                  eef_rot_list,
+                  gripper_list,
+                  demo_start_list,
+                  demo_end_list,):
+    
+    compressor = Blosc(cname="zstd", clevel=5, shuffle=Blosc.BITSHUFFLE)
+    store = ZipStore(output_path, mode="w")
+    root = zarr.group(store)
+    data = root.create_group("data")
+
+    data.create_dataset(
+        "camera0_rgb",
+        data=np.stack(rgb_list, 0).astype(np.uint8),
+        compressor=compressor
+    )
+    data.create_dataset(
+        "robot0_demo_start_pose",
+        data=np.stack(demo_start_list, 0).astype(np.float64),
+        compressor=compressor
+    )
+    data.create_dataset(
+        "robot0_demo_end_pose",
+        data=np.stack(demo_end_list, 0).astype(np.float64),
+        compressor=compressor
+    )
+    data.create_dataset(
+        "robot0_eef_pos",
+        data=np.stack(eef_pos_list, 0).astype(np.float32),
+        compressor=compressor
+    )
+    data.create_dataset(
+        "robot0_eef_rot_axis_angle",
+        data=np.stack(eef_rot_list, 0).astype(np.float32),
+        compressor=compressor
+    )
+    data.create_dataset(
+        "robot0_gripper_width",
+        data=np.stack(gripper_list, 0).astype(np.float32),
+        compressor=compressor
+    )
+    meta = root.create_group("meta")
+    meta.create_dataset("episode_ends", data=np.array([len(rgb_list)]))
+    store.close()
+    print("[SAVE] replay_dataset.zarr.zip saved at:", output_path)
+
 def main():
     print(f"[Main] Starting with task: {args.task}")
     
@@ -107,6 +174,12 @@ def main():
     world.scene.add(panda)
 
     set_camera_view(camera_translation, franka_translation)
+    camera = Camera(
+        prim_path="/World/panda/panda/panda_link7/gopro_link/Camera",
+        name="gopro_camera",
+    )
+    camera.initialize()
+
     world.reset()
 
     print(f"[Main] Setting robot world pose to: {franka_translation}")
@@ -136,18 +209,59 @@ def main():
 
     print("Starting simulation loop...")
 
-    while simulation_app.is_running():
-        world.step(render=True)
-        if world.is_playing():
-            if world.current_time_step_index == 0:
-                world.reset()
+    # Prepare buffers for dataset
+    rgb_list = []
+    eef_pos_list = []
+    eef_rot_list = []
+    gripper_list = []
+    episode_start_pose = None
+    episode_end_pose = None
 
-        if replay is not None:
-            if not replay.update():
-                print("[Main] Replay finished. Continuing simulation...")
-                replay = None
-        
+    while simulation_app.is_running():
+
+        if replay is None:
+            break
+
         world.step(render=True)
+
+        # Capture rgb image
+        img = camera.get_rgb()
+        rgb_list.append(img)
+
+        # Capture end-effector pos and rot
+        eef_pose6d = get_end_effector_pose(panda, lula, art_kine_solver)
+        eef_pos_list.append(eef_pose6d[:3])
+        eef_rot_list.append(eef_pose6d[3:])
+
+        # Capture gripper width
+        joint_pos = panda.get_joint_positions()
+        gripper_width = joint_pos[-2] + joint_pos[-1]
+        gripper_list.append([gripper_width])
+
+        if episode_start_pose is None:
+            episode_start_pose = eef_pose6d.copy()
+
+        if not replay.update():
+            print("[Main] Replay finished. Exiting…")
+            episode_end_pose = eef_pose6d.copy()
+            replay = None
+            break
+
+        world.step(render=True)
+
+    # Complete episode start and end pose
+    demo_start_list = np.repeat(episode_start_pose[None, :], len(rgb_list), axis=0)
+    demo_end_list = np.repeat(episode_end_pose[None, :], len(rgb_list), axis=0)
+
+    # Save to session_dir
+    output_zarr = os.path.join(args.session_dir, "simulation_dataset.zarr.zip")
+    save_dataset(output_zarr,
+                rgb_list,
+                eef_pos_list,
+                eef_rot_list,
+                gripper_list,
+                demo_start_list,
+                demo_end_list)
 
     simulation_app.close()
 
