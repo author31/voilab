@@ -4,7 +4,7 @@ Loads objects from object_poses.json and spawns them in the scene.
 """
 
 import json
-import time
+import sys
 import os
 import numpy as np
 from scipy.spatial.transform import Rotation as R
@@ -99,6 +99,11 @@ def load_objects_from_json(json_path: str, assets_dir: str, world: World, episod
         return
 
     episode = episodes[episode_index]
+    if episode.get('status') != 'full':
+        print(f"[ObjectLoader] Episode {episode_index} is not complete, skipping object loading")
+        sys.exit(1)
+
+
     objects = episode.get('objects', [])
     print(f"[ObjectLoader] Found {len(objects)} objects in episode {episode_index}")
 
