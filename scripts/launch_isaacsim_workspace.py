@@ -23,8 +23,8 @@ config = {
 }
 simulation_app = SimulationApp(config)
 
+import omni.usd
 import isaacsim.core.utils.stage as stage_utils
-
 from isaacsim.core.api import World
 from isaacsim.core.utils.extensions import enable_extension
 from isaacsim.core.prims import Articulation, SingleArticulation
@@ -33,10 +33,12 @@ from isaacsim.robot.manipulators.grippers import ParallelGripper
 from isaacsim.robot.manipulators import SingleManipulator
 from isaacsim.core.utils.viewports import set_camera_view
 from isaacsim.core.prims import SingleRigidPrim, SingleXFormPrim
+from isaacsim.storage.native import get_assets_root_path
+from pxr import Usd, UsdGeom, Gf
+
 from umi_replay import UMIReplay
 from object_loader import load_objects_from_json
 from utils import set_prim_scale
-from isaacsim.storage.native import get_assets_root_path
 
 assets_root_path = get_assets_root_path()
 if assets_root_path is None:
@@ -74,33 +76,38 @@ DRIVE_CONFIGS = {
     "panda_finger_joint2": {"stiffness": 2e3, "damping": 1e2, "pos": 0.04},
 }
 
-def setup_robot_drives(panda):
-    joint_indices = []
-    kps = []
-    kds = []
-    default_positions = []
+PANDA0_PATH = FRANKA_PANDA_PRIM_PATH + "/panda/panda_link0"
+LEFT_PATH  = FRANKA_PANDA_PRIM_PATH + "/panda/panda_leftfinger"
+RIGHT_PATH = FRANKA_PANDA_PRIM_PATH + "/panda/panda_rightfinger"
 
-    for joint_name in PANDA_ARM_JOINTS:
-        dof_index = panda.get_dof_index(joint_name)
-        if dof_index is not None:
-            cfg = DRIVE_CONFIGS.get(joint_name)
-            if not cfg: continue
-            joint_indices.append(dof_index)
-            kps.append(cfg["stiffness"])
-            kds.append(cfg["damping"])
-            default_positions.append(cfg["pos"])
 
-    kps_array = np.array([kps], dtype=np.float32)
-    kds_array = np.array([kds], dtype=np.float32)
-    indices_array = np.array(joint_indices, dtype=np.int32)
-    positions_array = np.array([default_positions], dtype=np.float32)
-    # panda.set_gains(kps=kps_array, kds=kds_array, joint_indices=indices_array)
-    panda.set_joint_positions(positions=positions_array, joint_indices=indices_array)
-    return indices_array, positions_array
+def get_T_base_tag(aruco_tag_pose: dict) -> np.ndarray:
+    """
+    Compute ArUco tag pose relative to robot base frame.
+    T_base_tag = inv(T_world_base) @ T_world_tag
+    """
+    from scipy.spatial.transform import Rotation as R
+    time = Usd.TimeCode.Default()
+    stage = omni.usd.get_context().get_stage()
+    cache = UsdGeom.XformCache(time)
 
-def load_robotic_arm(prim_path: str, name: str):
-    pass
-
+    base_prim = stage.GetPrimAtPath(FRANKA_PANDA_PRIM_PATH)
+    T_W_base_gf = cache.GetLocalToWorldTransform(base_prim)
+    
+    T_W_base = np.array(T_W_base_gf)
+    
+    aruco_translation = np.array(aruco_tag_pose['translation'])
+    aruco_quat_wxyz = np.array(aruco_tag_pose['rotation_quat'])
+    aruco_quat_xyzw = np.array([aruco_quat_wxyz[1], aruco_quat_wxyz[2], aruco_quat_wxyz[3], aruco_quat_wxyz[0]])
+    
+    T_W_aruco = np.eye(4)
+    T_W_aruco[:3, 3] = aruco_translation
+    T_W_aruco[:3, :3] = R.from_quat(aruco_quat_xyzw).as_matrix()
+    
+    # Proper matrix multiplication with numpy
+    T_base_tag = np.linalg.inv(T_W_base) @ T_W_aruco
+    
+    return T_base_tag
 
 def main():
     print(f"[Main] Starting with task: {args.task}")
@@ -159,7 +166,7 @@ def main():
         orientation=np.array(franka_rotation)
     )
     set_camera_view(camera_translation, franka_translation)
-    
+
     # Load objects from object_poses.json if session_dir provided
     if args.session_dir:
         object_poses_path = os.path.join(args.session_dir, 'demos', 'mapping', 'object_poses.json')
@@ -193,18 +200,26 @@ def main():
             kinematics_solver=lula,
             end_effector_frame_name="umi_tcp" 
         )
-
-        replay = UMIReplay(panda, args.session_dir, args.episode, lula, art_kine_solver)
+        
+        T_base_tag = get_T_base_tag(aruco_tag_pose)
+        replay = UMIReplay(panda, T_base_tag, args.session_dir, args.episode, lula, art_kine_solver)
 
     print("Starting simulation loop...")
     
-
     while simulation_app.is_running():
         world.step(render=True)
+        time.sleep(0.01)
         if replay is not None:
             if not replay.update():
                 print("[Main] Replay finished. Continuing simulation...")
+                replay.visualize_waypoints(
+                    show_orientation=True,
+                    orientation_scale=0.02,
+                    save_path=os.path.join(args.session_dir, 'waypoints.png'),
+                    dpi=150
+                )
                 replay = None
+
 
     simulation_app.close()
 

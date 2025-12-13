@@ -4,20 +4,22 @@ import pickle
 import numpy as np
 import zarr
 from scipy.spatial.transform import Rotation as R
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+
+
+from isaacsim.core.utils.types import ArticulationAction
 
 class UMIReplay:
     """
-    ROS2-free trajectory replay for UMI datasets using Isaac Sim Lula Kinematics.
+    Trajectory replay for UMI datasets using Isaac Sim Lula Kinematics.
     """
     
-    # Calibration pose joint angles (radians)
-    CALIBRATION_JOINTS = np.array([
-        0.0, -0.569, 0.0, -2.810, 0.0, 3.037, 0.741
-    ])
     
     def __init__(
         self,
         panda_articulation,
+        T_base_tag,
         session_dir: str,
         episode_idx: int = 0,
         lula_solver=None,
@@ -33,28 +35,20 @@ class UMIReplay:
         self.tag_frame_idx = tag_frame_idx
         self.tag_id = tag_id
         
-        # Fixed transforms from URDF (panda_link7 to child frames)
-        self.T_link7_gopro = np.eye(4)
-        self.T_link7_gopro[:3, 3] = [0, 0, 0.107]
-        
-        self.T_link7_umi_tcp = np.eye(4)
-        self.T_link7_umi_tcp[:3, 3] = [0, 0.086, 0.327]
-        
-        # T_umi_tcp_gopro = inv(T_link7_umi_tcp) @ T_link7_gopro
-        self.T_umi_tcp_gopro = np.linalg.inv(self.T_link7_umi_tcp) @ self.T_link7_gopro
+        # T_base_tag: ArUco tag pose in robot base frame.
+        self.T_base_tag = T_base_tag
         
         # Load dataset
         self.data, self.meta, self.episode_ends = self._load_dataset()
         self.start_idx, self.end_idx = self._get_episode_bounds()
         self.current_step = self.start_idx
         
-        # Load tag calibration pose
-        tvec, rvec = self._load_tag_pose()
-        self.T_gopro_tag = self._pose_to_matrix(tvec, R.from_rotvec(rvec).as_matrix())
-        
-        # Calibration transform
-        self.T_base_tag = None
         self.calibrated = False
+        
+        # Waypoint storage: list of [target_pos, target_rot] pairs
+        # target_pos: np.array of shape (3,) - x, y, z position
+        # target_rot: scipy.spatial.transform.Rotation object
+        self.waypoints = []
         
         print(f"[UMIReplay] Initialized. Robot must be in calibration pose.")
 
@@ -110,23 +104,6 @@ class UMIReplay:
             T[:3, :3] = rot
         return T
 
-    def _compute_fk_to_gopro(self):
-        """Compute FK from panda_link0 to gopro_link using Lula."""
-        # Note: art_kine_solver calculates pose in World Frame if lula base pose is set,
-        # or Robot Frame if not. We handle base pose in calibrate().
-        
-        ee_pose = self.art_kine_solver.compute_end_effector_pose()
-        position = ee_pose[0]
-        rot_matrix = ee_pose[1]
-        quat_wxyz = R.from_matrix(rot_matrix).as_quat()
-        quat_xyzw = np.array([quat_wxyz[1], quat_wxyz[2], quat_wxyz[3], quat_wxyz[0]])
-        T_base_umi_tcp = np.eye(4)
-        T_base_umi_tcp[:3, 3] = position
-        T_base_umi_tcp[:3, :3] = R.from_quat(quat_xyzw).as_matrix()
-
-        T_base_gopro = T_base_umi_tcp @ self.T_umi_tcp_gopro
-        return T_base_gopro
-
     def calibrate(self):
         """
         Compute T_base_tag calibration transform.
@@ -135,21 +112,11 @@ class UMIReplay:
         if self.calibrated:
             return
         
-        print("[UMIReplay] Computing calibration transform (T_base_tag)...")
-        
-        # 1. Update Lula with the current World Pose of the robot base
-        # This ensures the FK computation includes the robot's placement in the scene
         robot_pos, robot_quat = self.panda.get_world_pose()
         self.lula_solver.set_robot_base_pose(
             robot_position=robot_pos,
             robot_orientation=robot_quat
         )
-        
-        # 2. Compute T_base_gopro via FK
-        T_base_gopro = self._compute_fk_to_gopro()
-        
-        # 3. Chain: T_base_tag = T_base_gopro @ T_gopro_tag
-        self.T_base_tag = T_base_gopro @ self.T_gopro_tag
         
         self.calibrated = True
         print(f"[UMIReplay] Calibration complete.")
@@ -169,18 +136,23 @@ class UMIReplay:
         rot_in_tag = self.data['robot0_eef_rot_axis_angle'][self.current_step]
         gripper_width = float(self.data['robot0_gripper_width'][self.current_step][0])
         
+        # Transform EEF pose from tag frame to base frame
         T_tag_eef = self._pose_to_matrix(pos_in_tag, rot_in_tag)
         T_base_eef = self.T_base_tag @ T_tag_eef
         
         target_pos = T_base_eef[:3, 3]
         target_rot = R.from_matrix(T_base_eef[:3, :3])
+        
+        # Store waypoint [target_pos, target_rot]
+        self.waypoints.append([target_pos.copy(), target_rot])
+        
         target_quat_xyzw = target_rot.as_quat()
         target_quat_wxyz = np.array([
             target_quat_xyzw[3], target_quat_xyzw[0], 
             target_quat_xyzw[1], target_quat_xyzw[2]
         ])
         
-        # Update robot base pose for IK (Redundant if robot doesn't move, but safe)
+        # Update robot base pose for IK
         robot_pos, robot_quat = self.panda.get_world_pose()
         self.lula_solver.set_robot_base_pose(
             robot_position=robot_pos,
@@ -222,4 +194,125 @@ class UMIReplay:
             self.start_idx, self.end_idx = self._get_episode_bounds()
         self.current_step = self.start_idx
         self.calibrated = False
-        self.T_base_tag = None
+        self.waypoints = []
+
+    def visualize_waypoints(
+        self,
+        show_orientation: bool = True,
+        orientation_scale: float = 0.02,
+        marker_size: int = 10,
+        title: str = None,
+        save_path: str = None,
+        figsize: tuple = (10, 8),
+        dpi: int = 150
+    ):
+        """
+        Visualize stored waypoints using Matplotlib 3D scatter plot.
+        
+        Args:
+            show_orientation: If True, show orientation arrows at each waypoint
+            orientation_scale: Length scale for orientation arrows
+            marker_size: Size of waypoint markers
+            title: Custom title for the plot
+            save_path: If provided, save the figure as PNG to this path
+            figsize: Figure size as (width, height) in inches
+            dpi: Resolution for saved PNG
+            
+        Returns:
+            matplotlib.figure.Figure: The generated figure
+        """
+        if not self.waypoints:
+            print("[UMIReplay] No waypoints to visualize. Run update() first.")
+            return None
+        
+        # Extract positions and rotations
+        positions = np.array([wp[0] for wp in self.waypoints])
+        rotations = [wp[1] for wp in self.waypoints]
+        
+        x, y, z = positions[:, 0], positions[:, 1], positions[:, 2]
+        num_waypoints = len(self.waypoints)
+        step_indices = np.arange(num_waypoints)
+        
+        # Create figure
+        fig = plt.figure(figsize=figsize)
+        ax = fig.add_subplot(111, projection='3d')
+        
+        # Plot trajectory line
+        ax.plot(x, y, z, color='gray', alpha=0.5, linewidth=1, label='Trajectory')
+        
+        # Scatter plot with color gradient
+        scatter = ax.scatter(
+            x, y, z,
+            c=step_indices,
+            cmap='viridis',
+            s=marker_size,
+            alpha=0.8
+        )
+        cbar = fig.colorbar(scatter, ax=ax, shrink=0.6, pad=0.1)
+        cbar.set_label('Step')
+        
+        # Add orientation arrows if requested
+        if show_orientation:
+            # Sample waypoints for orientation visualization
+            sample_interval = max(1, num_waypoints // 50)
+            sampled_indices = list(range(0, num_waypoints, sample_interval))
+            if (num_waypoints - 1) not in sampled_indices:
+                sampled_indices.append(num_waypoints - 1)
+            
+            colors = ['red', 'green', 'blue']
+            labels = ['X-axis', 'Y-axis', 'Z-axis']
+            
+            for axis_idx in range(3):
+                for i, idx in enumerate(sampled_indices):
+                    pos = positions[idx]
+                    rot = rotations[idx]
+                    
+                    # Get the axis direction in world frame
+                    local_axis = np.zeros(3)
+                    local_axis[axis_idx] = 1.0
+                    world_axis = rot.apply(local_axis) * orientation_scale
+                    
+                    ax.quiver(
+                        pos[0], pos[1], pos[2],
+                        world_axis[0], world_axis[1], world_axis[2],
+                        color=colors[axis_idx],
+                        alpha=0.6,
+                        arrow_length_ratio=0.3,
+                        linewidth=1
+                    )
+        
+        # Mark start and end points
+        ax.scatter([x[0]], [y[0]], [z[0]], c='green', s=100, marker='D', label='Start', zorder=5)
+        ax.scatter([x[-1]], [y[-1]], [z[-1]], c='red', s=100, marker='s', label='End', zorder=5)
+        
+        # Set labels and title
+        ax.set_xlabel('X (m)')
+        ax.set_ylabel('Y (m)')
+        ax.set_zlabel('Z (m)')
+        
+        plot_title = title or f'UMI Replay Waypoints - Episode {self.episode_idx} ({num_waypoints} waypoints)'
+        ax.set_title(plot_title)
+        
+        ax.legend(loc='upper left')
+        
+        # Equal aspect ratio
+        max_range = np.array([x.max() - x.min(), y.max() - y.min(), z.max() - z.min()]).max() / 2.0
+        mid_x, mid_y, mid_z = (x.max() + x.min()) / 2, (y.max() + y.min()) / 2, (z.max() + z.min()) / 2
+        ax.set_xlim(mid_x - max_range, mid_x + max_range)
+        ax.set_ylim(mid_y - max_range, mid_y + max_range)
+        ax.set_zlim(mid_z - max_range, mid_z + max_range)
+        
+        plt.tight_layout()
+        
+        # Save if path provided
+        if save_path:
+            fig.savefig(save_path, dpi=dpi, bbox_inches='tight')
+            print(f"[UMIReplay] Waypoint visualization saved to {save_path}")
+        
+        plt.show()
+        return fig
+
+    def clear_waypoints(self):
+        """Clear all stored waypoints."""
+        self.waypoints = []
+        print("[UMIReplay] Waypoints cleared.")
