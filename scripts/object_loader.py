@@ -8,9 +8,11 @@ import sys
 import os
 import numpy as np
 from scipy.spatial.transform import Rotation as R
+import omni.usd
 import isaacsim.core.utils.stage as stage_utils
 from isaacsim.core.api import World
 from isaacsim.core.prims import SingleXFormPrim
+from pxr import UsdPhysics
 from utils import set_prim_scale, pose_to_transform_matrix
 
 
@@ -157,7 +159,7 @@ def load_objects_from_json(json_path: str, assets_dir: str, world: World, episod
             continue
 
         # Create unique prim path
-        prim_path = f"/World/{object_name}_{total_objects}"
+        prim_path = f"/World/{object_name}"
 
         try:
             stage_utils.add_reference_to_stage(

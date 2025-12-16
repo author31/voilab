@@ -13,7 +13,8 @@ class KitchenTaskRegistry:
     ARUCO_TAG_TRANSLATION = np.array([4.9652, 2.45, 0.9])
     ARUCO_TAG_ROTATION_EULER = np.array([0.0, 0.0, 180.0])
     ARUCO_TAG_ROTATION_QUAT = Rotation.from_euler('xyz', ARUCO_TAG_ROTATION_EULER, degrees=True).as_quat() # x,y,z,w
-
+    TARGET_OBJECT_PATH = "/World/blue_cup"
+    
     # Robot poses (Franka)
     FRANKA_TRANSLATION = np.array([4.5, 2.7, 0.9000000134110451])
     FRANKA_ROTATION_EULER = np.array([0.0, 0.0, 0.0])
@@ -46,6 +47,7 @@ class KitchenTaskRegistry:
                 "TASK_NAME": cls.TASK_NAME,
                 "SCENE_CONFIG": "kitchen_scene",
                 "OBJECT_MAXIMUM_Z_HEIGHT": 1.1,
+                "TARGET_OBJECT_PATH": cls.TARGET_OBJECT_PATH,
             }
         }
 

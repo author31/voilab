@@ -221,3 +221,5 @@ video/demos/*
 
 # UMI specific ignores
 datasets/*
+checkpoints/*
+demos/*
