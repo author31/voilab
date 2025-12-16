@@ -320,6 +320,7 @@ def step_replay(replay_state: dict, panda, lula_solver, art_kine_solver, T_base_
     target_obj_path = cfg["environment_vars"]["TARGET_OBJECT_PATH"]
     obj_pos, _ = get_object_world_pose(target_obj_path)
     dist_to_obj = np.linalg.norm(target_pos - obj_pos)
+    print(f"[Main] Distance to object {target_obj_path}: {dist_to_obj:.3f} m")
 
     # If we are still farther than 10 cm, keep following the recorded demo
     if dist_to_obj > 0.10:          # 0.10 m = 10 cm
