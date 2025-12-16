@@ -61,6 +61,7 @@ from umi_replay import (
     compute_replay_step,
     set_gripper_width,
     visualize_waypoints,
+    linear_cartesian_path,
 )
 
 assets_root_path = get_assets_root_path()
@@ -238,6 +239,27 @@ def apply_ik_solution(panda, art_kine_solver, target_pos, target_quat_wxyz, step
 
     return False
 
+def get_object_world_pose(object_prim_path: str):
+    """
+    Return (position, quaternion_wxyz) of a USD prim that has already been
+    added to the stage (e.g. the cup we want to grasp).
+    """
+    stage = omni.usd.get_context().get_stage()
+    prim = stage.GetPrimAtPath(object_prim_path)
+    if not prim.IsValid():
+        raise RuntimeError(f"Object prim not found: {object_prim_path}")
+
+    time = Usd.TimeCode.Default()
+    cache = UsdGeom.XformCache(time)
+    world_xform = cache.GetLocalToWorldTransform(prim)
+    world_mat = np.array(world_xform)          # 4×4 matrix
+    pos = world_mat[:3, 3]
+    quat_xyzw = R.from_matrix(world_mat[:3, :3]).as_quat()   # xyzw
+    quat_wxyz = np.array([quat_xyzw[3], quat_xyzw[0],
+                          quat_xyzw[1], quat_xyzw[2]])
+    return pos, quat_wxyz
+
+
 def create_replay_state(session_dir: str, episode_idx: int, cfg: dict):
     """
     Initialize simplified replay state for an episode.
@@ -263,68 +285,118 @@ def create_replay_state(session_dir: str, episode_idx: int, cfg: dict):
         "calibrated": False,
         "waypoints": [],
         "finished": False,
+        # ---- Intervention helpers ----
+        "intervention_needed": False,
+        "intervention_step": None,
+        "saved_ee_pose": None,
     }
 
-def step_replay(replay_state: dict, panda, lula_solver, art_kine_solver, T_base_tag: np.ndarray):
-    """
-    Simplified step replay function with direct gripper control.
-
-    Args:
-        replay_state: Dictionary containing replay state
-        panda: Robot articulation
-        lula_solver: Lula kinematics solver
-        art_kine_solver: Articulation kinematics solver
-        T_base_tag: Transform from base to tag frame
-
-    Returns:
-        bool: True if replay should continue, False if finished
-    """
-    # Calibrate robot base on first run
+def step_replay(replay_state: dict, panda, lula_solver, art_kine_solver, T_base_tag: np.ndarray, cfg: dict):
+    # ---------- Calibration ----------
     if not replay_state["calibrated"]:
         calibrate_robot_base(panda, lula_solver)
         replay_state["calibrated"] = True
         return True
 
-    # Check if episode finished
+    # ---------- Finished? ----------
     if replay_state["current_step"] >= replay_state["end_idx"]:
         replay_state["finished"] = True
         print(f"[Main] Episode {replay_state['episode_idx']} finished.")
         return False
 
-    global DEBUG_DRAW
-    # Get current trajectory target
+    # ---------- Intervention flag ----------
+    if replay_state["intervention_needed"]:
+        # The main loop will call `run_intervention` – we just return.
+        return True
+
+    # ---------- Normal replay ----------
     step_idx = replay_state["current_step"]
     data = replay_state["data"]
     target_pos, target_rot, target_quat_wxyz, gripper_width = compute_replay_step(
         data, step_idx, T_base_tag
     )
 
-    draw_coordinate_frame(target_pos, target_rot, axis_length=0.05, draw_interface=DEBUG_DRAW)
+    # ---- 1️⃣ Distance to target object ----
+    target_obj_path = cfg["environment_vars"]["TARGET_OBJECT_PATH"]
+    obj_pos, _ = get_object_world_pose(target_obj_path)
+    dist_to_obj = np.linalg.norm(target_pos - obj_pos)
 
-    # Apply IK for trajectory following
-    calibrate_robot_base(panda, lula_solver)
-    success = apply_ik_solution(panda, art_kine_solver, target_pos, target_quat_wxyz, step_idx)
+    # If we are still farther than 10 cm, keep following the recorded demo
+    if dist_to_obj > 0.10:          # 0.10 m = 10 cm
+        draw_coordinate_frame(target_pos, target_rot, axis_length=0.05, draw_interface=DEBUG_DRAW)
+        calibrate_robot_base(panda, lula_solver)
+        success = apply_ik_solution(panda, art_kine_solver, target_pos, target_quat_wxyz, step_idx)
 
-    if success:
-        # Direct gripper control based on dataset
-        set_gripper_width(panda, gripper_width, threshold=0.05, step=0.05)
+        if success:
+            set_gripper_width(panda, gripper_width, threshold=0.05, step=0.05)
+            replay_state["waypoints"].append((target_pos.copy(), target_rot))
+            replay_state["current_step"] += 1
+        else:
+            print(f"[Main] IK failed at step {step_idx}, skipping...")
+            replay_state["current_step"] += 1
 
-        # Store waypoint for visualization
-        replay_state["waypoints"].append((target_pos.copy(), target_rot))
+        if step_idx % 100 == 0:
+            progress = (step_idx - replay_state["start_idx"]) / (replay_state["end_idx"] - replay_state["start_idx"]) * 100
+            gripper_state = "Open" if gripper_width > 0.05 else "Closed"
+            print(f"[Main] Step {step_idx} ({progress:.1f}%) | Gripper: {gripper_state}")
 
-        # Always advance to next step
-        replay_state["current_step"] += 1
-    else:
-        print(f"[Main] IK failed at step {step_idx}, skipping...")
-        replay_state["current_step"] += 1
+        return True
 
-    # Progress logging
-    if step_idx % 100 == 0:
-        progress = (step_idx - replay_state["start_idx"]) / (replay_state["end_idx"] - replay_state["start_idx"]) * 100
-        gripper_state = "Open" if gripper_width > 0.05 else "Closed"
-        print(f"[Main] Step {step_idx} ({progress:.1f}%) | Gripper: {gripper_state}")
-
+    # ---- 2️⃣ We are within 10 cm → trigger intervention ----
+    print(f"[Main] *** Intervention triggered at step {step_idx} (dist={dist_to_obj:.3f} m) ***")
+    replay_state["intervention_needed"] = True
+    replay_state["intervention_step"] = step_idx
+    replay_state["saved_ee_pose"] = (target_pos, target_rot)
     return True
+
+# ----------------------------------------------------------------------
+# Intervention phase – straight‑line Cartesian approach + grasp
+# ----------------------------------------------------------------------
+def run_intervention(replay_state, panda, lula_solver, art_kine_solver, cfg):
+    """
+    Executes the perfect‑approach Cartesian path and closes the gripper.
+    Called only when replay_state['intervention_needed'] is True.
+    """
+    # 1️⃣ Current EE pose (saved when we stopped)
+    cur_pos, cur_rot = replay_state["saved_ee_pose"]
+
+    # 2️⃣ Goal pose = exact object pose from the simulation
+    target_obj_path = cfg["environment_vars"]["TARGET_OBJECT_PATH"]
+    goal_pos, goal_quat_wxyz = get_object_world_pose(target_obj_path)
+    goal_rot = R.from_quat(np.array([goal_quat_wxyz[1],
+                                    goal_quat_wxyz[2],
+                                    goal_quat_wxyz[3],
+                                    goal_quat_wxyz[0]]))   # xyzw → scipy order
+
+    # 3️⃣ Build a short straight‑line Cartesian path
+    cart_path = linear_cartesian_path(cur_pos, cur_rot, goal_pos, goal_rot,
+                                      step_size=0.02)
+
+    print(f"[Intervention] Executing {len(cart_path)} Cartesian steps to the object...")
+
+    for idx, (pos, rot) in enumerate(cart_path):
+        quat_xyzw = rot.as_quat()
+        quat_wxyz = np.array([quat_xyzw[3], quat_xyzw[0],
+                              quat_xyzw[1], quat_xyzw[2]])
+
+        # Apply IK for this intermediate waypoint
+        success = apply_ik_solution(panda, art_kine_solver,
+                                    pos, quat_wxyz, step_idx=-1)
+        if not success:
+            print(f"[Intervention] IK failed at sub‑step {idx}, aborting.")
+            break
+
+    # 4️⃣ Close the gripper (tight threshold)
+    set_gripper_width(panda, width=0.0, threshold=0.02, step=0.02)
+    print("[Intervention] Gripper closed – object should be attached.")
+
+    # 5️⃣ Reset flags so normal replay can continue
+    replay_state["intervention_needed"] = False
+    replay_state["saved_ee_pose"] = None
+    # Do NOT advance `current_step`; the next recorded waypoint will be
+    # applied from the new EE pose (object already in hand).
+
+    return
 
 def main():
     """Main entry point."""
@@ -437,21 +509,24 @@ def main():
         
         # Process replay if active
         if replay_state is not None and not replay_state["finished"]:
-            should_continue = step_replay(
-                replay_state, panda, lula_solver, art_kine_solver, T_base_tag
-            )
-
-            if not should_continue:
-                # Episode finished - visualize waypoints
-                print("[Main] Replay finished. Visualizing waypoints...")
-                visualize_waypoints(
-                    replay_state["waypoints"],
-                    episode_idx=replay_state["episode_idx"],
-                    show_orientation=True,
-                    orientation_scale=0.02,
-                    save_path=os.path.join(args.session_dir, 'waypoints.png'),
-                    dpi=150
+            if replay_state["intervention_needed"]:
+                # Run the perfect‑approach once, then go back to normal replay
+                run_intervention(replay_state, panda, lula_solver, art_kine_solver, cfg)
+            else:
+                step_replay(
+                    replay_state, panda, lula_solver, art_kine_solver, T_base_tag, cfg
                 )
+                # When the normal replay finally finishes we visualise the waypoints
+                if replay_state["finished"]:
+                    print("[Main] Replay finished. Visualizing waypoints...")
+                    visualize_waypoints(
+                        replay_state["waypoints"],
+                        episode_idx=replay_state["episode_idx"],
+                        show_orientation=True,
+                        orientation_scale=0.02,
+                        save_path=os.path.join(args.session_dir, 'waypoints.png'),
+                        dpi=150
+                    )
 
     simulation_app.close()
 

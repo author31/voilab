@@ -296,3 +296,39 @@ def visualize_waypoints(
     
     plt.show()
     return fig
+
+
+# ----------------------------------------------------------------------
+# Helper: linear Cartesian interpolation (used for the intervention phase)
+# ----------------------------------------------------------------------
+def linear_cartesian_path(start_pos, start_rot, goal_pos, goal_rot, step_size=0.02):
+    """
+    Generate a list of (pos, rot) way‑points that linearly interpolate
+    between two poses in Cartesian space.
+
+    Parameters
+    ----------
+    start_pos, goal_pos : np.ndarray (3,)
+        Start / goal positions in the same frame.
+    start_rot, goal_rot : scipy.spatial.transform.Rotation
+        Start / goal orientations.
+    step_size : float
+        Approximate translation distance per generated waypoint (meters).
+
+    Returns
+    -------
+    List[Tuple[np.ndarray, Rotation]]
+    """
+    vec = goal_pos - start_pos
+    dist = np.linalg.norm(vec)
+    if dist < 1e-6:
+        return [(goal_pos, goal_rot)]
+
+    n_steps = max(1, int(np.ceil(dist / step_size)))
+    positions = [start_pos + (i / n_steps) * vec for i in range(1, n_steps + 1)]
+
+    # Spherical linear interpolation for orientation
+    slerp = R.slerp(0, 1, [start_rot, goal_rot])
+    rotations = [slerp(i / n_steps) for i in range(1, n_steps + 1)]
+
+    return list(zip(positions, rotations))
