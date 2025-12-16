@@ -136,9 +136,7 @@ def compute_replay_step(data, step_idx: int, T_base_tag: np.ndarray):
         target_quat_xyzw[3], target_quat_xyzw[0],
         target_quat_xyzw[1], target_quat_xyzw[2]
     ])
-    target_pos[0] += 0.1
-    target_pos[1] += 0.15
-    target_pos[2] -= 0.05
+    # Manual offset removed – using the transformed pose directly
     
     # Debug logging for trajectory replay
     print(f"[umi_replay] Step {step_idx} | Gripper width: {gripper_width:.4f} m | Target quaternion (WXYZ): {target_quat_wxyz}")

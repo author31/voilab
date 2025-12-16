@@ -239,6 +239,7 @@ def apply_ik_solution(panda, art_kine_solver, target_pos, target_quat_wxyz, step
 
     return False
 
+
 def get_object_world_pose(object_prim_path: str):
     """
     Return (position, quaternion_wxyz) of a USD prim that has already been
@@ -291,6 +292,7 @@ def create_replay_state(session_dir: str, episode_idx: int, cfg: dict):
         "saved_ee_pose": None,
     }
 
+
 def step_replay(replay_state: dict, panda, lula_solver, art_kine_solver, T_base_tag: np.ndarray, cfg: dict):
     # ---------- Calibration ----------
     if not replay_state["calibrated"]:
@@ -320,7 +322,6 @@ def step_replay(replay_state: dict, panda, lula_solver, art_kine_solver, T_base_
     target_obj_path = cfg["environment_vars"]["TARGET_OBJECT_PATH"]
     obj_pos, _ = get_object_world_pose(target_obj_path)
     dist_to_obj = np.linalg.norm(target_pos - obj_pos)
-    print(f"[Main] Distance to object {target_obj_path}: {dist_to_obj:.3f} m")
 
     # If we are still farther than 10 cm, keep following the recorded demo
     if dist_to_obj > 0.10:          # 0.10 m = 10 cm
@@ -349,6 +350,7 @@ def step_replay(replay_state: dict, panda, lula_solver, art_kine_solver, T_base_
     replay_state["intervention_step"] = step_idx
     replay_state["saved_ee_pose"] = (target_pos, target_rot)
     return True
+
 
 # ----------------------------------------------------------------------
 # Intervention phase – straight‑line Cartesian approach + grasp
@@ -398,6 +400,7 @@ def run_intervention(replay_state, panda, lula_solver, art_kine_solver, cfg):
     # applied from the new EE pose (object already in hand).
 
     return
+
 
 def main():
     """Main entry point."""
