@@ -14,6 +14,7 @@ import zipfile
 import numpy as np
 import zarr
 from scipy.spatial.transform import Rotation as R
+from scipy.spatial.transform import Slerp
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 
@@ -98,71 +99,95 @@ def pose_to_matrix(pos: np.ndarray, rot: np.ndarray) -> np.ndarray:
     return T
 
 
-def compute_replay_step(data, step_idx: int, T_base_tag: np.ndarray):
+def compute_replay_step(data, step_idx: int, T_world_aruco: np.ndarray, offsets: dict = None):
     """
     Compute IK target for a single replay step.
-    
-    Transforms end-effector pose from tag frame to robot base frame.
-    
+
+    Transforms end-effector pose from ArUco tag frame (where UMI dataset stores poses)
+    to robot base frame for Isaac Sim control.
+
     Args:
         data: zarr data group containing robot0_eef_pos, robot0_eef_rot_axis_angle, robot0_gripper_width
         step_idx: Current step index in the dataset
-        T_base_tag: 4x4 transform from robot base to ArUco tag frame
-        
+        T_world_aruco: 4x4 transform from aruco tag to world
+        offsets: Optional dict with 'x', 'y', 'z' coordinate offsets in meters
+
     Returns:
         tuple: (target_pos, target_rot, target_quat_wxyz, gripper_width)
-            - target_pos: np.array (3,) position in base frame
+            - target_pos: np.array (3,) position in robot base frame
             - target_rot: scipy Rotation object
             - target_quat_wxyz: np.array (4,) quaternion in WXYZ format
             - gripper_width: float gripper width in meters
+
+    Note:
+        The UMI dataset stores end-effector poses in ArUco tag frame. The transformation
+        T_tag_eef represents the pose of the end-effector in the tag frame. To get the
+        pose in robot base frame, we compute: T_base_eef = T_base_tag @ T_tag_eef
     """
     pos_in_tag = data['robot0_eef_pos'][step_idx]
     rot_in_tag = data['robot0_eef_rot_axis_angle'][step_idx]
     gripper_width = float(data['robot0_gripper_width'][step_idx][0])
-    
-    # # Rotate tag frame 90 degrees around z axis
-    pos_in_tag = R.from_euler('xyz', [0, 0, 90], degrees=True).as_matrix() @ pos_in_tag
+
+    # Create transformation matrix first (before any rotation)
+    T_tag_eef_raw = pose_to_matrix(pos_in_tag, rot_in_tag)
+
+    # Apply 90° rotation to entire transformation (both position AND orientation)
+    T_rot_z = np.eye(4)
+    T_rot_z[:3, :3] = R.from_euler('xyz', [0, 0, 90], degrees=True).as_matrix()
 
     # Transform EEF pose from tag frame to base frame
-    T_tag_eef = pose_to_matrix(pos_in_tag, rot_in_tag)
-    T_base_eef = T_base_tag @ T_tag_eef
+    T_tag_eef = T_rot_z @ T_tag_eef_raw
+    T_world_eef = T_world_aruco @ T_tag_eef
 
-    target_pos = T_base_eef[:3, 3]
-    target_rot = R.from_matrix(T_base_eef[:3, :3])
-    
+    target_pos = T_world_eef[:3, 3]
+    target_rot = R.from_matrix(T_world_eef[:3, :3])
+
     # Convert to quaternion WXYZ format for Isaac Sim
     target_quat_xyzw = target_rot.as_quat()
     target_quat_wxyz = np.array([
         target_quat_xyzw[3], target_quat_xyzw[0],
         target_quat_xyzw[1], target_quat_xyzw[2]
     ])
-    # Manual offset removed – using the transformed pose directly
+
+    if offsets is not None:
+        target_pos[0] += offsets.get('x', 0.0)
+        target_pos[1] += offsets.get('y', 0.0)
+        target_pos[2] += offsets.get('z', 0.0)
     
     # Debug logging for trajectory replay
-    print(f"[umi_replay] Step {step_idx} | Gripper width: {gripper_width:.4f} m | Target quaternion (WXYZ): {target_quat_wxyz}")
+    print(f"[umi_replay] Step {step_idx} | Gripper width: {gripper_width:.4f} m | Target position: {target_pos} | Target quaternion (WXYZ): {target_quat_wxyz}")
     return target_pos, target_rot, target_quat_wxyz, gripper_width
 
 
-def set_gripper_width(panda, width: float, threshold: float = 0.04, step: float = 0.08):
+def set_gripper_width(panda, width: float, threshold: float = 0.04, step: float = 0.01):
     """
-    Threshold-based gripper control with gradual movement.
-    
+    Threshold-based gripper control with improved gradual movement for better grasping.
+
     Args:
         panda: Robot articulation
         width: Input gripper width from dataset
         threshold: Threshold to determine open (>=) or closed (<)
-        step: Amount to change finger position per call (0.0-1.0)
+        step: Amount to change finger position per call (smaller = more gradual)
     """
     target_pos = 1.0 if width >= threshold else 0.0
-    
+
     idx1 = panda.get_dof_index("panda_finger_joint1")
     idx2 = panda.get_dof_index("panda_finger_joint2")
-    
+
     if idx1 is not None and idx2 is not None:
         # Get current finger position
         current_positions = panda.get_joint_positions(joint_indices=np.array([idx1, idx2]))
         current_pos = current_positions[0]
-        
+
+        # For closing (grasping), use even smaller steps for precision
+        if target_pos < current_pos:
+            # Closing - use very small steps for precise grasp
+            step = min(step, 0.005)  # Max 0.5cm per step
+
+            # If we're very close to target, make final approach even slower
+            if abs(current_pos - target_pos) < 0.02:
+                step = 0.002  # 0.2cm for final 2cm
+
         # Move gradually toward target
         if current_pos < target_pos:
             finger_pos = min(current_pos + step, target_pos)
@@ -170,11 +195,17 @@ def set_gripper_width(panda, width: float, threshold: float = 0.04, step: float 
             finger_pos = max(current_pos - step, target_pos)
         else:
             finger_pos = target_pos
-        
+
         panda.set_joint_positions(
             positions=np.array([finger_pos, finger_pos]),
             joint_indices=np.array([idx1, idx2])
         )
+
+        # Return actual width achieved for verification
+        actual_width = finger_pos * 0.08  # Convert to meters (approximate)
+        return actual_width
+
+    return None
 
 
 def visualize_waypoints(
@@ -301,7 +332,7 @@ def visualize_waypoints(
 # ----------------------------------------------------------------------
 # Helper: linear Cartesian interpolation (used for the intervention phase)
 # ----------------------------------------------------------------------
-def linear_cartesian_path(start_pos, start_rot, goal_pos, goal_rot, step_size=0.02):
+def linear_cartesian_path(start_pos, start_rot, goal_pos, goal_rot, step_size=0.05):
     """
     Generate a list of (pos, rot) way‑points that linearly interpolate
     between two poses in Cartesian space.
@@ -327,8 +358,8 @@ def linear_cartesian_path(start_pos, start_rot, goal_pos, goal_rot, step_size=0.
     n_steps = max(1, int(np.ceil(dist / step_size)))
     positions = [start_pos + (i / n_steps) * vec for i in range(1, n_steps + 1)]
 
-    # Spherical linear interpolation for orientation
-    slerp = R.slerp(0, 1, [start_rot, goal_rot])
+    key_rots = R.concatenate([start_rot, goal_rot])
+    slerp = Slerp([0, 1], key_rots)
     rotations = [slerp(i / n_steps) for i in range(1, n_steps + 1)]
 
     return list(zip(positions, rotations))

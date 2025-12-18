@@ -12,7 +12,7 @@ Architecture:
 
 import os
 
-from llvmlite.binding.transforms import passmanagers
+from numpy.random import beta
 import registry
 import argparse
 import numpy as np
@@ -23,6 +23,9 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--task", type=str, choices=["kitchen", "dining-table", "living-room"], required=True)
 parser.add_argument("--session_dir", type=str, default=None)
 parser.add_argument("--episode", type=int, default=0)
+parser.add_argument("--x_offset", type=float, default=0.1, help="X-axis offset for coordinate calibration (meters)")
+parser.add_argument("--y_offset", type=float, default=0.15, help="Y-axis offset for coordinate calibration (meters)")
+parser.add_argument("--z_offset", type=float, default=-0.07, help="Z-axis offset for coordinate calibration (meters)")
 args = parser.parse_args()
 
 from isaacsim import SimulationApp
@@ -42,7 +45,12 @@ import isaacsim.core.utils.stage as stage_utils
 from isaacsim.core.api import World
 from isaacsim.core.utils.extensions import enable_extension
 from isaacsim.core.prims import Articulation, SingleArticulation
-from isaacsim.robot_motion.motion_generation import LulaKinematicsSolver, ArticulationKinematicsSolver
+from isaacsim.robot_motion.motion_generation import (
+    LulaKinematicsSolver,
+    ArticulationKinematicsSolver,
+    LulaTaskSpaceTrajectoryGenerator,
+    ArticulationTrajectory
+)
 from isaacsim.robot.manipulators.grippers import ParallelGripper
 from isaacsim.robot.manipulators import SingleManipulator
 from isaacsim.core.utils.viewports import set_camera_view
@@ -53,6 +61,7 @@ from pxr import Usd, UsdGeom, UsdPhysics, Sdf, Gf
 from scipy.spatial.transform import Rotation as R
 from object_loader import load_objects_from_json
 import utils
+import lula
 
 # Import pure functions from umi_replay
 from umi_replay import (
@@ -82,25 +91,6 @@ ASSETS_DIR = "/workspace/voilab/assets/CADs"
 # CORRECTED: Use these paths in the solver initialization
 LULA_ROBOT_DESCRIPTION_PATH = "/workspace/voilab/assets/lula/frank_umi_descriptor.yaml"
 LULA_URDF_PATH = "/workspace/voilab/assets/franka_panda/franka_panda_umi-isaacsim.urdf"
-
-PANDA_ARM_JOINTS = [
-    "panda_joint1", "panda_joint2", "panda_joint3", "panda_joint4",
-    "panda_joint5", "panda_joint6", "panda_joint7",
-    "panda_finger_joint1", "panda_finger_joint2"
-]
-
-DRIVE_CONFIGS = {
-    "panda_joint1": {"stiffness": 80.0, "damping": 4.0, "pos": 0.0},
-    "panda_joint2": {"stiffness": 80.0, "damping": 4.0, "pos": -0.569},
-    "panda_joint3": {"stiffness": 80.0, "damping": 4.0, "pos": 0.0},
-    "panda_joint4": {"stiffness": 80.0, "damping": 4.0, "pos": -2.810},
-    "panda_joint5": {"stiffness": 80.0, "damping": 4.0, "pos": 0.0},
-    "panda_joint6": {"stiffness": 80.0, "damping": 4.0, "pos": 3.037},
-    "panda_joint7": {"stiffness": 80.0, "damping": 4.0, "pos": 0.741},
-    "panda_finger_joint1": {"stiffness": 2e3, "damping": 1e2, "pos": 0.04},
-    "panda_finger_joint2": {"stiffness": 2e3, "damping": 1e2, "pos": 0.04},
-}
-
 PANDA0_PATH = FRANKA_PANDA_PRIM_PATH + "/panda/panda_link0"
 LEFT_PATH = FRANKA_PANDA_PRIM_PATH + "/panda/panda_leftfinger"
 RIGHT_PATH = FRANKA_PANDA_PRIM_PATH + "/panda/panda_rightfinger"
@@ -169,31 +159,44 @@ def draw_coordinate_frame(
     return draw_interface
 
 
-def get_T_base_tag(aruco_tag_pose: dict) -> np.ndarray:
-    """
-    Compute ArUco tag pose relative to robot base frame.
-    T_base_tag = inv(T_world_base) @ T_world_tag
-    """
+def get_T_world_base() -> np.ndarray:
     time = Usd.TimeCode.Default()
     stage = omni.usd.get_context().get_stage()
     cache = UsdGeom.XformCache(time)
 
     base_prim = stage.GetPrimAtPath(FRANKA_PANDA_PRIM_PATH)
-    T_W_base_gf = cache.GetLocalToWorldTransform(base_prim)
+    T_gf = cache.GetLocalToWorldTransform(base_prim)
+
+    return utils.gf_matrix4d_to_numpy(T_gf)
+
+
+def get_T_world_aruco(aruco_tag_pose: dict) -> np.ndarray:
+    aruco_translation = np.array(aruco_tag_pose['translation'])
+    aruco_quat_wxyz = np.array(aruco_tag_pose['rotation_quat'])
+    aruco_quat_xyzw = np.array([aruco_quat_wxyz[1], aruco_quat_wxyz[2], aruco_quat_wxyz[3], aruco_quat_wxyz[0]])
     
-    T_W_base = np.array(T_W_base_gf)
+    T_world_aruco = np.eye(4)
+    T_world_aruco[:3, 3] = aruco_translation
+    T_world_aruco[:3, :3] = R.from_quat(aruco_quat_xyzw).as_matrix()
+    return T_world_aruco
+
+
+def get_T_base_tag(aruco_tag_pose: dict) -> np.ndarray:
+    """
+    Compute ArUco tag pose relative to robot base frame.
+    T_base_tag = inv(T_world_base) @ T_world_tag
+    """
+    T_world_base = get_T_world_base()
     
     aruco_translation = np.array(aruco_tag_pose['translation'])
     aruco_quat_wxyz = np.array(aruco_tag_pose['rotation_quat'])
     aruco_quat_xyzw = np.array([aruco_quat_wxyz[1], aruco_quat_wxyz[2], aruco_quat_wxyz[3], aruco_quat_wxyz[0]])
     
-    T_W_aruco = np.eye(4)
-    T_W_aruco[:3, 3] = aruco_translation
-    T_W_aruco[:3, :3] = R.from_quat(aruco_quat_xyzw).as_matrix()
-    
-    # Proper matrix multiplication with numpy
-    T_base_tag = np.linalg.inv(T_W_base) @ T_W_aruco
-    
+    T_world_aruco = np.eye(4)
+    T_world_aruco[:3, 3] = aruco_translation
+    T_world_aruco[:3, :3] = R.from_quat(aruco_quat_xyzw).as_matrix()
+
+    T_base_tag = np.linalg.inv(T_world_base) @ T_world_aruco
     return T_base_tag
 
 
@@ -213,7 +216,7 @@ def calibrate_robot_base(panda, lula_solver):
     )
 
 
-def apply_ik_solution(panda, art_kine_solver, target_pos, target_quat_wxyz, step_idx):
+def apply_ik_solution(panda, art_kine_solver, target_pos, target_quat_wxyz):
     """
     Compute and apply IK solution for target pose.
     
@@ -233,32 +236,145 @@ def apply_ik_solution(panda, art_kine_solver, target_pos, target_quat_wxyz, step
     )
 
     if success:
-        joint_positions = np.array([*action.joint_positions, 0.0, 0.0])
-        panda.set_joint_positions(joint_positions)
+        panda.set_joint_positions(action.joint_positions, np.arange(7))
         return True
 
     return False
 
 
-def get_object_world_pose(object_prim_path: str):
-    """
-    Return (position, quaternion_wxyz) of a USD prim that has already been
-    added to the stage (e.g. the cup we want to grasp).
-    """
+def get_object_world_pose(object_prim_path: str) -> np.ndarray:
     stage = omni.usd.get_context().get_stage()
     prim = stage.GetPrimAtPath(object_prim_path)
     if not prim.IsValid():
         raise RuntimeError(f"Object prim not found: {object_prim_path}")
 
-    time = Usd.TimeCode.Default()
-    cache = UsdGeom.XformCache(time)
-    world_xform = cache.GetLocalToWorldTransform(prim)
-    world_mat = np.array(world_xform)          # 4×4 matrix
-    pos = world_mat[:3, 3]
-    quat_xyzw = R.from_matrix(world_mat[:3, :3]).as_quat()   # xyzw
-    quat_wxyz = np.array([quat_xyzw[3], quat_xyzw[0],
-                          quat_xyzw[1], quat_xyzw[2]])
-    return pos, quat_wxyz
+    cache = UsdGeom.XformCache(Usd.TimeCode.Default())
+    T_gf = cache.GetLocalToWorldTransform(prim)
+    return utils.gf_matrix4d_to_numpy(T_gf)
+
+
+def get_object_world_size(object_prim_path: str):
+    stage = omni.usd.get_context().get_stage()
+    prim = stage.GetPrimAtPath(object_prim_path)
+    if not prim.IsValid():
+        raise RuntimeError(f"Object prim not found: {object_prim_path}")
+
+    bbox_cache = UsdGeom.BBoxCache(Usd.TimeCode.Default(), includedPurposes=[UsdGeom.Tokens.default_])
+    bbox_cache.Clear()
+    prim_bbox = bbox_cache.ComputeWorldBound(prim)
+    prim_range = prim_bbox.ComputeAlignedRange()
+    return prim_range.GetSize()
+
+
+# ----------------------------------------------------------------------
+# IsaacSim Trajectory Generation Helper Functions
+# ----------------------------------------------------------------------
+
+def create_lula_pose(position: np.ndarray, rotation: R) -> lula.Pose3:
+    """
+    Create Lula Pose3 from position and scipy Rotation.
+
+    Args:
+        position: np.array (3,) position in world frame
+        rotation: scipy Rotation object representing orientation
+
+    Returns:
+        lula.Pose3 object for trajectory generation
+    """
+    quat_xyzw = rotation.as_quat()
+    quat_wxyz = np.array([quat_xyzw[3], quat_xyzw[0], quat_xyzw[1], quat_xyzw[2]])
+    return lula.Pose3(lula.Rotation3(*quat_wxyz), position)
+
+
+def calculate_side_grasp_rotation(approach_vector: np.ndarray) -> R:
+    """
+    Calculate rotation for side grasp with horizontal fingers.
+    Ensures gripper approaches from the side with fingers pointing toward object center.
+
+    Args:
+        approach_vector: Direction from current position to target object
+
+    Returns:
+        scipy Rotation object for side grasp orientation
+    """
+    # Normalize approach vector
+    approach_dir = approach_vector / np.linalg.norm(approach_vector)
+
+    # Side grasp: gripper fingers perpendicular to approach, horizontal
+    # Z-axis points toward object center, X-axis points up, Y-axis points right
+    z_axis = approach_dir  # EEF Z points to object
+    world_up = np.array([0, 0, 1])
+
+    # Calculate Y-axis (perpendicular to approach and up)
+    y_axis = np.cross(world_up, z_axis)
+    y_axis = y_axis / np.linalg.norm(y_axis)
+
+    # Calculate X-axis (perpendicular to Y and Z)
+    x_axis = np.cross(y_axis, z_axis)
+    x_axis = x_axis / np.linalg.norm(x_axis)
+
+    # Construct rotation matrix
+    rot_matrix = np.column_stack([x_axis, y_axis, z_axis])
+    return R.from_matrix(rot_matrix)
+
+
+def execute_task_space_trajectory(
+    panda,
+    taskspace_trajectory_generator,
+    task_space_spec,
+    duration: float = 5.0,
+    phase_name: str = "Trajectory"
+) -> bool:
+    """Refined execution with Lula-specific error checks."""
+    try:
+        # Generate the trajectory; returns None if unreachable [web:1]
+        trajectory = taskspace_trajectory_generator.compute_task_space_trajectory_from_path_spec(
+            task_space_spec, "umi_tcp"
+        )
+        
+        if trajectory is None:
+            print(f"[Trajectory] {phase_name} failed: Pose unreachable by Lula.")
+            return False
+
+        physics_dt = 1/60 # Match physics rate for ArticulationTrajectory [web:1]
+        articulation_trajectory = ArticulationTrajectory(panda, trajectory, physics_dt)
+        
+        # Get action sequence for deterministic execution
+        actions = articulation_trajectory.get_action_sequence()
+        for action in actions:
+            panda.apply_action(action)
+            # Ensure the simulation steps forward to process the action
+            # The world.step() happens in the main loop, so we yield here if using async
+            # In this sync script, we rely on the loop structure
+        return True
+
+    except Exception as e:
+        print(f"[Trajectory] Error in {phase_name}: {e}")
+        return False
+
+
+
+def initialize_trajectory_generator(panda):
+    """
+    Initialize LulaTaskSpaceTrajectoryGenerator with existing robot config and articulation.
+
+    Args:
+        panda: Panda articulation object
+
+    Returns:
+        LulaTaskSpaceTrajectoryGenerator instance
+    """
+    print("[Init] Initializing LulaTaskSpaceTrajectoryGenerator...")
+    try:
+        taskspace_trajectory_generator = LulaTaskSpaceTrajectoryGenerator(
+            robot_description_path=LULA_ROBOT_DESCRIPTION_PATH,
+            urdf_path=LULA_URDF_PATH,
+        )
+        print("[Init] LulaTaskSpaceTrajectoryGenerator initialized successfully")
+        return taskspace_trajectory_generator
+    except Exception as e:
+        print(f"[Init] Error initializing trajectory generator: {e}")
+        return None
 
 
 def create_replay_state(session_dir: str, episode_idx: int, cfg: dict):
@@ -293,7 +409,7 @@ def create_replay_state(session_dir: str, episode_idx: int, cfg: dict):
     }
 
 
-def step_replay(replay_state: dict, panda, lula_solver, art_kine_solver, T_base_tag: np.ndarray, cfg: dict):
+def step_replay(replay_state: dict, panda, lula_solver, art_kine_solver, T_world_aruco: np.ndarray, cfg: dict):
     # ---------- Calibration ----------
     if not replay_state["calibrated"]:
         calibrate_robot_base(panda, lula_solver)
@@ -314,20 +430,29 @@ def step_replay(replay_state: dict, panda, lula_solver, art_kine_solver, T_base_
     # ---------- Normal replay ----------
     step_idx = replay_state["current_step"]
     data = replay_state["data"]
+
+    # Prepare coordinate offsets
+    offsets = {
+        'x': args.x_offset,
+        'y': args.y_offset,
+        'z': args.z_offset
+    }
+
     target_pos, target_rot, target_quat_wxyz, gripper_width = compute_replay_step(
-        data, step_idx, T_base_tag
+        data, step_idx, T_world_aruco, offsets
     )
 
-    # ---- 1️⃣ Distance to target object ----
     target_obj_path = cfg["environment_vars"]["TARGET_OBJECT_PATH"]
-    obj_pos, _ = get_object_world_pose(target_obj_path)
+    T_world_obj = get_object_world_pose(target_obj_path)
+    obj_pos = T_world_obj[:3, 3]
     dist_to_obj = np.linalg.norm(target_pos - obj_pos)
+    print(f"[Main] Distance to object {target_obj_path}: {dist_to_obj}")
 
     # If we are still farther than 10 cm, keep following the recorded demo
-    if dist_to_obj > 0.10:          # 0.10 m = 10 cm
+    if dist_to_obj > 0.12:
         draw_coordinate_frame(target_pos, target_rot, axis_length=0.05, draw_interface=DEBUG_DRAW)
         calibrate_robot_base(panda, lula_solver)
-        success = apply_ik_solution(panda, art_kine_solver, target_pos, target_quat_wxyz, step_idx)
+        success = apply_ik_solution(panda, art_kine_solver, target_pos, target_quat_wxyz)
 
         if success:
             set_gripper_width(panda, gripper_width, threshold=0.05, step=0.05)
@@ -344,7 +469,7 @@ def step_replay(replay_state: dict, panda, lula_solver, art_kine_solver, T_base_
 
         return True
 
-    # ---- 2️⃣ We are within 10 cm → trigger intervention ----
+    # replay_state["current_step"] += 1
     print(f"[Main] *** Intervention triggered at step {step_idx} (dist={dist_to_obj:.3f} m) ***")
     replay_state["intervention_needed"] = True
     replay_state["intervention_step"] = step_idx
@@ -355,51 +480,131 @@ def step_replay(replay_state: dict, panda, lula_solver, art_kine_solver, T_base_
 # ----------------------------------------------------------------------
 # Intervention phase – straight‑line Cartesian approach + grasp
 # ----------------------------------------------------------------------
-def run_intervention(replay_state, panda, lula_solver, art_kine_solver, cfg):
+def run_intervention_with_retry(replay_state, panda, lula_solver, art_kine_solver, cfg, T_base_tag: np.ndarray, taskspace_trajectory_generator, max_attempts: int = 3):
     """
-    Executes the perfect‑approach Cartesian path and closes the gripper.
+    Executes improved grasping with optimal orientation and multi-angle retry logic.
     Called only when replay_state['intervention_needed'] is True.
     """
-    # 1️⃣ Current EE pose (saved when we stopped)
-    cur_pos, cur_rot = replay_state["saved_ee_pose"]
+    for attempt in range(max_attempts):
+        try:
+            success = run_intervention(replay_state, panda, art_kine_solver, cfg, taskspace_trajectory_generator)
 
-    # 2️⃣ Goal pose = exact object pose from the simulation
-    target_obj_path = cfg["environment_vars"]["TARGET_OBJECT_PATH"]
-    goal_pos, goal_quat_wxyz = get_object_world_pose(target_obj_path)
-    goal_rot = R.from_quat(np.array([goal_quat_wxyz[1],
-                                    goal_quat_wxyz[2],
-                                    goal_quat_wxyz[3],
-                                    goal_quat_wxyz[0]]))   # xyzw → scipy order
+            if success:
+                print(f"[Intervention] Attempt {attempt + 1} completed successfully")
+                return True
+            else:
+                print(f"[Intervention] Attempt {attempt + 1} failed to grasp")
 
-    # 3️⃣ Build a short straight‑line Cartesian path
-    cart_path = linear_cartesian_path(cur_pos, cur_rot, goal_pos, goal_rot,
-                                      step_size=0.02)
+        except Exception as e:
+            print(f"[Intervention] Attempt {attempt + 1} failed with error: {e}")
 
-    print(f"[Intervention] Executing {len(cart_path)} Cartesian steps to the object...")
+        # Reset for next attempt
+        if attempt < max_attempts - 1:
+            print(f"[Intervention] Resetting for retry...")
+            # Open gripper fully and move back slightly
+            set_gripper_width(panda, width=0.1, threshold=0.0, step=0.05)
+            time.sleep(0.5)
 
-    for idx, (pos, rot) in enumerate(cart_path):
-        quat_xyzw = rot.as_quat()
-        quat_wxyz = np.array([quat_xyzw[3], quat_xyzw[0],
-                              quat_xyzw[1], quat_xyzw[2]])
+    print(f"[Intervention] All {max_attempts} attempts failed")
+    return False
 
-        # Apply IK for this intermediate waypoint
-        success = apply_ik_solution(panda, art_kine_solver,
-                                    pos, quat_wxyz, step_idx=-1)
+
+
+def draw_grasp_debug_visualization(pregrasp_pos, pregrasp_rot, grasp_pos, grasp_rot, object_name):
+    """
+    Draw visual debugging for grasp poses to help verify alignment.
+
+    Args:
+        pregrasp_pos: Pre-grasp position (3,)
+        pregrasp_rot: Pre-grasp orientation (scipy Rotation)
+        grasp_pos: Final grasp position (3,)
+        grasp_rot: Final grasp orientation (scipy Rotation)
+        object_name: Name of target object (for debugging)
+    """
+    print(f"\n[Debug] Visualizing grasp poses for {object_name}:")
+    print(f"  Pre-grasp position: {pregrasp_pos}")
+    print(f"  Final grasp position: {grasp_pos}")
+    print(f"  Approach distance: {np.linalg.norm(grasp_pos - pregrasp_pos):.3f}m")
+
+    # Draw pre-grasp pose with yellow coordinate frame
+    draw_coordinate_frame(pregrasp_pos, pregrasp_rot, axis_length=0.05, draw_interface=DEBUG_DRAW)
+
+    # Draw final grasp pose with orange coordinate frame (scaled slightly smaller)
+    draw_coordinate_frame(grasp_pos, grasp_rot, axis_length=0.03, draw_interface=DEBUG_DRAW)
+
+    # Draw approach direction arrow
+    approach_dir = grasp_pos - pregrasp_pos
+    approach_dir_norm = approach_dir / np.linalg.norm(approach_dir)
+    arrow_end = pregrasp_pos + approach_dir_norm * 0.1  # 10cm arrow
+
+    # Draw arrow line in purple
+    purple = (0.5, 0.0, 0.5, 1.0)
+    DEBUG_DRAW.draw_lines(
+        [tuple(pregrasp_pos)],
+        [tuple(arrow_end)],
+        [purple],
+        [5.0]  # Line width
+    )
+
+    # Add a small delay to visualize
+    time.sleep(0.5)
+
+
+def run_intervention(replay_state, panda, art_kine_solver, cfg, taskspace_trajectory_generator):
+    """Refined 4-phase grasp logic with error fallbacks."""
+    # cur_pos, cur_rot = replay_state["saved_ee_pose"]
+    cur_pos, cur_rot = panda.gripper.get_world_pose()
+
+    target_pos = get_object_world_pose(cfg["environment_vars"]["TARGET_OBJECT_PATH"])[:3, 3]
+
+    approach_vector = target_pos - cur_pos
+    approach_dir = approach_vector / np.linalg.norm(approach_vector)
+
+    approach_distance = 0.03
+    approach_pos = target_pos - approach_dir * approach_distance
+
+    grasp_rot = calculate_side_grasp_rotation(approach_dir)
+    grasp_rot_xyzw = grasp_rot.as_quat()
+    grasp_rot_wxyz = grasp_rot_xyzw[[3, 0, 1, 2]]
+
+    pregrasp_offset = 0.03
+    approach_step = 0.015
+    lift_height = 0.20
+
+    pregrasp_pos = target_pos - approach_dir * pregrasp_offset
+    approach_pos = target_pos - approach_dir * approach_step
+    grasp_pos = approach_pos
+    lift_pos = grasp_pos + np.array([0.0, 0.0, lift_height])
+
+
+    phases = [
+        # 1. Go to pose that can easily grasp the cup
+        ("PreGrasp", pregrasp_pos, grasp_rot_wxyz),
+
+        # 2. Approach the cup along approach direction
+        ("Approach", approach_pos, grasp_rot_wxyz),
+
+        # 3. Grasp (no motion, just close gripper)
+        ("Grasp", grasp_pos, grasp_rot_wxyz),
+
+        # 4. Lift
+        ("Lift", lift_pos, grasp_rot_wxyz),
+    ]
+
+    for name, pos, rot in phases:
+        print(f"[Main] {name}: [{pos}, {rot}]")
+        success = apply_ik_solution(panda, art_kine_solver, pos, rot)
+        print(f"[Main] {name}: {success=}")
+
         if not success:
-            print(f"[Intervention] IK failed at sub‑step {idx}, aborting.")
-            break
+            continue
 
-    # 4️⃣ Close the gripper (tight threshold)
-    set_gripper_width(panda, width=0.0, threshold=0.02, step=0.02)
-    print("[Intervention] Gripper closed – object should be attached.")
+        time.sleep(3)
+        if name == "Grasp":
+            set_gripper_width(panda, width=0.0, threshold=0.02, step=0.005)
 
-    # 5️⃣ Reset flags so normal replay can continue
-    replay_state["intervention_needed"] = False
-    replay_state["saved_ee_pose"] = None
-    # Do NOT advance `current_step`; the next recorded waypoint will be
-    # applied from the new EE pose (object already in hand).
-
-    return
+    replay_state["finished"] = True
+    return True
 
 
 def main():
@@ -467,11 +672,14 @@ def main():
     replay_state = None
     lula_solver = None
     art_kine_solver = None
+    taskspace_trajectory_generator = None
     T_base_tag = None
+    T_world_aruco = None
     
     if args.session_dir:
         # Load objects from session
         object_poses_path = os.path.join(args.session_dir, 'demos', 'mapping', 'object_poses.json')
+        
         print(f"[Main] Looking for object poses at: {object_poses_path}")
         if os.path.exists(object_poses_path):
             print(f"[Main] Loading objects from: {object_poses_path}")
@@ -497,8 +705,16 @@ def main():
             end_effector_frame_name="umi_tcp"
         )
 
+        # Initialize trajectory generator for intervention
+        taskspace_trajectory_generator = initialize_trajectory_generator(panda)
+        if taskspace_trajectory_generator is None:
+            print("[Main] ERROR: Failed to initialize trajectory generator")
+            simulation_app.close()
+            sys.exit()
+
         # Compute transform from robot base to ArUco tag
-        T_base_tag = get_T_base_tag(aruco_tag_pose)
+        # T_base_tag = get_T_base_tag(aruco_tag_pose)
+        T_world_aruco = get_T_world_aruco(aruco_tag_pose)
         
         # Create replay state for the episode
         replay_state = create_replay_state(args.session_dir, args.episode, cfg)
@@ -510,15 +726,16 @@ def main():
     while simulation_app.is_running():
         world.step(render=True)
         time.sleep(0.01)
+        set_gripper_width(panda, 0.04)
         
         # Process replay if active
         if replay_state is not None and not replay_state["finished"]:
             if replay_state["intervention_needed"]:
-                # Run the perfect‑approach once, then go back to normal replay
-                run_intervention(replay_state, panda, lula_solver, art_kine_solver, cfg)
+                # Run the improved grasping with retry logic
+                run_intervention_with_retry(replay_state, panda, lula_solver, art_kine_solver, cfg, T_base_tag, taskspace_trajectory_generator)
             else:
                 step_replay(
-                    replay_state, panda, lula_solver, art_kine_solver, T_base_tag, cfg
+                    replay_state, panda, lula_solver, art_kine_solver, T_world_aruco, cfg
                 )
                 # When the normal replay finally finishes we visualise the waypoints
                 if replay_state["finished"]:

@@ -8,12 +8,14 @@ from scipy.spatial.transform import Rotation
 class KitchenTaskRegistry:
     """Registry for kitchen task configuration"""
 
-    TASK_NAME = "kitchen"
+    ENVIRONMENT_NAME = "kitchen"
+    TASK_NAME = "stacking"
     # ArUco tag pose
     ARUCO_TAG_TRANSLATION = np.array([4.9652, 2.45, 0.9])
     ARUCO_TAG_ROTATION_EULER = np.array([0.0, 0.0, 180.0])
     ARUCO_TAG_ROTATION_QUAT = Rotation.from_euler('xyz', ARUCO_TAG_ROTATION_EULER, degrees=True).as_quat() # x,y,z,w
     TARGET_OBJECT_PATH = "/World/blue_cup"
+    SUPPORT_OBJECT = "/World/pink_cup"
     
     # Robot poses (Franka)
     FRANKA_TRANSLATION = np.array([4.5, 2.7, 0.9000000134110451])
@@ -44,10 +46,11 @@ class KitchenTaskRegistry:
                 "rotation_quat": cls.xyzw_to_wxyz(cls.FRANKA_ROTATION_QUAT),
             },
             "environment_vars": {
-                "TASK_NAME": cls.TASK_NAME,
+                "ENVIRONMENT_NAME": cls.ENVIRONMENT_NAME,
                 "SCENE_CONFIG": "kitchen_scene",
                 "OBJECT_MAXIMUM_Z_HEIGHT": 1.1,
                 "TARGET_OBJECT_PATH": cls.TARGET_OBJECT_PATH,
+                "SUPPORT_OBJECT": cls.SUPPORT_OBJECT
             }
         }
 
