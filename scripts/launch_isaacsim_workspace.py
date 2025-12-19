@@ -100,7 +100,6 @@ DEBUG_DRAW = _debug_draw.acquire_debug_draw_interface()
 
 
 # Helper functions
-
 def draw_coordinate_frame(
     target_pos: np.ndarray,
     target_rot,
@@ -286,35 +285,38 @@ def create_lula_pose(position: np.ndarray, rotation: R) -> lula.Pose3:
     return lula.Pose3(lula.Rotation3(*quat_wxyz), position)
 
 
-def calculate_side_grasp_rotation(approach_vector: np.ndarray) -> R:
+def calculate_side_grasp_rotation(approach_dir):
     """
-    Calculate rotation for side grasp with horizontal fingers.
-    Ensures gripper approaches from the side with fingers pointing toward object center.
-
+    Calculate rotation matrix for side grasp approach.
+    Ensures the gripper's Z-axis (approach direction) points towards the object.
+    
     Args:
-        approach_vector: Direction from current position to target object
-
+        approach_dir: Normalized direction vector from gripper to object
+    
     Returns:
-        scipy Rotation object for side grasp orientation
+        scipy.spatial.transform.Rotation object
     """
-    # Normalize approach vector
-    approach_dir = approach_vector / np.linalg.norm(approach_vector)
-
-    # Side grasp: gripper fingers perpendicular to approach, horizontal
-    # Z-axis points toward object center, X-axis points up, Y-axis points right
-    z_axis = approach_dir  # EEF Z points to object
-    world_up = np.array([0, 0, 1])
-
-    # Calculate Y-axis (perpendicular to approach and up)
-    y_axis = np.cross(world_up, z_axis)
-    y_axis = y_axis / np.linalg.norm(y_axis)
-
-    # Calculate X-axis (perpendicular to Y and Z)
-    x_axis = np.cross(y_axis, z_axis)
+    # Normalize approach direction
+    z_axis = approach_dir / np.linalg.norm(approach_dir)
+    
+    # Choose a temporary up vector (world Z-axis)
+    world_up = np.array([0.0, 0.0, 1.0])
+    
+    # If approach direction is nearly vertical, use Y-axis as reference
+    if np.abs(np.dot(z_axis, world_up)) > 0.95:
+        world_up = np.array([0.0, 1.0, 0.0])
+    
+    # Calculate X-axis (perpendicular to both Z and world up)
+    x_axis = np.cross(world_up, z_axis)
     x_axis = x_axis / np.linalg.norm(x_axis)
-
-    # Construct rotation matrix
+    
+    # Calculate Y-axis (perpendicular to both X and Z)
+    y_axis = np.cross(z_axis, x_axis)
+    y_axis = y_axis / np.linalg.norm(y_axis)
+    
+    # Construct rotation matrix [x_axis, y_axis, z_axis]
     rot_matrix = np.column_stack([x_axis, y_axis, z_axis])
+    
     return R.from_matrix(rot_matrix)
 
 
@@ -551,59 +553,97 @@ def draw_grasp_debug_visualization(pregrasp_pos, pregrasp_rot, grasp_pos, grasp_
 
 
 def run_intervention(replay_state, panda, art_kine_solver, cfg, taskspace_trajectory_generator):
-    """Refined 4-phase grasp logic with error fallbacks."""
-    # cur_pos, cur_rot = replay_state["saved_ee_pose"]
+    """Refined 4-phase grasp logic with proper end-effector orientation towards object."""
+    
+    # Get current gripper pose and target object pose
     cur_pos, cur_rot = panda.gripper.get_world_pose()
-
-    target_pos = get_object_world_pose(cfg["environment_vars"]["TARGET_OBJECT_PATH"])[:3, 3]
-
-    approach_vector = target_pos - cur_pos
-    approach_dir = approach_vector / np.linalg.norm(approach_vector)
-
-    approach_distance = 0.03
-    approach_pos = target_pos - approach_dir * approach_distance
-
+    target_obj_prim_path = cfg["environment_vars"]["TARGET_OBJECT_PATH"]
+    T_world_obj = get_object_world_pose(target_obj_prim_path)
+    obj_size = get_object_world_size(target_obj_prim_path)
+    height = obj_size[1]/2
+    
+    # Target is the CENTER of the cup
+    cup_center = T_world_obj[:3, 3]
+    cup_center[2] -= height
+    draw_coordinate_frame(cup_center, R.from_euler("xyz", [0,0,0], degrees=True), axis_length=0.1, draw_interface=DEBUG_DRAW)
+    
+    # Calculate approach direction: vector FROM current position TO cup center
+    approach_vector = cup_center - cur_pos
+    approach_distance = np.linalg.norm(approach_vector)
+    
+    if approach_distance < 1e-6:
+        print("[Main] Error: Gripper already at target position")
+        return False
+    
+    # Normalize to get unit direction vector pointing at cup center
+    approach_dir = approach_vector / approach_distance
+    
+    # Calculate grasp rotation that points the gripper towards the cup center
     grasp_rot = calculate_side_grasp_rotation(approach_dir)
     grasp_rot_xyzw = grasp_rot.as_quat()
     grasp_rot_wxyz = grasp_rot_xyzw[[3, 0, 1, 2]]
+    
+    # Define phase positions with clear offsets FROM cup center
+    pregrasp_offset = 0.08   # 8cm away from cup center (pointing at it)
+    approach_offset = 0.03   # 3cm away from cup center
+    lift_height = 0.20       # Height to lift after grasp
 
-    pregrasp_offset = 0.03
-    approach_step = 0.015
-    lift_height = 0.20
+    
+    # Phase 1: PreGrasp - EEF 8cm away from cup center, pointing directly at it
+    pregrasp_pos = cup_center - approach_dir * pregrasp_offset
 
-    pregrasp_pos = target_pos - approach_dir * pregrasp_offset
-    approach_pos = target_pos - approach_dir * approach_step
-    grasp_pos = approach_pos
+    draw_coordinate_frame(pregrasp_pos, grasp_rot, axis_length=0.1, draw_interface=DEBUG_DRAW)
+    
+    # Phase 2: Approach - Move closer to 3cm from cup center along same direction
+    approach_pos = cup_center - approach_dir * approach_offset
+    
+    # Phase 3: Grasp - Contact position (same as approach, but close gripper)
+    grasp_pos = approach_pos.copy()
+    
+    # Phase 4: Lift - Move straight up from grasp position
     lift_pos = grasp_pos + np.array([0.0, 0.0, lift_height])
-
-
+    
+    # Define all phases with names and target poses
     phases = [
-        # 1. Go to pose that can easily grasp the cup
-        ("PreGrasp", pregrasp_pos, grasp_rot_wxyz),
-
-        # 2. Approach the cup along approach direction
-        ("Approach", approach_pos, grasp_rot_wxyz),
-
-        # 3. Grasp (no motion, just close gripper)
-        ("Grasp", grasp_pos, grasp_rot_wxyz),
-
-        # 4. Lift
-        ("Lift", lift_pos, grasp_rot_wxyz),
+        ("PreGrasp", pregrasp_pos, grasp_rot_wxyz, False),   # 8cm from cup center, pointing at it
+        ("Approach", approach_pos, grasp_rot_wxyz, False),   # 3cm from cup center
+        ("Grasp", grasp_pos, grasp_rot_wxyz, True),          # Close gripper
+        ("Lift", lift_pos, grasp_rot_wxyz, False),           # Lift object
     ]
-
-    for name, pos, rot in phases:
-        print(f"[Main] {name}: [{pos}, {rot}]")
+    
+    print(f"[Main] Cup center position: {cup_center}")
+    print(f"[Main] Approach direction (gripper→cup): {approach_dir}")
+    print(f"[Main] PreGrasp distance from cup center: {pregrasp_offset}m (8cm)")
+    
+    # Execute each phase
+    for name, pos, rot, should_close_gripper in phases:
+        print(f"\n[Main] === Phase: {name} ===")
+        print(f"[Main] Target pos: {pos}")
+        print(f"[Main] Target rot (wxyz): {rot}")
+        
+        # Attempt IK solution
         success = apply_ik_solution(panda, art_kine_solver, pos, rot)
-        print(f"[Main] {name}: {success=}")
-
+        print(f"[Main] IK success: {success}")
+        
         if not success:
+            print(f"[Main] Warning: {name} phase failed, continuing...")
             continue
-
-        time.sleep(3)
-        if name == "Grasp":
+        
+        # Allow simulation to settle
+        for _ in range(10):
+            simulation_app.update()
+        
+        # Close gripper during grasp phase
+        if should_close_gripper:
+            print("[Main] Closing gripper...")
             set_gripper_width(panda, width=0.0, threshold=0.02, step=0.005)
+            print("[Main] Gripper closed")
 
+        time.sleep(1)
+    
+    # Mark intervention as complete
     replay_state["finished"] = True
+    print("\n[Main] Intervention complete!")
     return True
 
 
