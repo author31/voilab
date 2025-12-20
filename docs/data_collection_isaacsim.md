@@ -59,7 +59,7 @@ Command for training the diffusion policy:
 
 ```bash
 uv run packages/diffusion_policy/train.py --config-path=src/diffusion_policy/config --config-name=train_diffusion_unet_timm_umi_workspace task.dataset_path=/path/to/your/dataset.zarr.zip
-```bash
+```
 
 
 
