@@ -4,45 +4,66 @@
 **Pipeline:** UMI-Processing to Simulation-Policy Training
 
 ---
+1. Environment Setup (Docker & Dependencies)
 
-## 1. Prerequisites
+Before running any data processing or simulation, the execution environment must be prepared.
 
-Before proceeding with data collection in the simulator, ensure the following conditions are met:
+Docker is required. Please install Docker by following the official Ubuntu installation guide:
+https://docs.docker.com/engine/install/ubuntu/
 
-* **Trajectory Dataset:** You must have a successfully constructed trajectory dataset processed via the **UMI-processing pipeline**.
-* **Documentation Check:** If you have not generated these trajectories yet, please refer to the [UMI_README.md](docs/UMI_README.md) for calibration and extraction steps.
-* **Environment Setup:** Ensure your `voilab` environment is active and the Isaac Sim v5.1.0 dependencies are installed.
+After installation, verify that Docker is available by running:
 
----
-
-## 2. Observation Replacement (Replay Workflow)
-
-To train a policy model for simulation, we must bridge the gap between real-world observations and simulated environments. This is achieved by replaying the collected real-world trajectories and replacing the observation frames with simulation-rendered frames.
-
-Run the following command to launch the simulator and begin the replay session:
-
-```sh
-uv run voilab launch-simulator --task kitchen --session_dir datasets/1124_gopro3_kitchen
-
+```bash
+docker --version
+or
+docker version
 ```
 
-### How it works:
-
-1. **Trajectory Loading:** The simulator loads the poses and actions from the specified `session_dir`.
-2. **Frame-by-Frame Replay:** The robot state is updated at every timestep to match the recorded data.
-3. **Sim-Observation Capture:** The Isaac Sim cameras (e.g., RGB, Depth, Segmentation) capture the scene, replacing the original GoPro/RealSense footage.
+In addition, ensure that the voilab environment is correctly configured and that all dependencies required for NVIDIA Isaac Sim v5.1.0 are installed and accessible.
 
 ---
 
-## 3. Data Augmentation & Synthetic Tricks
+2. UMI Trajectory Processing (Real-World Data)
 
-To improve the robustness of the policy we could utilize synthetic data generation tricks.
+This step converts your raw sensor recordings (e.g., GoPro or RealSense data).
 
-Modify the `run_intervention` script logic to introduce noise into the replay at `scripts/launch_isaacsim_workspace.py`
+Command for running the UMI SLAM and trajectory processing pipeline:
 
-* **Task:** Locate the intervention logic in your script and adjust the perturbation parameters.
-* **Goal:** Force the robot to recover from slightly "off-path" states.
+```bash
+uv run umi run-slam-pipeline umi_pipeline_configs/gopro13_wide_angle_pipeline_config.yaml --session-dir {data_path}
+```
 
-* **Example Modification:**
-* Inject Gaussian noise into the gripper pose during the approach phase.
-* Change the object's physical properties (mass/friction) to simulate diverse handling conditions.
+The output of this step is a trajectory dataset stored under the specified session directory. This dataset will be used as input for simulation replay.
+
+For detailed calibration and extraction procedures, please refer to docs/UMI_README.md.
+
+---
+
+3. Isaac Sim Replay and Observation Replacement
+
+Command for data replay and collection in Isacc Sim.
+
+```bash
+uv run voilab launch-simulator --task kitchen --session_dir {data_path}
+```
+
+The resulting dataset preserves real-world motion while providing fully simulated visual observations.
+
+---
+
+4. Diffusion Policy Training
+
+After simulation replay, the generated dataset can be used to train a diffusion-based policy.
+
+Command for training the diffusion policy:
+
+```bash
+uv run packages/diffusion_policy/train.py --config-path=src/diffusion_policy/config --config-name=train_diffusion_unet_timm_umi_workspace task.dataset_path=/path/to/your/dataset.zarr.zip
+```bash
+
+
+
+
+
+
+
