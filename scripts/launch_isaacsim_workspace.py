@@ -11,6 +11,7 @@ Architecture:
 """
 
 import os
+import json
 
 from numpy.random import beta
 import registry
@@ -18,6 +19,9 @@ import argparse
 import numpy as np
 import time
 import sys
+import zarr
+from zarr.storage import ZipStore
+from numcodecs import Blosc
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--task", type=str, choices=["kitchen", "dining-table", "living-room"], required=True)
@@ -56,10 +60,11 @@ from isaacsim.robot.manipulators import SingleManipulator
 from isaacsim.core.utils.viewports import set_camera_view
 from isaacsim.core.prims import SingleRigidPrim, SingleXFormPrim
 from isaacsim.storage.native import get_assets_root_path
+from isaacsim.sensors.camera import Camera
 from pxr import Usd, UsdGeom, UsdPhysics, Sdf, Gf
 
 from scipy.spatial.transform import Rotation as R
-from object_loader import load_objects_from_json
+from object_loader import load_object_transforms_from_json, map_object_name_to_asset
 import utils
 import lula
 
@@ -451,7 +456,7 @@ def step_replay(replay_state: dict, panda, lula_solver, art_kine_solver, T_world
     print(f"[Main] Distance to object {target_obj_path}: {dist_to_obj}")
 
     # If we are still farther than 10 cm, keep following the recorded demo
-    if dist_to_obj > 0.12:
+    if dist_to_obj > 0:
         draw_coordinate_frame(target_pos, target_rot, axis_length=0.05, draw_interface=DEBUG_DRAW)
         calibrate_robot_base(panda, lula_solver)
         success = apply_ik_solution(panda, art_kine_solver, target_pos, target_quat_wxyz)
@@ -647,6 +652,124 @@ def run_intervention(replay_state, panda, art_kine_solver, cfg, taskspace_trajec
     return True
 
 
+def get_end_effector_pose(panda, lula_solver, art_kine_solver) -> np.ndarray:
+    base_pos, base_quat = panda.get_world_pose()
+    lula_solver.set_robot_base_pose(
+        robot_position=base_pos,
+        robot_orientation=base_quat,
+    )
+    ee_pos, ee_rot_matrix = art_kine_solver.compute_end_effector_pose()
+    eef_rot = R.from_matrix(ee_rot_matrix[:3, :3]).as_rotvec()
+    return np.concatenate([ee_pos.astype(np.float64), eef_rot.astype(np.float64)])
+
+
+def save_dataset(
+    output_path: str,
+    rgb_list,
+    eef_pos_list,
+    eef_rot_list,
+    gripper_list,
+    demo_start_list,
+    demo_end_list,
+):
+    compressor = Blosc(cname="zstd", clevel=5, shuffle=Blosc.BITSHUFFLE)
+    store = ZipStore(output_path, mode="w")
+    root = zarr.group(store)
+    data = root.create_group("data")
+
+    data.create_dataset(
+        "camera0_rgb",
+        data=np.stack(rgb_list, 0).astype(np.uint8),
+        compressor=compressor,
+    )
+    data.create_dataset(
+        "robot0_demo_start_pose",
+        data=np.stack(demo_start_list, 0).astype(np.float64),
+        compressor=compressor,
+    )
+    data.create_dataset(
+        "robot0_demo_end_pose",
+        data=np.stack(demo_end_list, 0).astype(np.float64),
+        compressor=compressor,
+    )
+    data.create_dataset(
+        "robot0_eef_pos",
+        data=np.stack(eef_pos_list, 0).astype(np.float32),
+        compressor=compressor,
+    )
+    data.create_dataset(
+        "robot0_eef_rot_axis_angle",
+        data=np.stack(eef_rot_list, 0).astype(np.float32),
+        compressor=compressor,
+    )
+    data.create_dataset(
+        "robot0_gripper_width",
+        data=np.stack(gripper_list, 0).astype(np.float32),
+        compressor=compressor,
+    )
+    meta = root.create_group("meta")
+    meta.create_dataset("episode_ends", data=np.array([len(rgb_list)]))
+    store.close()
+    print("[SAVE] replay_dataset.zarr.zip saved at:", output_path)
+
+
+def save_multi_episode_dataset(output_path: str, episodes: list[dict]) -> None:
+    compressor = Blosc(cname="zstd", clevel=5, shuffle=Blosc.BITSHUFFLE)
+    store = ZipStore(output_path, mode="w")
+    root = zarr.group(store)
+    data = root.create_group("data")
+
+    rgb = np.concatenate([ep["rgb"] for ep in episodes], axis=0).astype(np.uint8)
+    demo_start = np.concatenate([ep["demo_start"] for ep in episodes], axis=0).astype(np.float64)
+    demo_end = np.concatenate([ep["demo_end"] for ep in episodes], axis=0).astype(np.float64)
+    eef_pos = np.concatenate([ep["eef_pos"] for ep in episodes], axis=0).astype(np.float32)
+    eef_rot = np.concatenate([ep["eef_rot"] for ep in episodes], axis=0).astype(np.float32)
+    gripper = np.concatenate([ep["gripper"] for ep in episodes], axis=0).astype(np.float32)
+
+    data.create_dataset("camera0_rgb", data=rgb, compressor=compressor)
+    data.create_dataset("robot0_demo_start_pose", data=demo_start, compressor=compressor)
+    data.create_dataset("robot0_demo_end_pose", data=demo_end, compressor=compressor)
+    data.create_dataset("robot0_eef_pos", data=eef_pos, compressor=compressor)
+    data.create_dataset("robot0_eef_rot_axis_angle", data=eef_rot, compressor=compressor)
+    data.create_dataset("robot0_gripper_width", data=gripper, compressor=compressor)
+
+    episode_lengths = [len(ep["rgb"]) for ep in episodes]
+    episode_ends = np.cumsum(episode_lengths)
+    meta = root.create_group("meta")
+    meta.create_dataset("episode_ends", data=episode_ends)
+    store.close()
+    print("[SAVE] replay_dataset.zarr.zip saved at:", output_path)
+
+
+def is_episode_completed(episode_record: dict) -> bool:
+    return True
+
+
+def _load_progress(session_dir: str) -> set[int]:
+    progress_path = os.path.join(session_dir, ".previous_progress.json")
+    if not os.path.exists(progress_path):
+        return set()
+    try:
+        with open(progress_path, "r") as f:
+            payload = json.load(f)
+    except (json.JSONDecodeError, OSError) as exc:
+        print(f"[Main] WARNING: Failed to read progress file: {exc}")
+        return set()
+    completed = payload.get("completed_episodes", [])
+    return set(int(x) for x in completed)
+
+
+def _save_progress(session_dir: str, completed: set[int]) -> None:
+    progress_path = os.path.join(session_dir, ".previous_progress.json")
+    payload = {"completed_episodes": sorted(completed)}
+    with open(progress_path, "w") as f:
+        json.dump(payload, f, indent=2)
+
+
+def _normalize_object_name(name: str) -> str:
+    return name.strip().lower().replace(" ", "_")
+
+
 def main():
     """Main entry point."""
     print(f"[Main] Starting with task: {args.task}")
@@ -699,7 +822,6 @@ def main():
         )
     )
     panda.gripper.set_default_state(panda.gripper.joint_opened_positions)
-    world.reset()
 
     # Set robot position after world reset
     robot_xform.set_local_pose(
@@ -707,6 +829,12 @@ def main():
         orientation=np.array(franka_rotation)
     )
     set_camera_view(camera_translation, franka_translation)
+    camera = Camera(
+        prim_path=f"{GOPRO_PRIM_PATH}/Camera",
+        name="gopro_camera",
+    )
+    camera.initialize()
+    world.reset()
 
     # --- Initialize replay state ---
     replay_state = None
@@ -715,79 +843,213 @@ def main():
     taskspace_trajectory_generator = None
     T_base_tag = None
     T_world_aruco = None
-    
-    if args.session_dir:
-        # Load objects from session
-        object_poses_path = os.path.join(args.session_dir, 'demos', 'mapping', 'object_poses.json')
-        
-        print(f"[Main] Looking for object poses at: {object_poses_path}")
-        if os.path.exists(object_poses_path):
-            print(f"[Main] Loading objects from: {object_poses_path}")
-            load_objects_from_json(
-                object_poses_path,
-                ASSETS_DIR,
-                world,
-                episode_index=args.episode,
-                aruco_tag_pose=aruco_tag_pose,
-                cfg=cfg
+    object_prims = {}
+    object_poses_path = None
+
+    if args.session_dir is None:
+        print("[Main] ERROR: session_dir is required for multi-episode replay.")
+        simulation_app.close()
+        return
+
+    object_poses_path = os.path.join(args.session_dir, 'demos', 'mapping', 'object_poses.json')
+    print(f"[Main] Looking for object poses at: {object_poses_path}")
+    preload_objects = cfg.get("environment_vars", {}).get("PRELOAD_OBJECTS", [])
+    for entry in preload_objects:
+        if isinstance(entry, str):
+            raw_name = entry
+            asset_filename = map_object_name_to_asset(raw_name)
+            prim_path = f"/World/{_normalize_object_name(raw_name)}"
+        elif isinstance(entry, dict):
+            raw_name = entry.get("name", "")
+            asset_filename = entry.get("assets") or map_object_name_to_asset(raw_name)
+            prim_path = entry.get("prim_path", f"/World/{_normalize_object_name(raw_name)}")
+        else:
+            continue
+
+        object_name = _normalize_object_name(raw_name)
+        if not raw_name or not asset_filename:
+            print(f"[ObjectLoader] WARNING: Invalid PRELOAD_OBJECTS entry: {entry}")
+            continue
+        if object_name in object_prims:
+            continue
+
+        full_asset_path = os.path.join(ASSETS_DIR, asset_filename)
+        if not os.path.exists(full_asset_path):
+            print(f"[ObjectLoader] WARNING: Asset not found: {full_asset_path}, skipping {raw_name}")
+            continue
+
+        try:
+            stage_utils.add_reference_to_stage(
+                usd_path=full_asset_path,
+                prim_path=prim_path
             )
+        except Exception as e:
+            print(f"[ObjectLoader] ERROR: Failed to load asset {full_asset_path}: {str(e)}")
+            continue
 
-        # Initialize kinematics solvers
-        print(f"[Main] Initializing Kinematics with UMI config...")
-        lula_solver = LulaKinematicsSolver(
-            robot_description_path=LULA_ROBOT_DESCRIPTION_PATH,
-            urdf_path=LULA_URDF_PATH
-        )
+        obj_prim = SingleXFormPrim(prim_path=prim_path, name=object_name)
+        world.scene.add(obj_prim)
+        object_prims[object_name] = obj_prim
+        print(f"[ObjectLoader] Preloaded {raw_name} as {prim_path}")
 
-        art_kine_solver = ArticulationKinematicsSolver(
-            panda,
-            kinematics_solver=lula_solver,
-            end_effector_frame_name="umi_tcp"
-        )
+    # Initialize kinematics solvers
+    print(f"[Main] Initializing Kinematics with UMI config...")
+    lula_solver = LulaKinematicsSolver(
+        robot_description_path=LULA_ROBOT_DESCRIPTION_PATH,
+        urdf_path=LULA_URDF_PATH
+    )
 
-        # Initialize trajectory generator for intervention
-        taskspace_trajectory_generator = initialize_trajectory_generator(panda)
-        if taskspace_trajectory_generator is None:
-            print("[Main] ERROR: Failed to initialize trajectory generator")
-            simulation_app.close()
-            sys.exit()
+    art_kine_solver = ArticulationKinematicsSolver(
+        panda,
+        kinematics_solver=lula_solver,
+        end_effector_frame_name="umi_tcp"
+    )
 
-        # Compute transform from robot base to ArUco tag
-        # T_base_tag = get_T_base_tag(aruco_tag_pose)
-        T_world_aruco = get_T_world_aruco(aruco_tag_pose)
-        
-        # Create replay state for the episode
-        replay_state = create_replay_state(args.session_dir, args.episode, cfg)
-        print(f"[Main] Replay initialized. Episode {args.episode}: steps {replay_state['start_idx']} to {replay_state['end_idx']}")
+    # Compute transform from robot base to ArUco tag
+    # T_base_tag = get_T_base_tag(aruco_tag_pose)
+    T_world_aruco = get_T_world_aruco(aruco_tag_pose)
+
+    data, meta, episode_ends = load_umi_dataset(args.session_dir)
+    total_episodes = len(episode_ends)
+    print(f"[Main] Replay initialized for {total_episodes} episodes.")
 
     # --- Main simulation loop ---
     print("[Main] Starting simulation loop...")
-    
-    while simulation_app.is_running():
-        world.step(render=True)
-        time.sleep(0.01)
-        set_gripper_width(panda, 0.04)
-        
-        # Process replay if active
-        if replay_state is not None and not replay_state["finished"]:
-            if replay_state["intervention_needed"]:
-                # Run the improved grasping with retry logic
-                run_intervention_with_retry(replay_state, panda, lula_solver, art_kine_solver, cfg, T_base_tag, taskspace_trajectory_generator)
-            else:
-                step_replay(
-                    replay_state, panda, lula_solver, art_kine_solver, T_world_aruco, cfg
-                )
-                # When the normal replay finally finishes we visualise the waypoints
-                if replay_state["finished"]:
-                    print("[Main] Replay finished. Visualizing waypoints...")
-                    visualize_waypoints(
-                        replay_state["waypoints"],
-                        episode_idx=replay_state["episode_idx"],
-                        show_orientation=True,
-                        orientation_scale=0.02,
-                        save_path=os.path.join(args.session_dir, 'waypoints.png'),
-                        dpi=150
+
+    completed_episodes = _load_progress(args.session_dir)
+    episodes_to_run = [ep for ep in range(total_episodes) if ep not in completed_episodes]
+    collected_episodes = []
+
+    for episode_idx in episodes_to_run:
+        if not simulation_app.is_running():
+            break
+
+        print(f"[Main] Starting episode {episode_idx}")
+        world.reset()
+        robot_xform.set_local_pose(
+            translation=np.array(franka_translation) / stage_utils.get_stage_units(),
+            orientation=np.array(franka_rotation)
+        )
+        set_camera_view(camera_translation, franka_translation)
+        if object_poses_path and os.path.exists(object_poses_path):
+            object_transforms = load_object_transforms_from_json(
+                object_poses_path,
+                episode_index=episode_idx,
+                aruco_tag_pose=aruco_tag_pose,
+                cfg=cfg,
+            )
+
+            if len(object_transforms) == 0:
+                print(f"[ObjectLoader] Skipping episode: {episode_idx} as objects are not constructed successfully.")
+                continue
+
+            for obj in object_transforms:
+                object_name = _normalize_object_name(obj["object_name"])
+                if object_name not in object_prims:
+                    asset_filename = map_object_name_to_asset(object_name)
+                    full_asset_path = os.path.join(ASSETS_DIR, asset_filename)
+                    if not os.path.exists(full_asset_path):
+                        print(f"[ObjectLoader] WARNING: Asset not found: {full_asset_path}, skipping {object_name}")
+                        continue
+
+                    prim_path = f"/World/{object_name}"
+                    try:
+                        stage_utils.add_reference_to_stage(
+                            usd_path=full_asset_path,
+                            prim_path=prim_path
+                        )
+                    except Exception as e:
+                        print(f"[ObjectLoader] ERROR: Failed to load asset {full_asset_path}: {str(e)}")
+                        continue
+
+                    obj_prim = SingleXFormPrim(prim_path=prim_path, name=object_name)
+                    world.scene.add(obj_prim)
+                    object_prims[object_name] = obj_prim
+
+                obj_prim = object_prims[object_name]
+                obj_prim.set_world_pose(position=obj["position"])
+                print(f"[ObjectLoader] Positioned {object_name} at {obj['position']}")
+
+        replay_state = create_replay_state(args.session_dir, episode_idx, cfg)
+        print(f"[Main] Replay initialized. Episode {episode_idx}: steps {replay_state['start_idx']} to {replay_state['end_idx']}")
+
+        rgb_list = []
+        eef_pos_list = []
+        eef_rot_list = []
+        gripper_list = []
+        episode_start_pose = None
+        episode_end_pose = None
+
+        while simulation_app.is_running():
+            world.step(render=True)
+            time.sleep(0.01)
+            set_gripper_width(panda, 0.04)
+
+            if replay_state is not None and not replay_state["finished"]:
+                if replay_state["intervention_needed"]:
+                    run_intervention_with_retry(replay_state, panda, lula_solver, art_kine_solver, cfg, T_base_tag, taskspace_trajectory_generator)
+                else:
+                    step_replay(
+                        replay_state, panda, lula_solver, art_kine_solver, T_world_aruco, cfg
                     )
+                    if replay_state["finished"]:
+                        print("[Main] Replay finished. Visualizing waypoints...")
+                        visualize_waypoints(
+                            replay_state["waypoints"],
+                            episode_idx=replay_state["episode_idx"],
+                            show_orientation=True,
+                            orientation_scale=0.02,
+                            save_path=os.path.join(args.session_dir, 'waypoints.png'),
+                            dpi=150
+                        )
+
+            img = camera.get_rgb()
+            if img is not None:
+                rgb_list.append(img)
+
+            eef_pose6d = get_end_effector_pose(panda, lula_solver, art_kine_solver)
+            eef_pos_list.append(eef_pose6d[:3])
+            eef_rot_list.append(eef_pose6d[3:])
+
+            joint_pos = panda.get_joint_positions()
+            gripper_width = joint_pos[-2] + joint_pos[-1]
+            gripper_list.append([gripper_width])
+
+            if episode_start_pose is None:
+                episode_start_pose = eef_pose6d.copy()
+
+            if replay_state["finished"]:
+                episode_end_pose = eef_pose6d.copy()
+                break
+
+        if episode_end_pose is None and eef_pos_list:
+            episode_end_pose = np.concatenate([eef_pos_list[-1], eef_rot_list[-1]])
+
+        if not rgb_list:
+            print(f"[Main] WARNING: No frames captured for episode {episode_idx}")
+            continue
+
+        demo_start_list = np.repeat(episode_start_pose[None, :], len(rgb_list), axis=0)
+        demo_end_list = np.repeat(episode_end_pose[None, :], len(rgb_list), axis=0)
+        episode_record = {
+            "episode_idx": episode_idx,
+            "rgb": np.stack(rgb_list, 0),
+            "eef_pos": np.stack(eef_pos_list, 0),
+            "eef_rot": np.stack(eef_rot_list, 0),
+            "gripper": np.stack(gripper_list, 0),
+            "demo_start": demo_start_list,
+            "demo_end": demo_end_list,
+        }
+        collected_episodes.append(episode_record)
+
+        if is_episode_completed(episode_record):
+            completed_episodes.add(episode_idx)
+            _save_progress(args.session_dir, completed_episodes)
+
+    successful_episodes = [ep for ep in collected_episodes if is_episode_completed(ep)]
+    if successful_episodes:
+        output_zarr = os.path.join(args.session_dir, "simulation_dataset.zarr.zip")
+        save_multi_episode_dataset(output_zarr, successful_episodes)
 
     simulation_app.close()
 

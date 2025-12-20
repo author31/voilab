@@ -12,7 +12,7 @@ import omni.usd
 import isaacsim.core.utils.stage as stage_utils
 from isaacsim.core.api import World
 from isaacsim.core.prims import SingleXFormPrim
-from pxr import UsdPhysics
+from pxr import Sdf, UsdGeom, UsdPhysics
 from utils import set_prim_scale, pose_to_transform_matrix
 
 
@@ -30,6 +30,16 @@ OBJECT_NAME_TO_ASSET = {
 }
 
 MAXIMUM_Z_HEIGHT = 0.9
+
+
+def _ensure_xform_prim(prim_path: str) -> None:
+    stage = omni.usd.get_context().get_stage()
+    if stage is None:
+        raise RuntimeError("[ObjectLoader] USD stage is not available")
+    prim = stage.GetPrimAtPath(prim_path)
+    if prim.IsValid():
+        return
+    UsdGeom.Xform.Define(stage, Sdf.Path(prim_path))
 
 
 def map_object_name_to_asset(object_name: str) -> str:
@@ -57,7 +67,108 @@ def map_object_name_to_asset(object_name: str) -> str:
     return f"{base_name}.usd"
 
 
-def load_objects_from_json(json_path: str, assets_dir: str, world: World, episode_index: int = 0, aruco_tag_pose: dict = None, cfg: dict = None):
+def load_object_transforms_from_json(
+    json_path: str,
+    episode_index: int = 0,
+    aruco_tag_pose: dict = None,
+    cfg: dict = None,
+):
+    """
+    Simplified loader: compute object transforms from a specific episode.
+
+    Returns:
+        list[dict]: Each entry has keys:
+            object_name (str)
+            transform (np.ndarray, shape (4, 4))
+            pose_rt (np.ndarray, shape (2, 3)) [rotvec, translation]
+            position (np.ndarray, shape (3,))
+            quat_wxyz (np.ndarray, shape (4,))
+    """
+    # Load JSON with error handling
+    try:
+        with open(json_path, 'r') as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        print(f"[ObjectLoader] ERROR: File not found: {json_path}")
+        return []
+    except json.JSONDecodeError as e:
+        print(f"[ObjectLoader] ERROR: Invalid JSON format in {json_path}: {str(e)}")
+        return []
+    except Exception as e:
+        print(f"[ObjectLoader] ERROR: Unexpected error loading JSON: {str(e)}")
+        return []
+
+    episodes = data if isinstance(data, list) else [data]
+    if episode_index < 0 or episode_index >= len(episodes):
+        print(f"[ObjectLoader] ERROR: Episode index {episode_index} out of range (0-{len(episodes)-1}), skipping object loading")
+        return []
+
+    episode = episodes[episode_index]
+    if episode.get('status') != 'full':
+        print(f"[ObjectLoader] Episode {episode_index} is not complete, skipping object loading")
+        return []
+
+    object_maximum_z_height = (cfg or {}).get("environment_vars", {}).get("OBJECT_MAXIMUM_Z_HEIGHT", 0.0)
+    objects = episode.get('objects', [])
+
+    if aruco_tag_pose is not None:
+        aruco_tag_position = np.array(aruco_tag_pose.get('translation', [0, 0, 0]), dtype=np.float64)
+        aruco_tag_quat_wxyz = np.array(aruco_tag_pose.get('rotation_quat', [1, 0, 0, 0]), dtype=np.float64)
+        T_aruco_tag = pose_to_transform_matrix(aruco_tag_position, aruco_tag_quat_wxyz)
+    else:
+        T_aruco_tag = np.eye(4, dtype=np.float64)
+
+    results = []
+    for obj in objects:
+        object_name = obj.get('object_name')
+        rvec = obj.get('rvec')
+        tvec = obj.get('tvec')
+        if not object_name or rvec is None or tvec is None:
+            continue
+        if len(rvec) != 3 or len(tvec) != 3:
+            continue
+
+        rvec = np.array(rvec, dtype=np.float64)
+        tvec = np.array(tvec, dtype=np.float64)
+
+        rot = R.from_rotvec(rvec)
+        T_object = np.eye(4, dtype=np.float64)
+        T_object[:3, :3] = rot.as_matrix()
+        T_object[:3, 3] = tvec
+
+        T_world = T_aruco_tag @ T_object
+        world_position = T_world[:3, 3].copy()
+        world_position[2] = min(world_position[2], object_maximum_z_height)
+        T_world[:3, 3] = world_position
+
+        world_rot = R.from_matrix(T_world[:3, :3])
+        quat_xyzw = world_rot.as_quat()
+        quat_wxyz = np.array([quat_xyzw[3], quat_xyzw[0], quat_xyzw[1], quat_xyzw[2]], dtype=np.float64)
+        world_rvec = world_rot.as_rotvec()
+        pose_rt = np.stack([world_rvec, world_position], axis=0)
+
+        results.append(
+            {
+                "object_name": object_name,
+                "transform": T_world,
+                "pose_rt": pose_rt,
+                "position": world_position,
+                "quat_wxyz": quat_wxyz,
+            }
+        )
+
+    return results
+
+
+def load_objects_from_json(
+    json_path: str,
+    assets_dir: str,
+    world: World,
+    episode_index: int = 0,
+    aruco_tag_pose: dict = None,
+    cfg: dict = None,
+    parent_prim_path: str = "/World",
+):
     """
     Load objects from a specific episode in object_poses.json and spawn them in the scene.
 
@@ -74,6 +185,7 @@ def load_objects_from_json(json_path: str, assets_dir: str, world: World, episod
                     transformed from aruco tag frame to world frame using
                     homogeneous transformation: T_world = T_aruco_tag @ T_object
         cfg: Configuration dictionary containing object maximum z height
+        parent_prim_path: Parent prim under which to spawn all objects (default: /World).
     """
     # Load JSON with error handling
     try:
@@ -103,8 +215,10 @@ def load_objects_from_json(json_path: str, assets_dir: str, world: World, episod
     episode = episodes[episode_index]
     if episode.get('status') != 'full':
         print(f"[ObjectLoader] Episode {episode_index} is not complete, skipping object loading")
-        sys.exit(1)
+        return False
 
+    parent_prim_path = parent_prim_path.rstrip("/") if parent_prim_path != "/" else parent_prim_path
+    _ensure_xform_prim(parent_prim_path)
 
     objects = episode.get('objects', [])
     print(f"[ObjectLoader] Found {len(objects)} objects in episode {episode_index}")
@@ -158,8 +272,8 @@ def load_objects_from_json(json_path: str, assets_dir: str, world: World, episod
             print(f"[ObjectLoader] WARNING: Asset not found: {full_asset_path}, skipping {object_name}")
             continue
 
-        # Create unique prim path
-        prim_path = f"/World/{object_name}"
+        # Create unique prim path (spawn under a dedicated parent for easy cleanup)
+        prim_path = f"{parent_prim_path}/{object_name}"
 
         try:
             stage_utils.add_reference_to_stage(

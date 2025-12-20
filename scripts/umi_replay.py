@@ -38,7 +38,7 @@ def load_umi_dataset(session_dir: str):
     
     extract_path = os.path.splitext(zarr_zip_path)[0]
     if not os.path.exists(extract_path):
-        print(f"[umi_replay] Extracting dataset to {extract_path}...")
+        print(f"[UMIREPLAY] Extracting dataset to {extract_path}...")
         with zipfile.ZipFile(zarr_zip_path, 'r') as zip_ref:
             zip_ref.extractall(extract_path)
     
@@ -155,7 +155,7 @@ def compute_replay_step(data, step_idx: int, T_world_aruco: np.ndarray, offsets:
         target_pos[2] += offsets.get('z', 0.0)
     
     # Debug logging for trajectory replay
-    print(f"[umi_replay] Step {step_idx} | Gripper width: {gripper_width:.4f} m | Target position: {target_pos} | Target quaternion (WXYZ): {target_quat_wxyz}")
+    print(f"[UMIREPLAY] Step {step_idx} | Gripper width: {gripper_width:.4f} m | Target position: {target_pos} | Target quaternion (WXYZ): {target_quat_wxyz}")
     return target_pos, target_rot, target_quat_wxyz, gripper_width
 
 
@@ -239,7 +239,7 @@ def visualize_waypoints(
         matplotlib.figure.Figure: The generated figure, or None if no waypoints
     """
     if not waypoints:
-        print("[umi_replay] No waypoints to visualize.")
+        print("[UMIREPLAY] No waypoints to visualize.")
         return None
     
     # Extract positions and rotations
@@ -323,7 +323,7 @@ def visualize_waypoints(
     # Save if path provided
     if save_path:
         fig.savefig(save_path, dpi=dpi, bbox_inches='tight')
-        print(f"[umi_replay] Waypoint visualization saved to {save_path}")
+        print(f"[UMIREPLAY] Waypoint visualization saved to {save_path}")
     
     plt.show()
     return fig

@@ -50,7 +50,11 @@ class KitchenTaskRegistry:
                 "SCENE_CONFIG": "kitchen_scene",
                 "OBJECT_MAXIMUM_Z_HEIGHT": 1.1,
                 "TARGET_OBJECT_PATH": cls.TARGET_OBJECT_PATH,
-                "SUPPORT_OBJECT": cls.SUPPORT_OBJECT
+                "SUPPORT_OBJECT": cls.SUPPORT_OBJECT,
+                "PRELOAD_OBJECTS": [
+                    {"name": "pink cup", "assets": "cup_pink.usd"},
+                    {"name": "blue cup", "assets": "cup_blue.usd"},
+                ],
             }
         }
 
