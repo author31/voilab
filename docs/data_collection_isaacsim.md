@@ -18,7 +18,7 @@ docker --version
 or
 docker version
 ```
-
+Which supposed to show the version information of docker if succesfully installed.
 In addition, ensure that the voilab environment is correctly configured and that all dependencies required for NVIDIA Isaac Sim v5.1.0 are installed and accessible.
 
 ---
