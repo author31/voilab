@@ -55,10 +55,10 @@ class LivingRoomTaskRegistry:
                 "RED_BLOCK_PATH": cls.RED_BLOCK,
                 "STORAGE_BOX_PATH": cls.STORAGE_BOX,
                 "PRELOAD_OBJECTS": [
-                    {"name": "blue_block", "assets": "cylinder.usd"},
-                    {"name": "green_block", "assets": "bridge.usd"},
-                    {"name": "red_block", "assets": "triangle.usd"},
-                    {"name": "storage_box", "assets": "storage_box.usd"},
+                    {"name": "blue_block", "assets": "cylinder.usd", "prim_path": "/World/cylinder"},
+                    {"name": "green_block", "assets": "bridge.usd", "prim_path": "/World/bridge"},
+                    {"name": "red_block", "assets": "triangle.usd", "prim_path": "/World/triangle"},
+                    {"name": "storage_box", "assets": "storage_box.usd", "prim_path": "/World/stroage_box"},
                 ],
                 "FIXED_OBJECTS": [
                     {

@@ -64,7 +64,7 @@ from isaacsim.sensors.camera import Camera
 from pxr import Usd, UsdGeom, UsdPhysics, Sdf, Gf
 
 from scipy.spatial.transform import Rotation as R
-from object_loader import load_object_transforms_from_json, map_object_name_to_asset
+from object_loader import load_object_transforms_from_json
 import utils
 import lula
 
@@ -449,14 +449,34 @@ def step_replay(replay_state: dict, panda, lula_solver, art_kine_solver, T_world
         data, step_idx, T_world_aruco, offsets
     )
 
-    target_obj_path = cfg["environment_vars"]["TARGET_OBJECT_PATH"]
-    T_world_obj = get_object_world_pose(target_obj_path)
-    obj_pos = T_world_obj[:3, 3]
-    dist_to_obj = np.linalg.norm(target_pos - obj_pos)
-    print(f"[Main] Distance to object {target_obj_path}: {dist_to_obj}")
+    preload_objects = cfg.get("environment_vars", {}).get("PRELOAD_OBJECTS", [])
+    dist_to_objects = []
+    for entry in preload_objects:
+        assert isinstance(entry, dict), f"PRELOAD_OBJECTS entry must be a dict: {entry}"
+        raw_name = entry.get("name")
+        prim_path = entry.get("prim_path")
+        assert raw_name, f"Missing name for PRELOAD_OBJECTS entry: {entry}"
+        assert prim_path, f"Missing prim_path for PRELOAD_OBJECTS entry: {entry}"
 
-    # If we are still farther than 10 cm, keep following the recorded demo
-    if dist_to_obj > 0:
+        try:
+            T_world_obj = get_object_world_pose(prim_path)
+        except RuntimeError as exc:
+            print(f"[Main] WARNING: {exc}")
+            continue
+
+        obj_pos = T_world_obj[:3, 3]
+        dist_to_objects.append((prim_path, np.linalg.norm(target_pos - obj_pos)))
+
+    if dist_to_objects:
+        for prim_path, dist_to_obj in dist_to_objects:
+            print(f"[Main] Distance to object {prim_path}: {dist_to_obj:.3f}")
+        should_continue = any(dist > 0.12 for _, dist in dist_to_objects)
+    else:
+        print("[Main] WARNING: No valid PRELOAD_OBJECTS for distance checks; continuing replay.")
+        should_continue = True
+
+    # If any object is still farther than 12 cm, keep following the recorded demo
+    if should_continue:
         draw_coordinate_frame(target_pos, target_rot, axis_length=0.05, draw_interface=DEBUG_DRAW)
         calibrate_robot_base(panda, lula_solver)
         success = apply_ik_solution(panda, art_kine_solver, target_pos, target_quat_wxyz)
@@ -477,7 +497,7 @@ def step_replay(replay_state: dict, panda, lula_solver, art_kine_solver, T_world
         return True
 
     # replay_state["current_step"] += 1
-    print(f"[Main] *** Intervention triggered at step {step_idx} (dist={dist_to_obj:.3f} m) ***")
+    print(f"[Main] *** Intervention triggered at step {step_idx} (all distances <= 0.12 m) ***")
     replay_state["intervention_needed"] = True
     replay_state["intervention_step"] = step_idx
     replay_state["saved_ee_pose"] = (target_pos, target_rot)
@@ -562,7 +582,29 @@ def run_intervention(replay_state, panda, art_kine_solver, cfg, taskspace_trajec
     
     # Get current gripper pose and target object pose
     cur_pos, cur_rot = panda.gripper.get_world_pose()
-    target_obj_prim_path = cfg["environment_vars"]["TARGET_OBJECT_PATH"]
+    preload_objects = cfg.get("environment_vars", {}).get("PRELOAD_OBJECTS", [])
+    target_candidates = []
+    for entry in preload_objects:
+        assert isinstance(entry, dict), f"PRELOAD_OBJECTS entry must be a dict: {entry}"
+        raw_name = entry.get("name")
+        prim_path = entry.get("prim_path")
+        assert raw_name, f"Missing name for PRELOAD_OBJECTS entry: {entry}"
+        assert prim_path, f"Missing prim_path for PRELOAD_OBJECTS entry: {entry}"
+
+        try:
+            T_world_obj = get_object_world_pose(prim_path)
+        except RuntimeError as exc:
+            print(f"[Main] WARNING: {exc}")
+            continue
+
+        obj_pos = T_world_obj[:3, 3]
+        target_candidates.append((prim_path, np.linalg.norm(cur_pos - obj_pos)))
+
+    if not target_candidates:
+        print("[Main] ERROR: No valid PRELOAD_OBJECTS for intervention.")
+        return False
+
+    target_obj_prim_path, _ = min(target_candidates, key=lambda item: item[1])
     T_world_obj = get_object_world_pose(target_obj_prim_path)
     obj_size = get_object_world_size(target_obj_prim_path)
     height = obj_size[1]/2
@@ -851,22 +893,18 @@ def main():
     object_poses_path = os.path.join(args.session_dir, 'demos', 'mapping', 'object_poses.json')
     print(f"[Main] Looking for object poses at: {object_poses_path}")
     preload_objects = cfg.get("environment_vars", {}).get("PRELOAD_OBJECTS", [])
+    preload_by_name = {}
     for entry in preload_objects:
-        if isinstance(entry, str):
-            raw_name = entry
-            asset_filename = map_object_name_to_asset(raw_name)
-            prim_path = f"/World/{_normalize_object_name(raw_name)}"
-        elif isinstance(entry, dict):
-            raw_name = entry.get("name", "")
-            asset_filename = entry.get("assets") or map_object_name_to_asset(raw_name)
-            prim_path = entry.get("prim_path", f"/World/{_normalize_object_name(raw_name)}")
-        else:
-            continue
+        assert isinstance(entry, dict), f"PRELOAD_OBJECTS entry must be a dict: {entry}"
+        raw_name = entry.get("name")
+        asset_filename = entry.get("assets")
+        prim_path = entry.get("prim_path")
+        assert raw_name, f"Missing name for PRELOAD_OBJECTS entry: {entry}"
+        assert asset_filename, f"Missing assets for PRELOAD_OBJECTS entry: {entry}"
+        assert prim_path, f"Missing prim_path for PRELOAD_OBJECTS entry: {entry}"
 
         object_name = _normalize_object_name(raw_name)
-        if not raw_name or not asset_filename:
-            print(f"[ObjectLoader] WARNING: Invalid PRELOAD_OBJECTS entry: {entry}")
-            continue
+        preload_by_name[object_name] = entry
         if object_name in object_prims:
             continue
 
@@ -943,13 +981,15 @@ def main():
             for obj in object_transforms:
                 object_name = _normalize_object_name(obj["object_name"])
                 if object_name not in object_prims:
-                    asset_filename = map_object_name_to_asset(object_name)
+                    preload_entry = preload_by_name.get(object_name)
+                    assert preload_entry, f"Object {object_name} missing from PRELOAD_OBJECTS"
+                    asset_filename = preload_entry["assets"]
+                    prim_path = preload_entry["prim_path"]
                     full_asset_path = os.path.join(ASSETS_DIR, asset_filename)
                     if not os.path.exists(full_asset_path):
                         print(f"[ObjectLoader] WARNING: Asset not found: {full_asset_path}, skipping {object_name}")
                         continue
 
-                    prim_path = f"/World/{object_name}"
                     try:
                         stage_utils.add_reference_to_stage(
                             usd_path=full_asset_path,

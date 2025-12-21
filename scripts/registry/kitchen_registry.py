@@ -14,8 +14,10 @@ class KitchenTaskRegistry:
     ARUCO_TAG_TRANSLATION = np.array([4.9652, 2.45, 0.9])
     ARUCO_TAG_ROTATION_EULER = np.array([0.0, 0.0, 180.0])
     ARUCO_TAG_ROTATION_QUAT = Rotation.from_euler('xyz', ARUCO_TAG_ROTATION_EULER, degrees=True).as_quat() # x,y,z,w
-    TARGET_OBJECT_PATH = "/World/blue_cup"
-    SUPPORT_OBJECT_PATH = "/World/pink_cup"
+    PRELOAD_OBJECTS = [
+        {"name": "pink cup", "assets": "cup_pink.usd", "prim_path": "/World/pink_cup"},
+        {"name": "blue cup", "assets": "cup_blue.usd", "prim_path": "/World/blue_cup"},
+    ]
     
     # Robot poses (Franka)
     FRANKA_TRANSLATION = np.array([4.5, 2.7, 0.9000000134110451])
@@ -49,12 +51,7 @@ class KitchenTaskRegistry:
                 "ENVIRONMENT_NAME": cls.ENVIRONMENT_NAME,
                 "SCENE_CONFIG": "kitchen_scene",
                 "OBJECT_MAXIMUM_Z_HEIGHT": 1.1,
-                "TARGET_OBJECT_PATH": cls.TARGET_OBJECT_PATH,
-                "SUPPORT_OBJECT_PATH": cls.SUPPORT_OBJECT_PATH,
-                "PRELOAD_OBJECTS": [
-                    {"name": "pink cup", "assets": "cup_pink.usd"},
-                    {"name": "blue cup", "assets": "cup_blue.usd"},
-                ],
+                "PRELOAD_OBJECTS": cls.PRELOAD_OBJECTS,
             }
         }
 
@@ -72,8 +69,8 @@ class KitchenTaskRegistry:
 
     @classmethod
     def is_episode_completed(cls, episode_record: Dict[str, Any]) -> bool:
-        blue_cup_pos, _ = get_object_pose(cls.TARGET_OBJECT_PATH)
-        pink_cup_pos, _ = get_object_pose(cls.SUPPORT_OBJECT_PATH)
+        blue_cup_pos, _ = get_object_pose(cls._get_preload_prim_path("blue cup"))
+        pink_cup_pos, _ = get_object_pose(cls._get_preload_prim_path("pink cup"))
 
         # 1. Vertical ordering check
         vertical_order_ok = blue_cup_pos[2] > pink_cup_pos[2]
@@ -85,6 +82,15 @@ class KitchenTaskRegistry:
         success = vertical_order_ok and xy_alignment_ok 
 
         return success
+
+    @classmethod
+    def _get_preload_prim_path(cls, object_name: str) -> str:
+        for entry in cls.PRELOAD_OBJECTS:
+            if entry.get("name") == object_name:
+                prim_path = entry.get("prim_path")
+                if prim_path:
+                    return prim_path
+        raise ValueError(f"Missing PRELOAD_OBJECTS prim_path for {object_name}")
 
     @staticmethod
     def xyzw_to_wxyz(q_xyzw):
