@@ -2,7 +2,7 @@ import numpy as np
 from pathlib import Path
 from typing import Dict, Any
 from scipy.spatial.transform import Rotation
-
+from utils import get_object_pose
 
 
 class KitchenTaskRegistry:
@@ -72,7 +72,24 @@ class KitchenTaskRegistry:
 
     @classmethod
     def is_episode_completed(cls, episode_record: Dict[str, Any]) -> bool:
-        return True
+        blue_cup_pos, _ = get_object_pose(cls.TARGET_OBJECT_PATH)
+        pink_cup_pos, _ = get_object_pose(cls.SUPPORT_OBJECT)
+
+        # 1. Vertical ordering check
+        vertical_order_ok = blue_cup_pos[2] > pink_cup_pos[2]
+
+        # 2. XY alignment check
+        xy_dist = np.linalg.norm(blue_cup_pos[:2] - pink_cup_pos[:2])
+        xy_alignment_ok = xy_dist < 0.03
+
+        # 3. Height consistency check
+        expected_height = 0.09
+        height_error = abs((blue_cup_pos[2] - pink_cup_pos[2]) - expected_height)
+        height_ok = height_error < 0.015
+
+        success = vertical_order_ok and xy_alignment_ok and height_ok
+
+        return success
 
     @staticmethod
     def xyzw_to_wxyz(q_xyzw):

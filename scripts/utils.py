@@ -391,3 +391,49 @@ def gf_matrix4d_to_numpy(matrix) -> np.ndarray:
     # Create a NumPy array from the data (NumPy uses row-major by default)
     return np.array(data, dtype=np.float64).T
 
+
+def get_object_pose(object_prim_path: str):
+    try:
+        import omni.usd
+        from pxr import Usd, UsdGeom
+    except ImportError:
+        return None, None
+
+    stage = omni.usd.get_context().get_stage()
+    prim = stage.GetPrimAtPath(object_prim_path)
+    if not prim.IsValid():
+        return None, None
+
+    cache = UsdGeom.XformCache(Usd.TimeCode.Default())
+    T = np.array(cache.GetLocalToWorldTransform(prim))
+
+    pos = T[:3, 3]
+    rot = R.from_matrix(T[:3, :3]).as_quat()  # xyzw
+
+    return pos, rot
+
+def get_object_world_boundary(prim_path: str):
+    try:
+        import omni.usd
+        from pxr import Usd, UsdGeom
+    except ImportError:
+        return None, None
+    
+    stage = omni.usd.get_context().get_stage()
+    prim = stage.GetPrimAtPath(prim_path)
+    if not prim.IsValid():
+        raise RuntimeError(f"Prim not found: {prim_path}")
+
+    bbox_cache = UsdGeom.BBoxCache(
+        Usd.TimeCode.Default(),
+        includedPurposes=[UsdGeom.Tokens.default_],
+        useExtentsHint=True,
+    )
+
+    bbox = bbox_cache.ComputeWorldBound(prim)
+    box = bbox.GetBox()
+
+    min_pt = np.array(box.GetMin())
+    max_pt = np.array(box.GetMax())
+
+    return min_pt, max_pt

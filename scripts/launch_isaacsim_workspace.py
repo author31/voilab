@@ -741,10 +741,6 @@ def save_multi_episode_dataset(output_path: str, episodes: list[dict]) -> None:
     print("[SAVE] replay_dataset.zarr.zip saved at:", output_path)
 
 
-def is_episode_completed(episode_record: dict) -> bool:
-    return True
-
-
 def _load_progress(session_dir: str) -> set[int]:
     progress_path = os.path.join(session_dir, ".previous_progress.json")
     if not os.path.exists(progress_path):
@@ -783,6 +779,7 @@ def main():
     assert cfg.get("aruco_tag_pose") is not None, "Aruco tag pose is required"
     assert cfg.get("franka_pose") is not None, "Franka pose is required"
     assert cfg.get("camera_pose") is not None, "Camera pose is required"
+    is_episode_completed = registry_class.is_episode_completed
 
     print(f"[Main] Configuration: {cfg}")
     franka_pose = cfg.get("franka_pose", {})
@@ -1047,6 +1044,7 @@ def main():
             _save_progress(args.session_dir, completed_episodes)
 
     successful_episodes = [ep for ep in collected_episodes if is_episode_completed(ep)]
+    print(f"[Main] Total successful trials collected: {len(successful_episodes)}")
     if successful_episodes:
         output_zarr = os.path.join(args.session_dir, "simulation_dataset.zarr.zip")
         save_multi_episode_dataset(output_zarr, successful_episodes)
