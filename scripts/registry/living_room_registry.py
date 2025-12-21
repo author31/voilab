@@ -12,6 +12,10 @@ class LivingRoomTaskRegistry:
     ARUCO_TAG_TRANSLATION = np.array([1.62, 4.96, 0.75])
     ARUCO_TAG_ROTATION_EULER = np.array([0.0, 0.0, 0.0])
     ARUCO_TAG_ROTATION_QUAT = Rotation.from_euler('xyz', ARUCO_TAG_ROTATION_EULER, degrees=True).as_quat() # x,y,z,w
+    BLUE_BLOCK = "/World/cylinder"
+    GREEN_BLOCK = "/World/bridge"
+    RED_BLOCK = "/World/triangle"
+    STORAGE_BOX = "/World/stroage_box"
 
     # Robot poses (Franka)
     FRANKA_TRANSLATION = np.array([1.475993595877246, 11.351613434539319, 0.8570439802062628])
@@ -39,6 +43,17 @@ class LivingRoomTaskRegistry:
             "environment_vars": {
                 "TASK_NAME": cls.TASK_NAME,
                 "SCENE_CONFIG": "living_scene",
+                "OBJECT_MAXIMUM_Z_HEIGHT": 1.1,
+                "BLUE_BLOCK_PATH": cls.BLUE_BLOCK,
+                "GREEN_BLOCK_PATH": cls.GREEN_BLOCK,
+                "RED_BLOCK_PATH": cls.RED_BLOCK,
+                "STORAGE_BOX_PATH": cls.STORAGE_BOX,
+                "PRELOAD_OBJECTS": [
+                    {"name": "blue_block", "assets": "cylinder.usd"},
+                    {"name": "green_block", "assets": "bridge.usd"},
+                    {"name": "red_block", "assets": "triangle.usd"},
+                    {"name": "storage_box", "assets": "storage_box.usd"},
+                ],
             }
         }
 

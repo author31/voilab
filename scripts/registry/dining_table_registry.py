@@ -12,6 +12,9 @@ class DiningTableTaskRegistry:
     ARUCO_TAG_TRANSLATION = np.array([(1.7562751943015695, 11.317383010588898, 0.8532326509384047)])
     ARUCO_TAG_ROTATION_EULER = np.array([0.0, 0.0, 0.0])
     ARUCO_TAG_ROTATION_QUAT = Rotation.from_euler('xyz', ARUCO_TAG_ROTATION_EULER, degrees=True).as_quat() # x,y,z,w
+    FORK_PATH = "/World/fork"
+    KNIFE_PATH = "/World/knife"
+    PLATE_PATH = "/World/plate"
 
     # Robot poses (Franka)
     FRANKA_TRANSLATION = np.array([1.4471314866267897, 4.953638444125494, 0.7547650876392805])
@@ -39,6 +42,15 @@ class DiningTableTaskRegistry:
             "environment_vars": {
                 "TASK_NAME": cls.TASK_NAME,
                 "SCENE_CONFIG": "dining_scene",
+                "OBJECT_MAXIMUM_Z_HEIGHT": 1.1,
+                "KNIFE_PATH": cls.KNIFE_PATH,
+                "FORK_PATH": cls.FORK_PATH,
+                "PLATE_PATH": cls.PLATE_PATH,
+                "PRELOAD_OBJECTS": [
+                    {"name": "knife", "assets": "knife.usd"},
+                    {"name": "fork", "assets": "fork.usd"},
+                    {"name": "plate", "assets": "plate.usd"},
+                ],
             }
         }
 
