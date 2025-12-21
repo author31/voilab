@@ -70,6 +70,10 @@ class KitchenTaskRegistry:
 
         return True
 
+    @classmethod
+    def is_episode_completed(cls, episode_record: Dict[str, Any]) -> bool:
+        return True
+
     @staticmethod
     def xyzw_to_wxyz(q_xyzw):
         assert q_xyzw.shape[0] == 4

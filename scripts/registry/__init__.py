@@ -14,3 +14,8 @@ def get_task_registry(task_name: str):
     if task_name not in TASK_REGISTRIES:
         raise ValueError(f"Unknown task: {task_name}. Available tasks: {list(TASK_REGISTRIES.keys())}")
     return TASK_REGISTRIES[task_name]
+
+
+def get_episode_completion_fn(task_name: str):
+    registry_cls = get_task_registry(task_name)
+    return getattr(registry_cls, "is_episode_completed", lambda record: True)
