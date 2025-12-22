@@ -2,39 +2,59 @@ import numpy as np
 from pathlib import Path
 from typing import Dict, Any
 from scipy.spatial.transform import Rotation
-
+from utils import get_object_pose
 
 
 class KitchenTaskRegistry:
     """Registry for kitchen task configuration"""
 
-    TASK_NAME = "kitchen"
+    ENVIRONMENT_NAME = "kitchen"
+    TASK_NAME = "stacking"
+    # ArUco tag pose
+    ARUCO_TAG_TRANSLATION = np.array([4.9652, 2.45, 0.9])
+    ARUCO_TAG_ROTATION_EULER = np.array([0.0, 0.0, 180.0])
+    ARUCO_TAG_ROTATION_QUAT = Rotation.from_euler('xyz', ARUCO_TAG_ROTATION_EULER, degrees=True).as_quat() # x,y,z,w
+    TARGET_OBJECT_PATH = "/World/blue_cup"
+    SUPPORT_OBJECT_PATH = "/World/pink_cup"
+    
     # Robot poses (Franka)
-    FRANKA_TRANSLATION = np.array([4.90000007301569, 3.2254199483665964, 0.9000000134110451])
+    FRANKA_TRANSLATION = np.array([4.5, 2.7, 0.9000000134110451])
     FRANKA_ROTATION_EULER = np.array([0.0, 0.0, 0.0])
     FRANKA_ROTATION_QUAT = Rotation.from_euler('xyz', FRANKA_ROTATION_EULER, degrees=True).as_quat() # x,y,z,w
 
     # Camera poses (enhanced from current)
-    CAMERA_TRANSLATION = np.array([2.974631262928433, 2.68664950400609, 1.966344261667377])
-    CAMERA_ROTATION_EULER = np.array([75.43, 0.0, -91.64])
+    CAMERA_TRANSLATION = np.array([7.5, 2.68664950400609, 2.2])
+    CAMERA_ROTATION_EULER = np.array([71.30, 0.0, 89.])
     CAMERA_ROTATION_QUAT = Rotation.from_euler('xyz', CAMERA_ROTATION_EULER, degrees=True).as_quat() # x,y,z,w
 
     @classmethod
     def get_config(cls) -> Dict[str, Any]:
         return {
+            "aruco_tag_pose": {
+                "translation": cls.ARUCO_TAG_TRANSLATION,
+                "rotation_euler_deg": cls.ARUCO_TAG_ROTATION_EULER,
+                "rotation_quat": cls.xyzw_to_wxyz(cls.ARUCO_TAG_ROTATION_QUAT),
+            },
             "camera_pose": {
                 "translation": cls.CAMERA_TRANSLATION,
                 "rotation_euler_deg": cls.CAMERA_ROTATION_EULER,
-                "rotation_quat": cls.xyzw_to_wxyz(cls.FRANKA_ROTATION_QUAT),
+                "rotation_quat": cls.xyzw_to_wxyz(cls.CAMERA_ROTATION_QUAT),
             },
             "franka_pose": {
                 "translation": cls.FRANKA_TRANSLATION,
                 "rotation_euler_deg": cls.FRANKA_ROTATION_EULER,
-                "rotation_quat": cls.xyzw_to_wxyz(cls.CAMERA_ROTATION_QUAT),
+                "rotation_quat": cls.xyzw_to_wxyz(cls.FRANKA_ROTATION_QUAT),
             },
             "environment_vars": {
-                "TASK_NAME": cls.TASK_NAME,
+                "ENVIRONMENT_NAME": cls.ENVIRONMENT_NAME,
                 "SCENE_CONFIG": "kitchen_scene",
+                "OBJECT_MAXIMUM_Z_HEIGHT": 1.1,
+                "TARGET_OBJECT_PATH": cls.TARGET_OBJECT_PATH,
+                "SUPPORT_OBJECT_PATH": cls.SUPPORT_OBJECT_PATH,
+                "PRELOAD_OBJECTS": [
+                    {"name": "pink cup", "assets": "cup_pink.usd"},
+                    {"name": "blue cup", "assets": "cup_blue.usd"},
+                ],
             }
         }
 
@@ -49,6 +69,27 @@ class KitchenTaskRegistry:
             return False
 
         return True
+
+    @classmethod
+    def is_episode_completed(cls, episode_record: Dict[str, Any]) -> bool:
+        blue_cup_pos, _ = get_object_pose(cls.TARGET_OBJECT_PATH)
+        pink_cup_pos, _ = get_object_pose(cls.SUPPORT_OBJECT_PATH)
+
+        # 1. Vertical ordering check
+        vertical_order_ok = blue_cup_pos[2] > pink_cup_pos[2]
+
+        # 2. XY alignment check
+        xy_dist = np.linalg.norm(blue_cup_pos[:2] - pink_cup_pos[:2])
+        xy_alignment_ok = xy_dist < 0.03
+
+        # 3. Height consistency check
+        expected_height = 0.09
+        height_error = abs((blue_cup_pos[2] - pink_cup_pos[2]) - expected_height)
+        height_ok = height_error < 0.015
+
+        success = vertical_order_ok and xy_alignment_ok and height_ok
+
+        return success
 
     @staticmethod
     def xyzw_to_wxyz(q_xyzw):
