@@ -2,7 +2,7 @@ import numpy as np
 from pathlib import Path
 from typing import Dict, Any
 from scipy.spatial.transform import Rotation
-
+from utils import get_object_pose
 
 
 class KitchenTaskRegistry:
@@ -15,7 +15,7 @@ class KitchenTaskRegistry:
     ARUCO_TAG_ROTATION_EULER = np.array([0.0, 0.0, 180.0])
     ARUCO_TAG_ROTATION_QUAT = Rotation.from_euler('xyz', ARUCO_TAG_ROTATION_EULER, degrees=True).as_quat() # x,y,z,w
     TARGET_OBJECT_PATH = "/World/blue_cup"
-    SUPPORT_OBJECT = "/World/pink_cup"
+    SUPPORT_OBJECT_PATH = "/World/pink_cup"
     
     # Robot poses (Franka)
     FRANKA_TRANSLATION = np.array([4.5, 2.7, 0.9000000134110451])
@@ -50,7 +50,11 @@ class KitchenTaskRegistry:
                 "SCENE_CONFIG": "kitchen_scene",
                 "OBJECT_MAXIMUM_Z_HEIGHT": 1.1,
                 "TARGET_OBJECT_PATH": cls.TARGET_OBJECT_PATH,
-                "SUPPORT_OBJECT": cls.SUPPORT_OBJECT
+                "SUPPORT_OBJECT_PATH": cls.SUPPORT_OBJECT_PATH,
+                "PRELOAD_OBJECTS": [
+                    {"name": "pink cup", "assets": "cup_pink.usd"},
+                    {"name": "blue cup", "assets": "cup_blue.usd"},
+                ],
             }
         }
 
@@ -65,6 +69,27 @@ class KitchenTaskRegistry:
             return False
 
         return True
+
+    @classmethod
+    def is_episode_completed(cls, episode_record: Dict[str, Any]) -> bool:
+        blue_cup_pos, _ = get_object_pose(cls.TARGET_OBJECT_PATH)
+        pink_cup_pos, _ = get_object_pose(cls.SUPPORT_OBJECT_PATH)
+
+        # 1. Vertical ordering check
+        vertical_order_ok = blue_cup_pos[2] > pink_cup_pos[2]
+
+        # 2. XY alignment check
+        xy_dist = np.linalg.norm(blue_cup_pos[:2] - pink_cup_pos[:2])
+        xy_alignment_ok = xy_dist < 0.03
+
+        # 3. Height consistency check
+        expected_height = 0.09
+        height_error = abs((blue_cup_pos[2] - pink_cup_pos[2]) - expected_height)
+        height_ok = height_error < 0.015
+
+        success = vertical_order_ok and xy_alignment_ok and height_ok
+
+        return success
 
     @staticmethod
     def xyzw_to_wxyz(q_xyzw):
