@@ -4,6 +4,10 @@ from typing import Dict, Any
 from scipy.spatial.transform import Rotation
 from utils import get_object_pose
 
+class Planner:
+    def step(self):
+        pass
+
 
 class KitchenTaskRegistry:
     """Registry for kitchen task configuration"""
