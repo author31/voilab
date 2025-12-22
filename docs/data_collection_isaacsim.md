@@ -44,6 +44,7 @@ For detailed calibration and extraction procedures, please refer to docs/UMI_REA
 Command for data replay and collection in Isacc Sim.
 
 --task -> Your Task Scene
+
 --session -> Your Data Address
 ```bash
 uv run voilab launch-simulator --task kitchen --session_dir {data_path}
