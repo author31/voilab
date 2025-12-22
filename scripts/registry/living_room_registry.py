@@ -10,8 +10,8 @@ class LivingRoomTaskRegistry:
 
     TASK_NAME = "living-room"
     # ArUco tag pose
-    ARUCO_TAG_TRANSLATION = np.array([1.62, 4.96, 0.75])
-    ARUCO_TAG_ROTATION_EULER = np.array([0.0, 0.0, 0.0])
+    ARUCO_TAG_TRANSLATION = np.array([1.454, 11.31, 0.83])
+    ARUCO_TAG_ROTATION_EULER = np.array([0.0, 0.0, 90])
     ARUCO_TAG_ROTATION_QUAT = Rotation.from_euler('xyz', ARUCO_TAG_ROTATION_EULER, degrees=True).as_quat() # x,y,z,w
     BLUE_BLOCK = "/World/cylinder"
     GREEN_BLOCK = "/World/bridge"
@@ -19,12 +19,12 @@ class LivingRoomTaskRegistry:
     STORAGE_BOX = "/World/storage_box"
 
     # Robot poses (Franka)
-    FRANKA_TRANSLATION = np.array([1.475993595877246, 11.351613434539319, 0.8570439802062628])
+    FRANKA_TRANSLATION = np.array([1.07, 11.311613434539319, 0.55])
     FRANKA_ROTATION_EULER = np.array([0.0, 0.0, -18.0])
     FRANKA_ROTATION_QUAT = Rotation.from_euler('xyz', FRANKA_ROTATION_EULER, degrees=True).as_quat() # x,y,z,w
 
     # Camera poses
-    CAMERA_TRANSLATION = np.array([-1.3000000193715096, 11.60000017285347, 2.0000000298023224])
+    CAMERA_TRANSLATION = np.array([2.7693973826510954, 11.39, 1.508])
     CAMERA_ROTATION_EULER = np.array([75.80000305175781, 0.0, -91.0])
     CAMERA_ROTATION_QUAT = Rotation.from_euler('xyz', CAMERA_ROTATION_EULER, degrees=True).as_quat() # x,y,z,w
 
@@ -58,7 +58,6 @@ class LivingRoomTaskRegistry:
                     {"name": "blue_block", "assets": "cylinder.usd", "prim_path": "/World/cylinder"},
                     {"name": "green_block", "assets": "bridge.usd", "prim_path": "/World/bridge"},
                     {"name": "red_block", "assets": "triangle.usd", "prim_path": "/World/triangle"},
-                    {"name": "storage_box", "assets": "storage_box.usd", "prim_path": "/World/stroage_box"},
                 ],
                 "FIXED_OBJECTS": [
                     {
