@@ -117,44 +117,6 @@ class PickPlace:
         quat_wxyz = R.from_matrix(T_obj[:3, :3]).as_quat(scalar_first=True)  # wxyz
 
         set_prim_world_pose(self.attached_object_path, pos, quat_wxyz)
-
-    # def _should_attach(self, panda, lula, ik):
-    #     if self.attached or self.attached_object_path is None:
-    #         return False
-
-    #     ee_pos, _ = self.get_ee_pose(panda, lula, ik)
-    #     obj_pos = self.get_obj_pose(self.attached_object_path)[:3, 3]
-    #     dist = np.linalg.norm(ee_pos - obj_pos)
-
-    #     joint_pos = panda.get_joint_positions()
-    #     gripper_width = joint_pos[-2] + joint_pos[-1]
-
-    #     if dist < self.attach_dist_thresh and gripper_width < self.gripper_close_thresh:
-    #         return True
-
-    #     return False
-
-    # def _should_release(self, panda, lula, ik):
-    #     if not self.attached or self.target_object_path is None:
-    #         return False
-
-    #     ee_pos, _ = self.get_ee_pose(panda, lula, ik)
-    #     target_pos = self.get_obj_pose(self.target_object_path)[:3, 3]
-    #     dist = np.linalg.norm(ee_pos - target_pos)
-
-    #     if dist > self.release_dist_thresh:
-    #         self.gripper_above_open_cnt = 0
-    #         return False
-
-    #     joint_pos = panda.get_joint_positions()
-    #     gripper_width = joint_pos[-2] + joint_pos[-1]
-
-    #     if gripper_width >= self.gripper_open_thresh:
-    #         self.gripper_above_open_cnt += 1
-    #     else:
-    #         self.gripper_above_open_cnt = 0
-
-    #     return self.gripper_above_open_cnt >= 2
     
     # -------------------------
     def _object_target(self, obj_path, offset):
@@ -164,38 +126,6 @@ class PickPlace:
 
     # -------------------------
     def step(self, panda, lula, ik):
-
-        # curr_ee_pos, curr_ee_quat = self.get_ee_pose(panda, lula, ik)
-        # T_blue = self.get_obj_pose(self.attached_object_path)
-        # T_pink = self.get_obj_pose(self.target_object_path)
-        # blue_pos = T_blue[:3, 3]
-        # pink_pos = T_pink[:3, 3]
-        # joint_pos = panda.get_joint_positions() 
-        # gripper_width = joint_pos[-2] + joint_pos[-1] 
-
-        # print("Distance from eef to blue cup (need to grasp)= ", 
-        #       np.linalg.norm(curr_ee_pos - blue_pos))
-        # print("Distance from eef to pink cup (need to be place on)= ", 
-        #       np.linalg.norm(curr_ee_pos - pink_pos))
-        # print("Gripper width= ", gripper_width)
-
-        # check if need attachment
-        # if self._should_attach(panda, lula, ik):
-        #     ee_pos, ee_quat = self.get_ee_pose(panda, lula, ik)
-        #     quat_xyzw = np.array([ee_quat[1], ee_quat[2], ee_quat[3], ee_quat[0]])
-        #     T_ee = np.eye(4)
-        #     T_ee[:3, :3] = R.from_quat(quat_xyzw).as_matrix()
-        #     T_ee[:3, 3] = ee_pos
-        #     T_obj = self.get_obj_pose(self.attached_object_path)
-        #     self.T_ee_to_obj = np.linalg.inv(T_ee) @ np.array(T_obj)
-        #     self.attached = True
-        
-        # # check if need release
-        # if self._should_release(panda, lula, ik):
-        #     self.attached = False
-        #     self.T_ee_to_obj = None
-        #     self.attached_object_path = None
-        #     self.target_object_path = None
 
         self._sync_attached_object(panda, lula, ik)
 
