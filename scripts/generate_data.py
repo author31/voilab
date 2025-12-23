@@ -24,7 +24,6 @@ from numcodecs import Blosc
 parser = argparse.ArgumentParser()
 parser.add_argument("--task", type=str, choices=["kitchen", "dining-table", "living-room"], required=True)
 parser.add_argument("--session_dir", type=str, default=None)
-parser.add_argument("--episode", type=int, default=0)
 parser.add_argument("--x_offset", type=float, default=0.1, help="X-axis offset for coordinate calibration (meters)")
 parser.add_argument("--y_offset", type=float, default=0.15, help="Y-axis offset for coordinate calibration (meters)")
 parser.add_argument("--z_offset", type=float, default=-0.07, help="Z-axis offset for coordinate calibration (meters)")
@@ -66,8 +65,9 @@ from scipy.spatial.transform import Rotation as R, Slerp
 from object_loader import load_object_transforms_from_json, map_object_name_to_asset
 import utils
 import lula
-from motion_plan import KitchenMotionPlanner, DiningRoomMotionPlanner, LivingRoomMotionPlanner, PickPlace
+from pxr import UsdPhysics
 from umi_replay import set_gripper_width
+from motion_plan import PickPlace
 
 
 assets_root_path = get_assets_root_path()
@@ -457,22 +457,18 @@ def main():
     print(f"[Main] Looking for object poses at: {object_poses_path}")
 
     preload_objects = cfg.get("environment_vars", {}).get("PRELOAD_OBJECTS", [])
+    preload_by_name = {}
     for entry in preload_objects:
-        if isinstance(entry, str):
-            raw_name = entry
-            asset_filename = map_object_name_to_asset(raw_name)
-            prim_path = f"/World/{_normalize_object_name(raw_name)}"
-        elif isinstance(entry, dict):
-            raw_name = entry.get("name", "")
-            asset_filename = entry.get("assets") or map_object_name_to_asset(raw_name)
-            prim_path = entry.get("prim_path", f"/World/{_normalize_object_name(raw_name)}")
-        else:
-            continue
+        assert isinstance(entry, dict), f"PRELOAD_OBJECTS entry must be a dict: {entry}"
+        raw_name = entry.get("name")
+        asset_filename = entry.get("assets")
+        prim_path = entry.get("prim_path")
+        assert raw_name, f"Missing name for PRELOAD_OBJECTS entry: {entry}"
+        assert asset_filename, f"Missing assets for PRELOAD_OBJECTS entry: {entry}"
+        assert prim_path, f"Missing prim_path for PRELOAD_OBJECTS entry: {entry}"
 
         object_name = _normalize_object_name(raw_name)
-        if not raw_name or not asset_filename:
-            print(f"[ObjectLoader] WARNING: Invalid PRELOAD_OBJECTS entry: {entry}")
-            continue
+        preload_by_name[object_name] = entry
         if object_name in object_prims:
             continue
 
@@ -490,7 +486,7 @@ def main():
             print(f"[ObjectLoader] ERROR: Failed to load asset {full_asset_path}: {str(e)}")
             continue
 
-        obj_prim = SingleXFormPrim(prim_path=prim_path, name=object_name)
+        obj_prim = SingleXFormPrim(prim_path=prim_path, name=object_name, orientation=entry.get("quat_wxyz", np.array([1,0,0,0])))
         world.scene.add(obj_prim)
         object_prims[object_name] = obj_prim
         print(f"[ObjectLoader] Preloaded {raw_name} as {prim_path}")
@@ -512,7 +508,7 @@ def main():
         object_pose_records = json.load(f)
     total_episodes = len(object_pose_records)
     print(f"[Main] Replay initialized for {total_episodes} episodes.")
-    
+
     # --- Main simulation loop ---
     print("[Main] Starting simulation loop...")
 
@@ -552,13 +548,15 @@ def main():
             for obj in object_transforms:
                 object_name = _normalize_object_name(obj["object_name"])
                 if object_name not in object_prims:
-                    asset_filename = map_object_name_to_asset(object_name)
+                    preload_entry = preload_by_name.get(object_name)
+                    assert preload_entry, f"Object {object_name} missing from PRELOAD_OBJECTS"
+                    asset_filename = preload_entry["assets"]
+                    prim_path = preload_entry["prim_path"]
                     full_asset_path = os.path.join(ASSETS_DIR, asset_filename)
                     if not os.path.exists(full_asset_path):
                         print(f"[ObjectLoader] WARNING: Asset not found: {full_asset_path}, skipping {object_name}")
                         continue
 
-                    prim_path = f"/World/{object_name}"
                     try:
                         stage_utils.add_reference_to_stage(
                             usd_path=full_asset_path,
@@ -573,8 +571,9 @@ def main():
                     object_prims[object_name] = obj_prim
 
                 obj_prim = object_prims[object_name]
-                obj_prim.set_world_pose(position=obj["position"])
-                print(f"[ObjectLoader] Positioned {object_name} at {obj['position']}")
+                obj_pos = np.array(obj["position"], dtype=np.float64)
+                obj_prim.set_world_pose(position=obj_pos)
+                print(f"[ObjectLoader] Positioned {object_name} at {obj_pos}")
 
         # Make simulation settle
         for _ in range(100):
@@ -582,8 +581,6 @@ def main():
             world.step(render=True)
             time.sleep(1 / 60)
 
-        # Motion planner initialization
-        curr_pos, _ = get_end_effector_pos_quat_wxyz(panda, lula_solver, art_kine_solver)
         get_object_world_pose = make_get_object_world_pose(prim_mgr)
         pickplace = PickPlace(
             get_end_effector_pose_fn=get_end_effector_pos_quat_wxyz,
@@ -591,51 +588,21 @@ def main():
             apply_ik_solution_fn=apply_ik_solution,
             plan_line_cartesian_fn=plan_line_cartesian,
         )
-        if args.task=="kitchen":
-            motion_planner = KitchenMotionPlanner(
-                cfg,
-                get_object_world_pose_fn=get_object_world_pose,
-                pickplace=pickplace,
-            )
-            INIT_EE_POS = curr_pos + np.array([-0.16, 0., 0.13])
-            INIT_EE_QUAT_WXYZ = np.array([0.0081739, -0.9366365, 0.350194, 0.0030561])
-        elif args.task=="dining-room":
-            motion_planner = DiningRoomMotionPlanner(
-                cfg,
-                get_object_world_pose_fn=get_object_world_pose,
-                pickplace=pickplace,
-            )
-            INIT_EE_POS = curr_pos + np.array([-0.16, 0., 0.13])
-            INIT_EE_QUAT_WXYZ = np.array([0.0081739, -0.9366365, 0.350194, 0.0030561])
-        elif args.task=="living-room":
-            motion_planner = LivingRoomMotionPlanner(
-                cfg,
-                get_object_world_pose_fn=get_object_world_pose,
-                pickplace=pickplace,
-            )
-            INIT_EE_POS = curr_pos + np.array([-0.16, 0., 0.13])
-            INIT_EE_QUAT_WXYZ = np.array([0.0081739, -0.9366365, 0.350194, 0.0030561])
-        else:
-            print(f"[Error] Wrong task name.")
 
-        # Initialize end-effector pose
-        calibrate_robot_base(panda, lula_solver)
-        success = apply_ik_solution(
-            panda,
-            art_kine_solver,
-            INIT_EE_POS,
-            INIT_EE_QUAT_WXYZ,
+
+        # Motion planner initialization
+        motion_planner = registry.get_motion_planner(
+            args.task,
+            cfg,
+            get_object_world_pose_fn=get_object_world_pose,
+            pickplace=pickplace,
         )
-        if not success:
-            print("[Init] WARNING: Failed to apply EE initial pose")
-        set_gripper_width(panda, width=0.1, threshold=0.0, step=0.01)
-        for _ in range(100):
-            world.step(render=True)
         
         rgb_list = []
         eef_pos_list = []
         eef_rot_list = []
         gripper_list = []
+        eef_pose6d = None
         episode_start_pose = None
         episode_end_pose = None
 
@@ -659,10 +626,11 @@ def main():
 
             if episode_start_pose is None:
                 episode_start_pose = eef_pose6d.copy()
-            
+
             if motion_planner.is_done():
                 episode_end_pose = eef_pose6d.copy()
-                print(f"[Main] Motion plan finished")
+                print("[Main] Motion plan finished")
+                time.sleep(1)
                 break
 
         if episode_end_pose is None and eef_pos_list:

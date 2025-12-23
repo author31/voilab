@@ -47,9 +47,24 @@ class DiningTableTaskRegistry:
                 "FORK_PATH": cls.FORK_PATH,
                 "PLATE_PATH": cls.PLATE_PATH,
                 "PRELOAD_OBJECTS": [
-                    {"name": "knife", "assets": "knife.usd"},
-                    {"name": "fork", "assets": "fork.usd"},
-                    {"name": "plate", "assets": "plate.usd"},
+                    {
+                        "name": "knife",
+                        "assets": "knife.usd",
+                        "prim_path": "/World/knife",
+                        "quat_wxyz": np.array([0.707107, 0.707107, 0, 0]),
+                    },
+                    {
+                        "name": "fork",
+                        "assets": "fork.usd",
+                        "prim_path": "/World/fork",
+                        "quat_wxyz": np.array([0.707107, 0.707107, 0, 0]),
+                    },
+                    {
+                        "name": "plate",
+                        "assets": "plate.usd",
+                        "prim_path": "/World/plate",
+                        "quat_wxyz": np.array([0.707107, 0.707107, 0, 0]),
+                    },
                 ],
             }
         }

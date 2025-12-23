@@ -434,6 +434,15 @@ def set_prim_world_pose(prim_path, position, quat_wxyz):
     r_op.Set(Gf.Quatd(w, Gf.Vec3d(x, y, z)))
 
 
+def get_preload_prim_path(preload_objects, object_name: str):
+    for entry in preload_objects:
+        if entry.get("name") == object_name:
+            prim_path = entry.get("prim_path")
+            if prim_path:
+                return prim_path
+    return None
+
+
 def get_object_world_boundary(prim_path: str):
     import omni.usd
     from pxr import Usd, UsdGeom

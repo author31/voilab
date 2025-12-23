@@ -1,6 +1,7 @@
 from .kitchen_registry import KitchenTaskRegistry
 from .dining_table_registry import DiningTableTaskRegistry
 from .living_room_registry import LivingRoomTaskRegistry
+from motion_plan import KitchenMotionPlanner, DiningRoomMotionPlanner, LivingRoomMotionPlanner
 
 # Registry mapping
 TASK_REGISTRIES = {
@@ -19,3 +20,58 @@ def get_task_registry(task_name: str):
 def get_episode_completion_fn(task_name: str):
     registry_cls = get_task_registry(task_name)
     return getattr(registry_cls, "is_episode_completed", lambda record: True)
+
+
+MOTION_PLANNER_FACTORIES = {
+    "kitchen": lambda cfg, *, get_object_world_pose_fn, pickplace: (
+        KitchenMotionPlanner(
+            cfg,
+            get_object_world_pose_fn=get_object_world_pose_fn,
+            pickplace=pickplace
+        )
+    ),
+    "dining-table": lambda cfg, *, get_object_world_pose_fn, pickplace: (
+        DiningRoomMotionPlanner(
+            cfg,
+            get_object_world_pose_fn=get_object_world_pose_fn,
+            pickplace=pickplace
+        )
+    ),
+    "living-room": lambda cfg, *, get_object_world_pose_fn, pickplace: (
+        LivingRoomMotionPlanner(
+            cfg,
+            get_object_world_pose_fn=get_object_world_pose_fn,
+            pickplace=pickplace
+        )
+    ),
+}
+
+
+def get_motion_planner(
+    task_name: str,
+    cfg,
+    *,
+    get_object_world_pose_fn=None,
+    pickplace=None,
+):
+    if task_name not in MOTION_PLANNER_FACTORIES:
+        raise ValueError(
+            f"Unknown task: {task_name}. Available tasks: {list(MOTION_PLANNER_FACTORIES.keys())}"
+        )
+
+    missing = [
+        name
+        for name, fn in {
+            "get_object_world_pose_fn": get_object_world_pose_fn,
+            "pickplace": pickplace,
+        }.items()
+        if fn is None
+    ]
+    if missing:
+        raise ValueError(f"Missing motion planner dependencies: {', '.join(missing)}")
+
+    return MOTION_PLANNER_FACTORIES[task_name](
+        cfg,
+        get_object_world_pose_fn=get_object_world_pose_fn,
+        pickplace=pickplace,
+    )
