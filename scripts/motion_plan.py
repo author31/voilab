@@ -1,7 +1,7 @@
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 from umi_replay import set_gripper_width
-from utils import set_prim_world_pose
+from utils import set_prim_world_pose, get_preload_prim_path
 
 
 class PickPlace:
@@ -211,15 +211,26 @@ class KitchenMotionPlanner:
         self.pickplace = pickplace
         self.started = False
 
-        env = cfg["environment_vars"]
-        self.blue = env["TARGET_OBJECT_PATH"]
-        self.pink = env["SUPPORT_OBJECT_PATH"]
+        env = cfg.get("environment_vars", {})
+        preload_objects = env.get("PRELOAD_OBJECTS", [])
+        self.blue = get_preload_prim_path(preload_objects, "blue cup")
+        self.pink = get_preload_prim_path(preload_objects, "pink cup")
+        if self.blue is None or self.pink is None:
+            fallback = [entry.get("prim_path") for entry in preload_objects]
+            fallback = [path for path in fallback if path]
+            if self.blue is None and len(fallback) > 0:
+                self.blue = fallback[0]
+            if self.pink is None and len(fallback) > 1:
+                self.pink = fallback[1]
+        if self.blue is None or self.pink is None:
+            raise ValueError("Missing PRELOAD_OBJECTS prim_path for kitchen cups.")
 
         self.pick_above_offset  = np.array([-0.05, -0.075,  0.10])
         self.pick_offset        = np.array([-0.05, -0.075, -0.12])
         self.lift_offset        = np.array([ 0.0,   0.0,    0.25])
         self.place_above_offset = np.array([-0.05, -0.07,  0.15])
         self.place_offset       = np.array([-0.05, -0.07,  0.03])
+
 
     def step(self, panda, lula, ik):
         if not self.started:

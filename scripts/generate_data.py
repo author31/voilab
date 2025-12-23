@@ -67,6 +67,7 @@ import utils
 import lula
 from pxr import UsdPhysics
 from umi_replay import set_gripper_width
+from motion_plan import PickPlace
 
 
 assets_root_path = get_assets_root_path()
@@ -580,13 +581,21 @@ def main():
             world.step(render=True)
             time.sleep(1 / 60)
 
+        get_object_world_pose = make_get_object_world_pose(prim_mgr)
+        pickplace = PickPlace(
+            get_end_effector_pose_fn=get_end_effector_pos_quat_wxyz,
+            get_object_world_pose_fn=get_object_world_pose,
+            apply_ik_solution_fn=apply_ik_solution,
+            plan_line_cartesian_fn=plan_line_cartesian,
+        )
+
+
         # Motion planner initialization
         motion_planner = registry.get_motion_planner(
             args.task,
             cfg,
-            get_end_effector_pose_fn=get_end_effector_pos_quat_wxyz,
             get_object_world_pose_fn=get_object_world_pose,
-            apply_ik_solution_fn=apply_ik_solution,
+            pickplace=pickplace,
         )
         
         rgb_list = []

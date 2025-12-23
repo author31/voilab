@@ -23,28 +23,25 @@ def get_episode_completion_fn(task_name: str):
 
 
 MOTION_PLANNER_FACTORIES = {
-    "kitchen": lambda cfg, *, get_end_effector_pose_fn, get_object_world_pose_fn, apply_ik_solution_fn: (
+    "kitchen": lambda cfg, *, get_object_world_pose_fn, pickplace: (
         KitchenMotionPlanner(
             cfg,
-            get_end_effector_pose_fn=get_end_effector_pose_fn,
             get_object_world_pose_fn=get_object_world_pose_fn,
-            apply_ik_solution_fn=apply_ik_solution_fn,
+            pickplace=pickplace
         )
     ),
-    "dining-table": lambda cfg, *, get_end_effector_pose_fn, get_object_world_pose_fn, apply_ik_solution_fn: (
+    "dining-table": lambda cfg, *, get_object_world_pose_fn, pickplace: (
         DiningRoomMotionPlanner(
             cfg,
-            get_end_effector_pose_fn=get_end_effector_pose_fn,
             get_object_world_pose_fn=get_object_world_pose_fn,
-            apply_ik_solution_fn=apply_ik_solution_fn,
+            pickplace=pickplace
         )
     ),
-    "living-room": lambda cfg, *, get_end_effector_pose_fn, get_object_world_pose_fn, apply_ik_solution_fn: (
+    "living-room": lambda cfg, *, get_object_world_pose_fn, pickplace: (
         LivingRoomMotionPlanner(
             cfg,
-            get_end_effector_pose_fn=get_end_effector_pose_fn,
             get_object_world_pose_fn=get_object_world_pose_fn,
-            apply_ik_solution_fn=apply_ik_solution_fn,
+            pickplace=pickplace
         )
     ),
 }
@@ -54,9 +51,8 @@ def get_motion_planner(
     task_name: str,
     cfg,
     *,
-    get_end_effector_pose_fn=None,
     get_object_world_pose_fn=None,
-    apply_ik_solution_fn=None,
+    pickplace=None,
 ):
     if task_name not in MOTION_PLANNER_FACTORIES:
         raise ValueError(
@@ -66,9 +62,8 @@ def get_motion_planner(
     missing = [
         name
         for name, fn in {
-            "get_end_effector_pose_fn": get_end_effector_pose_fn,
             "get_object_world_pose_fn": get_object_world_pose_fn,
-            "apply_ik_solution_fn": apply_ik_solution_fn,
+            "pickplace": pickplace,
         }.items()
         if fn is None
     ]
@@ -77,7 +72,6 @@ def get_motion_planner(
 
     return MOTION_PLANNER_FACTORIES[task_name](
         cfg,
-        get_end_effector_pose_fn=get_end_effector_pose_fn,
         get_object_world_pose_fn=get_object_world_pose_fn,
-        apply_ik_solution_fn=apply_ik_solution_fn,
+        pickplace=pickplace,
     )
