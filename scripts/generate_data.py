@@ -485,7 +485,7 @@ def main():
             print(f"[ObjectLoader] ERROR: Failed to load asset {full_asset_path}: {str(e)}")
             continue
 
-        obj_prim = SingleXFormPrim(prim_path=prim_path, name=object_name)
+        obj_prim = SingleXFormPrim(prim_path=prim_path, name=object_name, orientation=entry.get("quat_wxyz", np.array([1,0,0,0])))
         world.scene.add(obj_prim)
         object_prims[object_name] = obj_prim
         print(f"[ObjectLoader] Preloaded {raw_name} as {prim_path}")
@@ -570,8 +570,9 @@ def main():
                     object_prims[object_name] = obj_prim
 
                 obj_prim = object_prims[object_name]
-                obj_prim.set_world_pose(position=obj["position"])
-                print(f"[ObjectLoader] Positioned {object_name} at {obj['position']}")
+                obj_pos = np.array(obj["position"], dtype=np.float64)
+                obj_prim.set_world_pose(position=obj_pos)
+                print(f"[ObjectLoader] Positioned {object_name} at {obj_pos}")
 
         # Make simulation settle
         for _ in range(100):
