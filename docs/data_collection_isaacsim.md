@@ -30,7 +30,7 @@ This step converts your raw sensor recordings (e.g., GoPro or RealSense data).
 Command for running the UMI SLAM and trajectory processing pipeline:
 
 ```bash
-uv run umi run-slam-pipeline umi_pipeline_configs/gopro13_wide_angle_pipeline_config.yaml --session-dir {data_path}
+uv run umi run-slam-pipeline umi_pipeline_configs/gopro13_fisheye_2-7k_reconstruct_pipeline_config.yaml --session-dir {data_path}
 ```
 
 The output of this step is a trajectory dataset stored under the specified session directory. This dataset will be used as input for simulation replay.
