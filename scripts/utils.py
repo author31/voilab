@@ -393,31 +393,50 @@ def gf_matrix4d_to_numpy(matrix) -> np.ndarray:
 
 
 def get_object_pose(object_prim_path: str):
-    try:
-        import omni.usd
-        from pxr import Usd, UsdGeom
-    except ImportError:
-        return None, None
+    import isaacsim.core.utils.xforms as xforms_utils
+    import isaacsim.core.utils.prims as prims_utils
+
+    prim = prims_utils.get_prim_at_path(object_prim_path)
+    pos, rot_quat_wxyz = xforms_utils.get_world_pose(prims_utils.get_prim_path(prim))
+    return pos, rot_quat_wxyz
+
+
+def set_prim_world_pose(prim_path, position, quat_wxyz):
+    import omni.usd
+    from pxr import UsdGeom, Gf
 
     stage = omni.usd.get_context().get_stage()
-    prim = stage.GetPrimAtPath(object_prim_path)
+    prim = stage.GetPrimAtPath(prim_path)
     if not prim.IsValid():
-        return None, None
+        raise RuntimeError(f"Invalid prim path: {prim_path}")
 
-    cache = UsdGeom.XformCache(Usd.TimeCode.Default())
-    T = np.array(cache.GetLocalToWorldTransform(prim))
+    xform = UsdGeom.Xformable(prim)
+    translate_ops = xform.GetOrderedXformOps()
+    t_op = None
+    r_op = None
+    for op in translate_ops:
+        if op.GetOpType() == UsdGeom.XformOp.TypeTranslate:
+            t_op = op
+        elif op.GetOpType() == UsdGeom.XformOp.TypeOrient:
+            r_op = op
 
-    pos = T[:3, 3]
-    rot = R.from_matrix(T[:3, :3]).as_quat()  # xyzw
+    if t_op is None:
+        t_op = xform.AddTranslateOp()
+    if r_op is None:
+        r_op = xform.AddOrientOp(UsdGeom.XformOp.PrecisionDouble)
 
-    return pos, rot
+    t_op.Set(Gf.Vec3d(
+        float(position[0]),
+        float(position[1]),
+        float(position[2]),
+    ))
+    w, x, y, z = [float(v) for v in quat_wxyz]
+    r_op.Set(Gf.Quatd(w, Gf.Vec3d(x, y, z)))
+
 
 def get_object_world_boundary(prim_path: str):
-    try:
-        import omni.usd
-        from pxr import Usd, UsdGeom
-    except ImportError:
-        return None, None
+    import omni.usd
+    from pxr import Usd, UsdGeom
     
     stage = omni.usd.get_context().get_stage()
     prim = stage.GetPrimAtPath(prim_path)

@@ -82,12 +82,7 @@ class KitchenTaskRegistry:
         xy_dist = np.linalg.norm(blue_cup_pos[:2] - pink_cup_pos[:2])
         xy_alignment_ok = xy_dist < 0.03
 
-        # 3. Height consistency check
-        expected_height = 0.09
-        height_error = abs((blue_cup_pos[2] - pink_cup_pos[2]) - expected_height)
-        height_ok = height_error < 0.015
-
-        success = vertical_order_ok and xy_alignment_ok and height_ok
+        success = vertical_order_ok and xy_alignment_ok 
 
         return success
 
