@@ -9,7 +9,7 @@ import math
 class DiningRoomTaskRegistry:
     """Registry for dining table task configuration"""
 
-    TASK_NAME = "dining-table"
+    TASK_NAME = "dining-room"
     # ArUco tag pose
     ARUCO_TAG_TRANSLATION = np.array([1.65, 4.75, 0.8])
     ARUCO_TAG_ROTATION_EULER = np.array([0.0, 0.0, 90.0])

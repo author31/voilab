@@ -27,7 +27,7 @@ def launch_dataset_visualizer():
 
 
 @cli.command()
-@click.option('--task', type=click.Choice(['kitchen', 'dining-table', 'living-room']),
+@click.option('--task', type=click.Choice(['kitchen', 'dining-room', 'living-room']),
               required=True, help='Task environment to load')
 @click.option('--session_dir', type=str, help='Path to UMI session directory for trajectory replay')
 @click.option('--episode', default=0, type=int, help='Episode to replay')
@@ -60,7 +60,7 @@ def launch_simulator(task, session_dir, episode, width, height):
         build_cmd = ["docker", "compose", "build", "isaac-sim"]
         subprocess.run(build_cmd, env=env_vars, check=True)
 
-        container_command = f".venv/bin/python scripts/launch_isaacsim_workspace.py --task {task} --session_dir {session_dir} --episode {episode}"
+        container_command = f".venv/bin/python scripts/generate_data.py --task {task} --session_dir {session_dir} --episode {episode}"
         
         # Run container with host network
         click.echo("[CLI] Starting Docker container with host network...")

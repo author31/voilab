@@ -602,7 +602,7 @@ def main():
             INIT_EE_POS = curr_pos + np.array([-0.1, 0.2, 0.20])
             INIT_EE_QUAT_WXYZ = np.array([0.0081739, -0.9366365, 0.350194, 0.0030561])
         else:
-            raise RuntimeError(f"Unknown task, expected one of 'kitchen', 'living-room', 'dining-table', got {args.task}")
+            raise RuntimeError(f"Unknown task, expected one of 'kitchen', 'dining-room', 'living-room', got {args.task}")
         
         # Motion planner initialization
         motion_planner = registry.get_motion_planner(
