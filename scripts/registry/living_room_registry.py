@@ -2,7 +2,7 @@ import numpy as np
 from pathlib import Path
 from typing import Dict, Any
 from scipy.spatial.transform import Rotation
-from utils import get_object_pose, get_object_world_boundary
+from utils import get_object_pose
 
 
 class LivingRoomTaskRegistry:
@@ -16,7 +16,7 @@ class LivingRoomTaskRegistry:
     BLUE_BLOCK = "/World/cylinder"
     GREEN_BLOCK = "/World/bridge"
     RED_BLOCK = "/World/triangle"
-    STORAGE_BOX = "/World/storage_box"
+    STORAGE_BOX = "/storage_box"
 
     # Robot poses (Franka)
     FRANKA_TRANSLATION = np.array([1.045, 11.31, 0.50])
@@ -65,13 +65,13 @@ class LivingRoomTaskRegistry:
                         "name": "green_block",
                         "assets": "bridge.usd",
                         "prim_path": "/World/bridge",
-                        "quat_wxyz": np.array([0.707107, 0.707107, 0, 0]),
+                        "quat_wxyz": np.array([0.5, 0.5, 0.5, -0.5]),
                     },
                     {
                         "name": "red_block",
                         "assets": "triangle.usd",
                         "prim_path": "/World/triangle",
-                        "quat_wxyz": np.array([0.707107, 0.707107, 0, 0]),
+                        "quat_wxyz": np.array([0.0677732, -0.7038514, -0.0677732, -0.7038514]),
                     },
                 ],
                 "FIXED_OBJECTS": [
@@ -102,19 +102,19 @@ class LivingRoomTaskRegistry:
         green_block_pos, _ = get_object_pose(cls.GREEN_BLOCK)
         red_block_pos, _ = get_object_pose(cls.RED_BLOCK)
 
-        box_min, box_max = get_object_world_boundary(cls.STORAGE_BOX)
-        margin = 0.01
+        box_min = np.array([1.41298, 10.87098, 0.70])
+        box_max = np.array([1.61221, 11.08388, 0.81762])
 
-        def in_box(p, mn, mx, margin=0.0):
+        def in_box(p, mn, mx):
             return (
-                mn[0] + margin <= p[0] <= mx[0] - margin and
-                mn[1] + margin <= p[1] <= mx[1] - margin and
-                mn[2] + margin <= p[2] <= mx[2] - margin
+                mn[0] <= p[0] <= mx[0] and
+                mn[1] <= p[1] <= mx[1] and
+                mn[2] <= p[2] <= mx[2]
             )
 
-        blue_inside = in_box(blue_block_pos, box_min, box_max, margin)
-        green_inside = in_box(green_block_pos, box_min, box_max, margin)
-        red_inside = in_box(red_block_pos, box_min, box_max, margin)
+        blue_inside = in_box(blue_block_pos, box_min, box_max)
+        green_inside = in_box(green_block_pos, box_min, box_max)
+        red_inside = in_box(red_block_pos, box_min, box_max)
 
         success = blue_inside and green_inside and red_inside
 

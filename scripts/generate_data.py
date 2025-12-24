@@ -530,7 +530,6 @@ def main():
             orientation=np.array(franka_rotation)
         )
         set_camera_view(camera_translation, franka_translation)
-        _set_fixed_objects_for_episode(cfg, object_prims)
 
         # Object configuration
         if object_poses_path and os.path.exists(object_poses_path):
@@ -581,6 +580,7 @@ def main():
             world.step(render=True)
             time.sleep(1 / 60)
 
+        curr_pos, _ = get_end_effector_pos_quat_wxyz(panda, lula_solver, art_kine_solver)
         get_object_world_pose = make_get_object_world_pose(prim_mgr)
         pickplace = PickPlace(
             get_end_effector_pose_fn=get_end_effector_pos_quat_wxyz,
@@ -589,7 +589,18 @@ def main():
             plan_line_cartesian_fn=plan_line_cartesian,
         )
 
-
+        if args.task=="kitchen":
+            INIT_EE_POS = curr_pos + np.array([-0.16, 0., 0.13])
+            INIT_EE_QUAT_WXYZ = np.array([0.0081739, -0.9366365, 0.350194, 0.0030561])
+        elif args.task=="dining-room":
+            INIT_EE_POS = curr_pos + np.array([-0.16, 0., 0.13])
+            INIT_EE_QUAT_WXYZ = np.array([0.0081739, -0.9366365, 0.350194, 0.0030561])
+        elif args.task=="living-room":
+            INIT_EE_POS = curr_pos + np.array([-0.1, 0.2, 0.20])
+            INIT_EE_QUAT_WXYZ = np.array([0.0081739, -0.9366365, 0.350194, 0.0030561])
+        else:
+            raise RuntimeError(f"Unknown task, expected one of 'kitchen', 'living-room', 'dining-room', got {args.task}")
+        
         # Motion planner initialization
         motion_planner = registry.get_motion_planner(
             args.task,
@@ -597,6 +608,18 @@ def main():
             get_object_world_pose_fn=get_object_world_pose,
             pickplace=pickplace,
         )
+
+        # Initialize end-effector pose
+        calibrate_robot_base(panda, lula_solver)
+        success = apply_ik_solution(
+            panda,
+            art_kine_solver,
+            INIT_EE_POS,
+            INIT_EE_QUAT_WXYZ,
+        )
+
+        if not success:
+            print("[Init] WARNING: Failed to apply EE initial pose")
         
         rgb_list = []
         eef_pos_list = []
@@ -630,7 +653,6 @@ def main():
             if motion_planner.is_done():
                 episode_end_pose = eef_pose6d.copy()
                 print("[Main] Motion plan finished")
-                time.sleep(1)
                 break
 
         if episode_end_pose is None and eef_pos_list:
@@ -654,6 +676,11 @@ def main():
 
         episode_success = is_episode_completed(episode_record)
         episode_record["success"] = episode_success
+
+        if episode_success:
+            print("[Main] Task success")
+        else:
+            print("[Main] Task fail")
 
         collected_episodes.append(episode_record)
 

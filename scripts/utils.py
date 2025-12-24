@@ -411,10 +411,10 @@ def set_prim_world_pose(prim_path, position, quat_wxyz):
         raise RuntimeError(f"Invalid prim path: {prim_path}")
 
     xform = UsdGeom.Xformable(prim)
-    translate_ops = xform.GetOrderedXformOps()
+
     t_op = None
     r_op = None
-    for op in translate_ops:
+    for op in xform.GetOrderedXformOps():
         if op.GetOpType() == UsdGeom.XformOp.TypeTranslate:
             t_op = op
         elif op.GetOpType() == UsdGeom.XformOp.TypeOrient:
@@ -422,16 +422,23 @@ def set_prim_world_pose(prim_path, position, quat_wxyz):
 
     if t_op is None:
         t_op = xform.AddTranslateOp()
-    if r_op is None:
-        r_op = xform.AddOrientOp(UsdGeom.XformOp.PrecisionDouble)
 
     t_op.Set(Gf.Vec3d(
         float(position[0]),
         float(position[1]),
         float(position[2]),
     ))
+
     w, x, y, z = [float(v) for v in quat_wxyz]
-    r_op.Set(Gf.Quatd(w, Gf.Vec3d(x, y, z)))
+
+    if r_op is None:
+        r_op = xform.AddOrientOp(UsdGeom.XformOp.PrecisionDouble)
+        r_op.Set(Gf.Quatd(w, Gf.Vec3d(x, y, z)))
+    else:
+        if r_op.GetPrecision() == UsdGeom.XformOp.PrecisionDouble:
+            r_op.Set(Gf.Quatd(w, Gf.Vec3d(x, y, z)))
+        else:
+            r_op.Set(Gf.Quatf(w, Gf.Vec3f(x, y, z)))
 
 
 def get_preload_prim_path(preload_objects, object_name: str):

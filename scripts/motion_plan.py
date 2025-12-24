@@ -16,7 +16,7 @@ class PickPlace:
             0.0081739, -0.9366365, 0.350194, 0.0030561
         ]),
         open_width=0.08,
-        close_width=0.03,
+        close_width=0.02, # 0.03
         close_steps=30,
         hold_steps=10,
         step_move=0.01,
@@ -64,7 +64,8 @@ class PickPlace:
 
     # -------------------------
     def start(self, pick_above, pick, lift_offset, place_above, place, 
-            attached_object_path=None, target_object_path=None):
+            attached_object_path=None, target_object_path=None,
+            fix_target_pose=None, retreat_after_place=False):
         self.pick_above = pick_above
         self.pick = pick
         self.place_above = place_above
@@ -73,6 +74,8 @@ class PickPlace:
 
         self.attached_object_path = attached_object_path
         self.target_object_path = target_object_path
+        self.fix_target_pose = fix_target_pose
+        self.retreat_after_place = retreat_after_place
 
         self.attached = False
         self.T_ee_to_obj = None
@@ -97,9 +100,9 @@ class PickPlace:
         wp = self.traj[self.i]
         self.apply_ik(panda, ik, wp[:3], wp[3:])
         if self.attached:
-            set_gripper_width(panda, self.close_width, 0.02, 0.02)
+            set_gripper_width(panda, self.close_width) # 0.02, 0.02
         else:
-            set_gripper_width(panda, self.open_width, 0.0, 0.05)
+            set_gripper_width(panda, self.open_width) # 0.0, 0.05
         self.i += 1
         return False
     
@@ -123,6 +126,12 @@ class PickPlace:
         T = self.get_obj_pose(obj_path)
         pos = T[:3, 3]
         return pos + offset
+    
+    # -------------------------
+    def _place_target(self, offset):
+        if self.fix_target_pose is not None:
+            return np.asarray(self.fix_target_pose) + offset
+        return self._object_target(self.target_object_path, offset)
 
     # -------------------------
     def step(self, panda, lula, ik):
@@ -180,12 +189,12 @@ class PickPlace:
                 self.phase = "move_place"
 
         elif self.phase == "move_place":
-            target = self._object_target(self.target_object_path, self.place_above)
+            target = self._place_target(self.place_above)
             if self._run_traj(panda, lula, ik, target, self.step_move):
                 self.phase = "descend_place"
 
         elif self.phase == "descend_place":
-            target = self._object_target(self.target_object_path, self.place)
+            target = self._place_target(self.place)
             if self._run_traj(panda, lula, ik, target, self.step_descend):
                 self.phase = "release"
 
@@ -198,7 +207,16 @@ class PickPlace:
             self.T_ee_to_obj = None
             self.attached_object_path = None
             self.target_object_path = None
-            self.phase = "done"
+            if self.retreat_after_place:
+                self.phase = "post_place_lift"
+            else:
+                self.phase = "done"
+
+        elif self.phase == "post_place_lift":
+            ee_pos, _ = self.get_ee_pose(panda, lula, ik)
+            target = ee_pos + self.lift_offset
+            if self._run_traj(panda, lula, ik, target, self.step_move):
+                self.phase = "done"
 
     def is_done(self):
         return self.phase == "done"
@@ -273,9 +291,58 @@ class LivingRoomMotionPlanner:
         self.get_object_pose = get_object_world_pose_fn
         self.pickplace = pickplace
         self.started = False
+
+        env = cfg["environment_vars"]
+        self.blocks = [
+            env["RED_BLOCK_PATH"],
+            env["BLUE_BLOCK_PATH"],
+            env["GREEN_BLOCK_PATH"],
+        ]
+        self.storage_box = env["STORAGE_BOX_PATH"]
+        box_T = self.get_object_pose(self.storage_box)
+        self.box_pos = box_T[:3, 3]
+
+        self.pick_above_offset  = np.array([-0.06, -0.075,  0.10])
+        self.pick_offset        = np.array([-0.06, -0.075, -0.06])
+        self.lift_offset        = np.array([ 0.0,   0.0,    0.25])
+        self.place_above_offset = np.array([-0.20, -0.10,  0.20])
+        self.place_offsets = [
+            np.array([-0.20, -0.10, 0.09]),
+            np.array([-0.15, -0.10, 0.09]),
+            np.array([-0.25, -0.10, 0.09]),
+        ]
+
+        self.current_idx = 0
+        self.started = False
     
+    def _start_pickplace_for_current_block(self):
+        self.pickplace.reset()
+        self.pickplace.start(
+            pick_above  = self.pick_above_offset,
+            pick        = self.pick_offset,
+            lift_offset = self.lift_offset,
+            place_above = self.place_above_offset,
+            place       = self.place_offsets[self.current_idx],
+            attached_object_path = self.blocks[self.current_idx],
+            target_object_path   = self.storage_box,
+            fix_target_pose = self.box_pos,
+            retreat_after_place=True,
+        )
+        self.started = True
+
     def step(self, panda, lula, ik):
-        return 0
+        if self.current_idx >= len(self.blocks):
+            return
+
+        if not self.started:
+            self._start_pickplace_for_current_block()
+            return
+
+        self.pickplace.step(panda, lula, ik)
+
+        if self.pickplace.is_done():
+            self.current_idx += 1
+            self.started = False
     
     def is_done(self):
-        return self.pickplace.is_done()
+        return self.current_idx >= len(self.blocks)
