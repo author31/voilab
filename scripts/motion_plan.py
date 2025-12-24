@@ -15,8 +15,9 @@ class PickPlace:
         grasp_quat_wxyz=np.array([
             0.0081739, -0.9366365, 0.350194, 0.0030561
         ]),
+        grasp_mode="regular",
         open_width=0.08,
-        close_width=0.02, # 0.03
+        close_width=0.03,
         close_steps=30,
         hold_steps=10,
         step_move=0.01,
@@ -34,6 +35,7 @@ class PickPlace:
         self.plan = plan_line_cartesian_fn
 
         self.grasp_quat = np.asarray(grasp_quat_wxyz)
+        self.grasp_mode = grasp_mode
         self.open_width = open_width
         self.close_width = close_width
         self.close_steps = close_steps
@@ -41,11 +43,13 @@ class PickPlace:
         self.step_move = step_move
         self.step_descend = step_descend
 
-        # Attachment threshold
         self.attach_dist_thresh = attach_dist_thresh
         self.release_dist_thresh = release_dist_thresh
         self.gripper_close_thresh = gripper_close_thresh
         self.gripper_open_thresh  = gripper_open_thresh
+
+        self.R_grasp_to_tool = R.from_euler(
+            'xyz', [0.0, 0.0, 45.0], degrees=True).as_matrix()
 
         self.reset()
 
@@ -84,12 +88,40 @@ class PickPlace:
         self.traj = []
         self.i = 0
         self.counter = 0
+    
+    # -------------------------
+    def _compute_grasp_quat_from_object(self, obj_path):
+        T_obj = self.get_obj_pose(obj_path)
+        R_obj = T_obj[:3, :3]
+
+        long_axis_world = R_obj @ np.array([1.0, 0.0, 0.0])
+        long_axis_world /= np.linalg.norm(long_axis_world)
+
+        z_ee = np.array([0.0, 0.0, -1.0])
+        y_ee = long_axis_world
+        x_ee = np.cross(y_ee, z_ee)
+        x_ee /= np.linalg.norm(x_ee)
+        y_ee = np.cross(z_ee, x_ee)
+
+        R_ee_geom = np.column_stack([x_ee, y_ee, z_ee])
+        R_ee = R_ee_geom @ self.R_grasp_to_tool
+
+        return R.from_matrix(R_ee).as_quat(scalar_first=True)
 
     # -------------------------
     def _run_traj(self, panda, lula, ik, target, step):
         if not self.traj:
             p, q = self.get_ee_pose(panda, lula, ik)
-            self.traj = self.plan(p, q, target, self.grasp_quat, step_m=step)
+            if self.phase in ["move_above", "descend", "close"]:
+                if self.grasp_mode == "object_based":
+                    grasp_quat = self._compute_grasp_quat_from_object(
+                        self.attached_object_path)
+                else:
+                    grasp_quat = self.grasp_quat
+            else:
+                grasp_quat = self.grasp_quat
+
+            self.traj = self.plan(p, q, target, grasp_quat, step_m=step)
             self.i = 0
 
         if self.i >= len(self.traj):
@@ -253,6 +285,7 @@ class KitchenMotionPlanner:
     def step(self, panda, lula, ik):
         if not self.started:
             self.pickplace.reset()
+            self.pickplace.grasp_mode = "regular"
             self.pickplace.start(
                 pick_above  = self.pick_above_offset,
                 pick        = self.pick_offset,
@@ -277,12 +310,60 @@ class DiningRoomMotionPlanner:
         self.get_object_pose = get_object_world_pose_fn
         self.pickplace = pickplace
         self.started = False
+
+        env = cfg["environment_vars"]
+        self.cutlery = [
+            env["FORK_PATH"],
+            env["KNIFE_PATH"],
+        ]
+        self.plate = env["PLATE_PATH"]
+        plate_T = self.get_object_pose(self.plate)
+        self.plate_pos = plate_T[:3, 3]
+
+        self.pick_above_offset  = np.array([-0.06, -0.06,  0.10])
+        self.pick_offset        = np.array([-0.06, -0.06, -0.08])
+        self.lift_offset        = np.array([ 0.0,  -0.05,  0.25])
+        self.place_above_offset = np.array([ 0.0,  -0.05,  0.20])
+        self.place_offsets = [
+            np.array([-0.05, 0.03, 0.04]),
+            np.array([-0.05, -0.15, 0.04]),
+        ]
+
+        self.current_idx = 0
+        self.started = False
     
+    def _start_pickplace_for_current_cutlery(self):
+        self.pickplace.reset()
+        self.pickplace.grasp_mode = "object_based"
+        self.pickplace.start(
+            pick_above  = self.pick_above_offset,
+            pick        = self.pick_offset,
+            lift_offset = self.lift_offset,
+            place_above = self.place_above_offset,
+            place       = self.place_offsets[self.current_idx],
+            attached_object_path = self.cutlery[self.current_idx],
+            target_object_path   = self.plate,
+            fix_target_pose = self.plate_pos,
+            retreat_after_place = True,
+        )
+        self.started = True
+
     def step(self, panda, lula, ik):
-        return 0
+        if self.current_idx >= len(self.cutlery):
+            return
+
+        if not self.started:
+            self._start_pickplace_for_current_cutlery()
+            return
+
+        self.pickplace.step(panda, lula, ik)
+
+        if self.pickplace.is_done():
+            self.current_idx += 1
+            self.started = False
     
     def is_done(self):
-        return self.pickplace.is_done()
+        return self.current_idx >= len(self.cutlery)
 
 
 class LivingRoomMotionPlanner:
@@ -317,6 +398,7 @@ class LivingRoomMotionPlanner:
     
     def _start_pickplace_for_current_block(self):
         self.pickplace.reset()
+        self.pickplace.grasp_mode = "regular"
         self.pickplace.start(
             pick_above  = self.pick_above_offset,
             pick        = self.pick_offset,

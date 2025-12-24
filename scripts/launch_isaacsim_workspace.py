@@ -24,7 +24,7 @@ from zarr.storage import ZipStore
 from numcodecs import Blosc
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--task", type=str, choices=["kitchen", "dining-table", "living-room"], required=True)
+parser.add_argument("--task", type=str, choices=["kitchen", "dining-room", "living-room"], required=True)
 parser.add_argument("--session_dir", type=str, default=None)
 parser.add_argument("--episode", type=int, default=0)
 parser.add_argument("--x_offset", type=float, default=0.1, help="X-axis offset for coordinate calibration (meters)")

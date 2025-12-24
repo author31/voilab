@@ -1,12 +1,12 @@
 from .kitchen_registry import KitchenTaskRegistry
-from .dining_table_registry import DiningTableTaskRegistry
+from .dining_room_registry import DiningRoomTaskRegistry
 from .living_room_registry import LivingRoomTaskRegistry
 from motion_plan import KitchenMotionPlanner, DiningRoomMotionPlanner, LivingRoomMotionPlanner
 
 # Registry mapping
 TASK_REGISTRIES = {
     "kitchen": KitchenTaskRegistry,
-    "dining-table": DiningTableTaskRegistry,
+    "dining-room": DiningRoomTaskRegistry,
     "living-room": LivingRoomTaskRegistry,
 }
 
@@ -30,7 +30,7 @@ MOTION_PLANNER_FACTORIES = {
             pickplace=pickplace
         )
     ),
-    "dining-table": lambda cfg, *, get_object_world_pose_fn, pickplace: (
+    "dining-room": lambda cfg, *, get_object_world_pose_fn, pickplace: (
         DiningRoomMotionPlanner(
             cfg,
             get_object_world_pose_fn=get_object_world_pose_fn,
