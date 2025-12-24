@@ -41,22 +41,37 @@ For detailed calibration and extraction procedures, please refer to docs/UMI_REA
 
 3. Isaac Sim Replay and Observation Replacement
 
-Command for data replay and collection in Isacc Sim.
-
---task -> Your Task Scene
-
---session -> Your Data Address
+This command launches Isaac Sim to replay recorded data and collect or replace observations for a specified task scene.
+Command:
 ```bash
 uv run voilab launch-simulator --task kitchen --session_dir {data_path}
+```
+### Arguments
+
+* `--task`
+  Specifies the task scene to load.
+  **Available options:**
+
+  * `kitchen`
+  * `dining-room`
+  * `living-room`
+
+* `--session_dir`
+  Path to the directory containing the recorded session data used for replay.
+
+### Example
+
+```bash
+uv run voilab launch-simulator \
+  --task dining-room \
+  --session_dir ./datasets/session_001
 ```
 
 The resulting dataset preserves real-world motion while providing fully simulated visual observations.
 
-Every time collecting dataset, remember to purge the previous failed data:
-
-```bash
-voilab/dataset/{dataset_name}/.previous_progress.json
-```
+**Side Note**  
+The file `.previous_progress.json` tracks the most recently successful runtime episodes to prevent unnecessary re-runs.  
+To force a full re-run, it is recommended to delete this file before launching the simulator.
 
 ---
 
