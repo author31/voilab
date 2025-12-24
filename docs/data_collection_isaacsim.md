@@ -69,12 +69,13 @@ uv run voilab launch-simulator \
 
 The resulting dataset preserves real-world motion while providing fully simulated visual observations.
 
-**Side Note**  
-The file `.previous_progress.json` tracks the most recently successful runtime episodes to prevent unnecessary re-runs.  
-To force a full re-run, it is recommended to delete this file before launching the simulator.
+### Side Note
+- `.previous_progress.json` (located under `$session_dir`) keeps track of the **last successfully completed episodes** to prevent unnecessary re-runs.
+- To **re-run the entire session from scratch**, it is recommended to **remove this file** before launching the simulator.
 
+```bash
+rm $session_dir/.previous_progress.json
 ---
-
 
 
 4. Diffusion Policy Training
