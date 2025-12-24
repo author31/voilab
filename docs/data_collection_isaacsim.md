@@ -52,7 +52,15 @@ uv run voilab launch-simulator --task kitchen --session_dir {data_path}
 
 The resulting dataset preserves real-world motion while providing fully simulated visual observations.
 
+Every time collecting dataset, remember to purge the previous failed data:
+
+```bash
+voilab/dataset/{dataset_name}/.previous_progress.json
+```
+
 ---
+
+
 
 4. Diffusion Policy Training
 
