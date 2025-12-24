@@ -4,13 +4,13 @@ from typing import Dict, Any
 from scipy.spatial.transform import Rotation
 
 
-class DiningTableTaskRegistry:
+class DiningRoomTaskRegistry:
     """Registry for dining table task configuration"""
 
     TASK_NAME = "dining-table"
     # ArUco tag pose
-    ARUCO_TAG_TRANSLATION = np.array([(1.7562751943015695, 11.317383010588898, 0.8532326509384047)])
-    ARUCO_TAG_ROTATION_EULER = np.array([0.0, 0.0, 0.0])
+    ARUCO_TAG_TRANSLATION = np.array([1.65, 4.75, 0.8])
+    ARUCO_TAG_ROTATION_EULER = np.array([0.0, 0.0, 90.0])
     ARUCO_TAG_ROTATION_QUAT = Rotation.from_euler('xyz', ARUCO_TAG_ROTATION_EULER, degrees=True).as_quat() # x,y,z,w
     FORK_PATH = "/World/fork"
     KNIFE_PATH = "/World/knife"
@@ -29,6 +29,11 @@ class DiningTableTaskRegistry:
     @classmethod
     def get_config(cls) -> Dict[str, Any]:
         return {
+            "aruco_tag_pose": {
+                "translation": cls.ARUCO_TAG_TRANSLATION,
+                "rotation_euler_deg": cls.ARUCO_TAG_ROTATION_EULER,
+                "rotation_quat": cls.xyzw_to_wxyz(cls.ARUCO_TAG_ROTATION_QUAT),
+            },
             "camera_pose": {
                 "translation": cls.CAMERA_TRANSLATION,
                 "rotation_euler_deg": cls.CAMERA_ROTATION_EULER,
@@ -51,19 +56,19 @@ class DiningTableTaskRegistry:
                         "name": "knife",
                         "assets": "knife.usd",
                         "prim_path": "/World/knife",
-                        "quat_wxyz": np.array([0.707107, 0.707107, 0, 0]),
+                        "quat_wxyz": np.array([1.,0.,0.,0.]),
                     },
                     {
                         "name": "fork",
                         "assets": "fork.usd",
                         "prim_path": "/World/fork",
-                        "quat_wxyz": np.array([0.707107, 0.707107, 0, 0]),
+                        "quat_wxyz": np.array([0.707, 0.0, 0.0, -0.707]),
                     },
                     {
                         "name": "plate",
                         "assets": "plate.usd",
                         "prim_path": "/World/plate",
-                        "quat_wxyz": np.array([0.707107, 0.707107, 0, 0]),
+                        "quat_wxyz": np.array([0.707, 0.0, 0.0, -0.707]),
                     },
                 ],
             }
