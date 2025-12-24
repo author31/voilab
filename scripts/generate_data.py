@@ -438,6 +438,7 @@ def main():
     camera = Camera(
         prim_path=f"{GOPRO_PRIM_PATH}/Camera",
         name="gopro_camera",
+        resolution=(224,224)
     )
     camera.initialize()
     world.reset()
