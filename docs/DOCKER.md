@@ -35,6 +35,13 @@ This project provides two Docker services:
 
 The Isaac Sim service runs NVIDIA Isaac Sim with ROS 2 Humble support.
 
+**Make sure you have docker-compose-plugin installed:**
+
+```bash
+sudo apt-get update
+sudo apt-get install docker-compose-plugin
+```
+
 **Start the service:**
 
 ```bash
