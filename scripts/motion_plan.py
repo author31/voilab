@@ -271,18 +271,62 @@ class KitchenMotionPlanner:
         return self.pickplace.is_done()
 
 
-class DiningRoomMotionPlanner:
+class DiningROMotionPlanner:
     def __init__(self, cfg, *, get_object_world_pose_fn, pickplace):
         self.cfg = cfg
         self.get_object_pose = get_object_world_pose_fn
         self.pickplace = pickplace
         self.started = False
+
+        env = cfg["environment_vars"]
+        self.cutlery = [
+            env["FORK_PATH"],
+            env["KNIFE_PATH"],
+        ]
+        self.plate = env["PLATE_PATH"]
+
+        self.pick_above_offset  = np.array([-0.06, -0.075,  0.10])
+        self.pick_offset        = np.array([-0.06, -0.075, -0.06])
+        self.lift_offset        = np.array([ 0.0,   0.0,    0.25])
+        self.place_above_offset = np.array([ 0.0,  0.0,  0.20])
+        self.place_offsets = [
+            np.array([0.0, -0.10, 0.09]),
+            np.array([0.0, 0.10, 0.09]),
+        ]
+
+        self.current_idx = 0
+        self.started = False
     
+    def _start_pickplace_for_current_cutlery(self):
+        self.pickplace.reset()
+        self.pickplace.start(
+            pick_above  = self.pick_above_offset,
+            pick        = self.pick_offset,
+            lift_offset = self.lift_offset,
+            place_above = self.place_above_offset,
+            place       = self.place_offsets[self.current_idx],
+            attached_object_path = self.cutlery[self.current_idx],
+            target_object_path   = self.plate,
+            retreat_after_place=True,
+        )
+        self.started = True
+
     def step(self, panda, lula, ik):
-        return 0
+        if self.current_idx >= len(self.cutlery):
+            return
+
+        if not self.started:
+            self._start_pickplace_for_current_cutlery()
+            return
+
+        self.pickplace.step(panda, lula, ik)
+
+        if self.pickplace.is_done():
+            self.current_idx += 1
+            self.started = False
     
     def is_done(self):
-        return self.pickplace.is_done()
+        return self.current_idx >= len(self.cutlery)
 
 
 class LivingRoomMotionPlanner:

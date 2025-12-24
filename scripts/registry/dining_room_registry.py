@@ -2,6 +2,8 @@ import numpy as np
 from pathlib import Path
 from typing import Dict, Any
 from scipy.spatial.transform import Rotation
+from utils import get_object_pose
+import math
 
 
 class DiningRoomTaskRegistry:
@@ -88,7 +90,54 @@ class DiningRoomTaskRegistry:
 
     @classmethod
     def is_episode_completed(cls, episode_record: Dict[str, Any]) -> bool:
-        return True
+        plate_pos, _ = get_object_pose(cls.PLATE_PATH)
+        fork_pos, fork_quat = get_object_pose(cls.FORK_PATH)
+        knife_pos, knife_quat = get_object_pose(cls.KNIFE_PATH)
+
+        max_dist_xy = 0.15
+        orientation_tolerance_deg = 45.0
+
+        # def facing_away_from(obj_pos, obj_quat, target_pos, tolerance_deg):
+        #     forward = quat_to_forward(obj_quat)
+        #     to_target = np.array(target_pos[:3]) - np.array(obj_pos[:3])
+        #     forward[2] = 0.0
+        #     to_target[2] = 0.0
+        #     if np.linalg.norm(forward) < 1e-6 or np.linalg.norm(to_target) < 1e-6:
+        #         return False
+        #     forward = forward / np.linalg.norm(forward)
+        #     to_target = to_target / np.linalg.norm(to_target)
+        #     angle = math.degrees(
+        #         math.acos(np.clip(np.dot(forward, to_target), -1.0, 1.0))
+        #     )
+        #     return angle > (180.0 - tolerance_deg)
+
+        # 1. xy distance to plate
+        fork_dist_xy = np.linalg.norm(fork_pos[:2] - plate_pos[:2])
+        knife_dist_xy = np.linalg.norm(knife_pos[:2] - plate_pos[:2])
+
+        fork_near_plate = fork_dist_xy <= max_dist_xy
+        knife_near_plate = knife_dist_xy <= max_dist_xy
+
+        # 2. Left and right placement
+        fork_on_left = fork_pos[0] < plate_pos[0]
+        knife_on_right = knife_pos[0] > plate_pos[0]
+
+        # 3. Orientation (facing outward)
+        # fork_outward = facing_away_from(
+        #     fork_pos, fork_quat, plate_pos, orientation_tolerance_deg)
+        # knife_outward = facing_away_from(
+        #     knife_pos, knife_quat, plate_pos, orientation_tolerance_deg)
+
+        success = (
+            fork_near_plate
+            and knife_near_plate
+            and fork_on_left
+            and knife_on_right
+            # and fork_outward
+            # and knife_outward
+        )
+
+        return success
 
     @staticmethod
     def xyzw_to_wxyz(q_xyzw):
