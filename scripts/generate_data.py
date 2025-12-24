@@ -546,6 +546,8 @@ def main():
 
             for obj in object_transforms:
                 object_name = _normalize_object_name(obj["object_name"])
+                if object_name == "plate":
+                    continue
                 if object_name not in object_prims:
                     preload_entry = preload_by_name.get(object_name)
                     assert preload_entry, f"Object {object_name} missing from PRELOAD_OBJECTS"
@@ -592,7 +594,7 @@ def main():
         if args.task=="kitchen":
             INIT_EE_POS = curr_pos + np.array([-0.16, 0., 0.13])
             INIT_EE_QUAT_WXYZ = np.array([0.0081739, -0.9366365, 0.350194, 0.0030561])
-        elif args.task=="dining-table":
+        elif args.task=="dining-room":
             INIT_EE_POS = curr_pos + np.array([-0.16, 0., 0.13])
             INIT_EE_QUAT_WXYZ = np.array([0.0081739, -0.9366365, 0.350194, 0.0030561])
         elif args.task=="living-room":
