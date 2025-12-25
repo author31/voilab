@@ -1,0 +1,77 @@
+
+00_process_video:
+  instance: "umi.services.video_organization.VideoOrganizationService"
+  config:
+    session_dir: "video"
+    input_patterns: ["*.MP4", "*.mp4"]
+  
+01_extract_gopro_imu:
+  instance: "umi.services.imu_extraction.IMUExtractionService"
+  config:
+    stream_types: ["ACCL", "GYRO", "GPS5", "GPSP", "GPSU", "GPSF", "GRAV", "MAGN", "CORI", "IORI", "TMPC"]
+
+02_create_map:
+  instance: "umi.services.slam_mapping.SLAMMappingService"
+  inherit_config: true
+  config:
+    docker_image: "chicheng/orb_slam3:latest"
+    timeout_multiple: 16
+    max_lost_frames: 60
+    slam_process_mode: create_map
+    slam_settings_file: "packages/umi/defaults/orb_slam3_settings/gopro13_fisheye_ratio_4-3_2-7k.yaml"
+    resolution: [2028,2704]
+    mask_pts_json_path: "packages/umi/src/umi/asset/mask_4k.json"
+
+03_batch_slam:
+  instance: "umi.services.slam_mapping.SLAMMappingService"
+  inherit_config: true
+  config:
+    docker_image: "chicheng/orb_slam3:latest"
+    timeout_multiple: 16
+    max_lost_frames: 60
+    slam_process_mode: batch_slam
+    slam_settings_file: "packages/umi/defaults/orb_slam3_settings/gopro13_fisheye_ratio_4-3_2-7k.yaml"
+    resolution: [2028,2704]
+
+04_detect_aruco:
+  instance: "umi.services.aruco_detection.ArucoDetectionService"
+  inherit_config: true
+  config:
+    camera_intrinsics_path: "packages/umi/defaults/calibration/gopro13_intrinsics_2_7k.json"
+    aruco_config_path: "packages/umi/defaults/calibration/aruco_config.yaml"
+
+05_run_calibrations:
+  instance: "umi.services.calibration.CalibrationService"
+  inherit_config: true
+  config:
+    resolution: [2028,2704]
+    tag_id: 13
+    dist_to_center_threshold: 0.6
+    nominal_z: 0.01
+
+06_generate_dataset_plan:
+  instance: "umi.services.dataset_planning.DatasetPlanningService"
+  inherit_config: true
+  config:
+    dataset_plan_filename: dataset_plan.pkl
+
+07_frame_to_pose:
+  instance: "umi.services.frame_to_pose.FrameToPoseService"
+  inherit_config: true
+  config:
+    task: "living_room"
+    marker_size_m: 0.018
+    intrinsics_path: "defaults/calibration/gopro13_intrinsics_2_7k.json"
+    dataset_plan_filename: dataset_plan.pkl
+
+08_generate_replay_buffer:
+  instance: "umi.services.replay_buffer.ReplayBufferService"
+  inherit_config: true
+  config:
+    output_filename: dataset.zarr.zip
+    output_resolution: [224, 224]
+    output_fov: null
+    output_fov_intrinsic_path: null
+    compression_level: 99
+    no_mirror: false
+    mirror_swap: false

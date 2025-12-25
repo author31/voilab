@@ -2,15 +2,16 @@ services:
   isaac-sim:
     build:
       context: .
-      dockerfile: Dockerfile.isaacsim
+      dockerfile: Dockerfile
     volumes:
       - .:/workspace/voilab
+      - /workspace/voilab/.venv
       - /tmp/.X11-unix:/tmp/.X11-unix
       - /usr/share/vulkan/icd.d:/usr/share/vulkan/icd.d:ro
     stdin_open: true
     tty: true
     environment:
-      - ACCEPT_EULA=Y
+      - OMNI_KIT_ACCEPT_EULA=Y
       - PRIVACY_CONSENT=Y
       - DISPLAY=${DISPLAY:-:1}
       - VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json
@@ -18,6 +19,8 @@ services:
       - XAUTHORITY=${XAUTHORITY:-$HOME/.Xauthority}
       - ROS_LOCALHOST_ONLY=0
       - ROS_DOMAIN_ID=0
+      - UV_HTTP_TIMEOUT=600
+      - UV_HTTP_RETRIES=10
     ipc: host
     deploy:
       resources:

@@ -57,6 +57,42 @@ class ReplayBufferService(BaseService):
         output_path = input_path/self.output_filename
         out_res = [int(x) for x in self.output_resolution]
 
+        # load object pose
+        obj_pose_path = input_path / "demos/mapping/object_poses.json"
+        if obj_pose_path.exists():
+            with obj_pose_path.open("r") as f:
+                obj_data = json.load(f)
+
+            flattened_poses = []      # (N, 2, 3)
+            object_names = []         # (N,)
+            object_video_names = []   # (N,)
+
+            # obj_data: list of { "video_name": ..., "objects": [...] }
+            for video_entry in obj_data:
+                video_name = video_entry["video_name"]
+                for obj in video_entry.get("objects", []):
+                    flattened_poses.append([obj["rvec"], obj["tvec"]])
+                    object_names.append(obj["object_name"])
+                    object_video_names.append(video_name)
+
+            if len(flattened_poses) > 0:
+                object_poses = np.array(flattened_poses, dtype=np.float64)  # (N, 2, 3)
+                object_names = np.array(object_names, dtype='U32')           # (N,)
+                object_video_names = np.array(object_video_names, dtype='U64')  # (N,)
+            else:
+                object_poses = np.zeros((0, 2, 3), dtype=np.float64)
+                object_names = np.empty((0,), dtype='U32')
+                object_video_names = np.empty((0,), dtype='U64')
+
+        else:
+            object_poses = np.zeros((0, 2, 3), dtype=np.float64)
+            object_names = np.zeros((0,), dtype=object)
+            object_video_names = np.zeros((0,), dtype=object)
+
+
+        # get task
+        location = self.config.get("task", "unknown")
+
 
         # this process is take a distorted, "warped" image from a fisheye lens and convert it into an image taken by normal lenses
         fisheye_converter = None
@@ -195,6 +231,16 @@ class ReplayBufferService(BaseService):
                     except Exception as e:
                         logger.error(f"Error in generating buffer: {e}")
                         raise
+
+        # add reconstruct
+        rec = out_replay_buffer.root.require_group("reconstruct")
+        rec.array("location", np.array([location], dtype='U32'))
+        rec.array("object_poses", object_poses)
+        rec.array("object_name", object_names)
+        rec.array("object_video_name", object_video_names)
+
+
+
         # dump to disk
         logger.info(f"Saving ReplayBuffer to {output_path}")
         with zarr.ZipStore(output_path, mode='w') as zip_store:

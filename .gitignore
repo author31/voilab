@@ -220,18 +220,6 @@ video/demos/*
 !video/raw_videos/.gitkeep
 
 # UMI specific ignores
-**/imu_data.json
-**/slam_mask.png
-**/slam_stdout.txt
-**/slam_stderr.txt
-**/*.csv
-**/*.osa
-**/*.json
-**/*.zgroup
-**/*.zarray
-*.zarr.zip
-*.pkl
-*.mp4
-*.MP4
-*.JPG
-
+datasets/*
+checkpoints/*
+demos/*

@@ -1,11 +1,11 @@
 """
-UMI Dataset Trajectory Replay via ROS2 with CuRobo IK
-======================================================
+UMI Dataset Trajectory Replay via ROS2 with IKPy
+=================================================
 
 This script replays UMI-collected trajectories on a Franka Panda robot by:
 1. Loading end-effector poses from the dataset (in ArUco tag frame)
 2. Transforming them to robot base frame using FK-based calibration
-3. Solving IK with CuRobo MotionGen
+3. Solving IK with IKPy
 4. Publishing joint commands to /joint_command
 
 Dataset Structure (from UMI):
@@ -29,7 +29,7 @@ Coordinate Transformation Chain:
     Components:
         - T_base_gopro: FK from panda_link0 to gopro_link at calibration joint config
                         Computed via: T_base_umi_tcp @ T_umi_tcp_gopro
-                        (since ee_link is configured as umi_tcp in CuRobo)
+                        (since ee_link is configured as umi_tcp in IKPy chain)
         
         - T_gopro_tag:  ArUco tag pose in GoPro camera frame
                         Loaded from: demos/mapping/tag_detection.pkl
@@ -63,18 +63,12 @@ import numpy as np
 import zarr
 import zipfile
 import os
-import torch
 import argparse
 from scipy.spatial.transform import Rotation as R
 import pickle
 
-# CuRobo Imports
-from curobo.geom.sdf.world import CollisionCheckerType
-from curobo.types.base import TensorDeviceType
-from curobo.types.math import Pose
-from curobo.types.robot import RobotConfig
-from curobo.types.robot import JointState as CuroboJointState
-from curobo.wrap.reacher.motion_gen import MotionGen, MotionGenConfig, MotionGenPlanConfig
+# IKPy Import
+from ikpy.chain import Chain
 
 
 class UmiPosePublisher(Node):
@@ -82,7 +76,7 @@ class UmiPosePublisher(Node):
         super().__init__('umi_pose_publisher')
         
         self.publisher_ = self.create_publisher(JointState, '/joint_command', 10)
-        self.timer = self.create_timer(0.008, self.timer_callback)  # 125Hz
+        self.timer = self.create_timer(0.01, self.timer_callback)  # 125Hz
         
         # Subscribe to current joint states
         self.current_joint_states = None
@@ -99,8 +93,8 @@ class UmiPosePublisher(Node):
         self.episode_idx = episode_idx
         self.setup_episode_indices()
         
-        # 2. Setup CuRobo
-        self.setup_curobo()
+        # 2. Setup IKPy
+        self.setup_ikpy()
         
         # 3. Calibration will be computed when first joint states are received
         # The robot must be in the calibration pose when starting!
@@ -171,34 +165,28 @@ class UmiPosePublisher(Node):
             self.get_logger().error(f"Failed to load dataset: {e}")
             raise
 
-    def setup_curobo(self):
-        """Initialize CuRobo MotionGen."""
-        self.get_logger().info('Initializing MotionGen...')
+    def setup_ikpy(self):
+        """Initialize IKPy robot chain."""
+        self.get_logger().info('Initializing IKPy chain...')
         
-        # Use standard Franka config provided by CuRobo
-        robot_file = "/workspace/voilab/assets/curobo/franka_umi.yaml"
-        # robot_file = "franka.yml"
+        # URDF file path for Franka Panda with UMI gripper
+        urdf_path = "/workspace/voilab/assets/franka_panda/franka_panda_umi-isaacsim.urdf"
         
-        self.tensor_args = TensorDeviceType()
+        # Active links mask for the kinematic chain:
+        # [base_origin, joint1, joint2, joint3, joint4, joint5, joint6, joint7, umi_tcp_joint]
+        # First and last are fixed/origin links, middle 7 are the active revolute joints
+        self.active_links_mask = [False, True, True, True, True, True, True, True, False]
         
-        motion_gen_config = MotionGenConfig.load_from_robot_config(
-            robot_file,
-            None,
-            self.tensor_args,
-            trajopt_tsteps=32,
-            collision_checker_type=CollisionCheckerType.BLOX,
-            use_cuda_graph=True,
-            num_trajopt_seeds=12, 
-            num_graph_seeds=12,
-            interpolation_dt=0.01,
-            evaluate_interpolated_trajectory=True,
+        # Create kinematic chain from URDF
+        # Chain goes from panda_link0 to umi_tcp
+        self.robot_chain = Chain.from_urdf_file(
+            urdf_path,
+            base_elements=["panda_link0"],
+            active_links_mask=self.active_links_mask,
+            name="panda_umi"
         )
         
-        self.motion_gen = MotionGen(motion_gen_config)
-        self.motion_gen.warmup()
-        
-        # Store kinematics for FK computation
-        self.kinematics = self.motion_gen.kinematics
+        self.get_logger().info(f'IKPy chain initialized with {len(self.robot_chain.links)} links')
         
         # Precompute fixed transforms from URDF
         # panda_link7 -> gopro_link: xyz="0 0 0.107" rpy="0 0 0"
@@ -225,7 +213,7 @@ class UmiPosePublisher(Node):
 
     def compute_fk_to_gopro(self, joint_states):
         """
-        Compute FK from panda_link0 to gopro_link using CuRobo kinematics.
+        Compute FK from panda_link0 to gopro_link using IKPy kinematics.
         
         Args:
             joint_states: numpy array of 7 joint angles
@@ -233,24 +221,14 @@ class UmiPosePublisher(Node):
         Returns:
             T_base_gopro: 4x4 transformation matrix from base to gopro_link
         """
-        # Convert joint states to tensor
-        q = torch.tensor([joint_states.tolist()], dtype=torch.float32, device=self.tensor_args.device)
+        # IKPy expects full joint list including inactive joints
+        # Format: [0, joint1, joint2, joint3, joint4, joint5, joint6, joint7, 0]
+        full_joints = np.zeros(len(self.robot_chain.links))
+        full_joints[1:8] = joint_states  # Set active joints (indices 1-7)
         
-        # Get FK to umi_tcp (the configured ee_link)
-        state = self.kinematics.get_state(q)
-        
-        # Extract position and quaternion (CuRobo format: w, x, y, z)
-        ee_pos = state.ee_pose.position.cpu().squeeze().numpy()
-        ee_quat = state.ee_pose.quaternion.cpu().squeeze().numpy()  # [w, x, y, z]
-        
-        # Convert to scipy quaternion format (x, y, z, w)
-        quat_scipy = [ee_quat[1], ee_quat[2], ee_quat[3], ee_quat[0]]
-        rot_mat = R.from_quat(quat_scipy).as_matrix()
-        
-        # Build T_base_umi_tcp
-        T_base_umi_tcp = np.eye(4)
-        T_base_umi_tcp[:3, :3] = rot_mat
-        T_base_umi_tcp[:3, 3] = ee_pos
+        # Get FK to umi_tcp (the end of the chain)
+        # forward_kinematics returns a 4x4 transformation matrix
+        T_base_umi_tcp = self.robot_chain.forward_kinematics(full_joints)
         
         # Compute T_base_gopro = T_base_umi_tcp @ T_umi_tcp_gopro
         T_base_gopro = T_base_umi_tcp @ self.T_umi_tcp_gopro
@@ -315,47 +293,41 @@ class UmiPosePublisher(Node):
 
     def solve_ik(self, target_pose_matrix):
         """
-        Solves IK for a target 4x4 matrix in Base Frame.
-        Returns: Joint angles (numpy array)
+        Solves IK for a target 4x4 matrix in Base Frame using IKPy.
+        
+        Args:
+            target_pose_matrix: 4x4 transformation matrix for target pose
+            
+        Returns: 
+            Joint angles as a list of 7 values (panda_joint1-7), or None if failed
         """
-        # Convert 4x4 Matrix to CuRobo Pose (Pos + Quaternion)
-        pos = target_pose_matrix[:3, 3].tolist()
-        rot_mat = target_pose_matrix[:3, :3].tolist()
-        
-        # Scipy to quat (x,y,z,w)
-        quat_scipy = R.from_matrix(rot_mat).as_quat() 
-        # To CuRobo (w,x,y,z)
-        quat_curobo = torch.tensor([[quat_scipy[3], quat_scipy[0], quat_scipy[1], quat_scipy[2]]], 
-                                  dtype=torch.float32, device=self.tensor_args.device)
-        pos_curobo = torch.tensor([pos], dtype=torch.float32, device=self.tensor_args.device)
-        pose = Pose(position=pos_curobo, quaternion=quat_curobo)
-        
         curr_joint_states = self.get_current_joint_states()
         if curr_joint_states is None:
             self.get_logger().error("No current joint states available")
             return None
 
-        start_joint_state = CuroboJointState.from_position(
-            position=self.tensor_args.to_device(curr_joint_states).unsqueeze(0),
-            joint_names=self.joint_names
-        )
+        # Build initial position for IK solver (full joint list including inactive joints)
+        # Format: [0, joint1, joint2, joint3, joint4, joint5, joint6, joint7, 0]
+        initial_position = np.zeros(len(self.robot_chain.links))
+        initial_position[1:8] = curr_joint_states  # Set active joints
 
-        # Solve IK
-        result = self.motion_gen.plan_single(
-            start_joint_state,
-            pose,
-            MotionGenPlanConfig(max_attempts=3, enable_finetune_trajopt=True)
-        )
-
-        success = bool(result.success.view(-1)[0].item())
-        if not success:
-            self.get_logger().error(f"MotionGen plan failed: {result}")
+        # Solve IK using IKPy
+        # inverse_kinematics_frame takes a 4x4 transformation matrix directly
+        try:
+            calculated_joints = self.robot_chain.inverse_kinematics_frame(
+                target=target_pose_matrix,
+                initial_position=initial_position
+            )
+        except Exception as e:
+            self.get_logger().error(f"IK solver failed: {e}")
             return None
 
-        last_joint_angle = result.optimized_plan.position.tolist()
-        # last_joint_angle = result.interpolated_plan.position.cpu().numpy().tolist()
-        self.last_joint_angles = last_joint_angle
-        return last_joint_angle
+        # Extract active joints (indices 1-7 are the 7 Panda joints)
+        # Convert to list - handles both numpy array and list returns from ikpy
+        joint_angles = list(calculated_joints[1:8])
+        
+        self.last_joint_angles = joint_angles
+        return joint_angles
 
 
     def timer_callback(self):
@@ -363,7 +335,7 @@ class UmiPosePublisher(Node):
         if self.current_joint_states is None:
             self.get_logger().info("Waiting for joint states...")
             return
-        
+
         # Compute calibration on first joint states received
         # The robot must be in calibration pose at this moment!
         if not self.calibration_complete:
@@ -396,28 +368,27 @@ class UmiPosePublisher(Node):
         joint_angles = self.solve_ik(T_base_eef)
 
         if joint_angles is not None:
-            # 5. Publish
-            for waypoint in joint_angles:
-                msg = JointState()
-                msg.header.stamp = self.get_clock().now().to_msg()
-                msg.header.frame_id = "panda_link0"
-                
-                # Map specific Franka joint names
-                msg.name = [
-                    'panda_joint1', 'panda_joint2', 'panda_joint3', 
-                    'panda_joint4', 'panda_joint5', 'panda_joint6', 'panda_joint7',
-                    'panda_finger_joint1', 'panda_finger_joint2'
-                ]
-                
-                # Combine 7DOF arm + 2 Gripper fingers
-                # Gripper mapping: dataset width is total width (0 to 0.08)
-                # URDF mimic joints go 0 to 0.04 each. So divide by 2.
-                finger_pos = max(0.0, min(0.04, gripper_width[0]))
-                
-                # Flatten array
-                joints_list = waypoint + [finger_pos, finger_pos]
-                msg.position = [float(x) for x in joints_list]
-                self.publisher_.publish(msg)
+            # 5. Publish single joint configuration (IKPy returns single config, not trajectory)
+            msg = JointState()
+            msg.header.stamp = self.get_clock().now().to_msg()
+            msg.header.frame_id = "panda_link0"
+            
+            # Map specific Franka joint names
+            msg.name = [
+                'panda_joint1', 'panda_joint2', 'panda_joint3', 
+                'panda_joint4', 'panda_joint5', 'panda_joint6', 'panda_joint7',
+                'panda_finger_joint1', 'panda_finger_joint2'
+            ]
+            
+            # Combine 7DOF arm + 2 Gripper fingers
+            # Gripper mapping: dataset width is total width (0 to 0.08)
+            # URDF mimic joints go 0 to 0.04 each. So divide by 2.
+            finger_pos = max(0.0, min(0.04, gripper_width[0]))
+            
+            # Combine arm joints and gripper
+            joints_list = list(joint_angles) + [finger_pos, finger_pos]
+            msg.position = [float(x) for x in joints_list]
+            self.publisher_.publish(msg)
 
         self.current_step += 1
         if self.current_step % 10 == 0:

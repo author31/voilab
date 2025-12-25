@@ -276,6 +276,22 @@ class ReplayBuffer:
                     chunks=cks,
                     compressor=cpr
                 )
+        
+        #add reconstruct
+        if self.backend == 'zarr':
+            for grp_name in self.root.group_keys():
+                if grp_name in ('data', 'meta'):
+                    continue
+                src_path = f'/{grp_name}'
+                dest_path = f'/{grp_name}'
+                zarr.copy_store(
+                    source=self.root.store,
+                    dest=store,
+                    source_path=src_path,
+                    dest_path=dest_path,
+                    if_exists=if_exists,
+                )
+
         return store
 
     def save_to_path(self, zarr_path,             
