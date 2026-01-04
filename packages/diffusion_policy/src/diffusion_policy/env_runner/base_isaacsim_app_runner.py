@@ -1,6 +1,6 @@
 import time
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 import torch
@@ -8,6 +8,11 @@ import torch
 from diffusion_policy.common.pytorch_util import dict_apply
 from diffusion_policy.env_runner.base_image_runner import BaseImageRunner
 from diffusion_policy.policy.base_image_policy import BaseImagePolicy
+
+BASE_SCENE_FP = "/workspace/voilab/assets/ED305_scene/ED305.usd"
+FRANKA_PANDA_FP = "/workspace/voilab/assets/franka_panda/franka_panda_arm.usd"
+FRANKA_PANDA_PRIM_PATH = "/World/Franka"
+GOPRO_PRIM_PATH = "/World/Franka/panda/panda_link7/gopro_link"
 
 
 class BaseIsaacSimAppRunner(BaseImageRunner, ABC):
@@ -21,22 +26,28 @@ class BaseIsaacSimAppRunner(BaseImageRunner, ABC):
     def __init__(
         self,
         output_dir: str,
-        sim_config: Dict[str, Any],
+        sim_config: Optional[Dict[str, Any]] = None,
+        shape_meta: Optional[Dict[str, Any]] = None,
+        env=None,
         n_episodes: int = 1,
-        max_steps_per_episode: int = 200,
         n_obs_steps: int = 2,
         n_action_steps: int = 1,
         save_observation_data: bool = False,
+        scene_config: Optional[Dict[str, Any]] = None,
+        timeout_seconds: Optional[float] = None,
+        max_steps_per_episode: Optional[int] = None,
     ):
         super().__init__(output_dir)
-        from isaacsim import SimulationApp
-
-        self.simulation_app = SimulationApp(sim_config)
+        self.shape_meta = shape_meta or {}
+        self.scene_config = scene_config or getattr(env, "scene_config", {}) or {}
+        self.env = env
+        self.simulation_app = getattr(self.env, "simulation_app", None)
         self.n_episodes = n_episodes
-        self.max_steps_per_episode = max_steps_per_episode
         self.n_obs_steps = n_obs_steps
         self.n_action_steps = n_action_steps
         self.save_observation_data = save_observation_data
+        self.timeout_seconds = 60
+        self.max_steps_per_episode = max_steps_per_episode
 
     def _process_observation_for_policy(
         self, obs: Dict[str, np.ndarray]
@@ -52,9 +63,7 @@ class BaseIsaacSimAppRunner(BaseImageRunner, ABC):
                 rgb_img = rgb_img.transpose(0, 3, 1, 2)
             elif rgb_img.ndim == 3:
                 rgb_img = rgb_img.transpose(2, 0, 1)[None, ...]
-            policy_obs["camera0_rgb"] = (
-                torch.from_numpy(rgb_img).float().unsqueeze(0)
-            )
+            policy_obs["camera0_rgb"] = torch.from_numpy(rgb_img).float().unsqueeze(0)
 
         for key, value in obs.items():
             if key == "camera0_rgb":
@@ -68,7 +77,9 @@ class BaseIsaacSimAppRunner(BaseImageRunner, ABC):
         Reset the environment and return the initial observation.
         Subclasses should override with Isaac Sim-specific logic.
         """
-        raise NotImplementedError()
+        if self.env is None:
+            raise RuntimeError("IsaacSim environment is not initialized.")
+        return self.env.reset()
 
     def step_env(
         self, action: np.ndarray
@@ -77,13 +88,24 @@ class BaseIsaacSimAppRunner(BaseImageRunner, ABC):
         Apply an action to the environment and return (obs, reward, done, info).
         Subclasses should override with Isaac Sim-specific logic.
         """
-        raise NotImplementedError()
+        if self.env is None:
+            raise RuntimeError("IsaacSim environment is not initialized.")
+        return self.env.step(action)
 
-    @abstractmethod
     def is_timeout(self, start_time: float, step_count: int) -> bool:
         """
         Return True if the current episode should timeout.
+
+        Checks both wall-clock time (timeout_seconds) and step count
+        (max_steps_per_episode). Returns True if either limit is exceeded.
         """
+        if self.timeout_seconds is not None:
+            if (time.time() - start_time) >= self.timeout_seconds:
+                return True
+        if self.max_steps_per_episode is not None:
+            if step_count >= self.max_steps_per_episode:
+                return True
+        return False
 
     @abstractmethod
     def should_terminate(self, done: bool, info: Dict[str, Any]) -> bool:
@@ -97,7 +119,10 @@ class BaseIsaacSimAppRunner(BaseImageRunner, ABC):
         all_results = []
 
         for episode_idx in range(self.n_episodes):
-            if not self.simulation_app.is_running():
+            if self.simulation_app is not None:
+                if not self.simulation_app.is_running():
+                    break
+            elif self.env is not None and not self.env.is_running():
                 break
 
             obs = self.reset_env()
@@ -109,9 +134,13 @@ class BaseIsaacSimAppRunner(BaseImageRunner, ABC):
             episode_start_time = time.time()
             episode_data = []
 
-            while self.simulation_app.is_running():
-                if step_count >= self.max_steps_per_episode:
+            while True:
+                if self.simulation_app is not None:
+                    if not self.simulation_app.is_running():
+                        break
+                elif self.env is not None and not self.env.is_running():
                     break
+
                 if self.is_timeout(episode_start_time, step_count):
                     break
 
@@ -137,7 +166,10 @@ class BaseIsaacSimAppRunner(BaseImageRunner, ABC):
                     )
 
                 step_count += 1
-                self.simulation_app.update()
+                if self.simulation_app is not None:
+                    self.simulation_app.update()
+                elif self.env is not None:
+                    self.env.update()
 
                 if self.should_terminate(done, info):
                     break
@@ -162,9 +194,7 @@ class BaseIsaacSimAppRunner(BaseImageRunner, ABC):
             )
             if episode_stats
             else 0.0,
-            "success_rate": float(
-                np.mean([ep["success"] for ep in episode_stats])
-            )
+            "success_rate": float(np.mean([ep["success"] for ep in episode_stats]))
             if episode_stats
             else 0.0,
         }
@@ -175,6 +205,7 @@ class BaseIsaacSimAppRunner(BaseImageRunner, ABC):
         return results
 
     def close(self) -> None:
-        if self.simulation_app:
-            self.simulation_app.close()
-            self.simulation_app = None
+        if self.env:
+            self.env.close()
+        self.env = None
+        self.simulation_app = None

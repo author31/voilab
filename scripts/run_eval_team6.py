@@ -10,27 +10,61 @@ Architecture:
 - Pure function calls to umi_replay module
 """
 
+import sys
+sys.path.append(".venv/lib/python3.10/site-packages")
+sys.path.append("packages/diffusion_policy/src")
+sys.path.append("packages/umi/src")
+
 import os
 import json
 import registry
 import argparse
 import numpy as np
 import time
-import sys
 import zarr
 from zarr.storage import ZipStore
 from numcodecs import Blosc
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--task", type=str, choices=["kitchen", "dining-room", "living-room"], required=True)
+parser.add_argument("--checkpoint", default=None)
+parser.add_argument("--render", action='store_true')
+parser.add_argument("--policy_control", action='store_true')
+parser.add_argument("--num_episodes", type=int, default=10)
+parser.add_argument("--max_length", type=int, default=300)
 parser.add_argument("--session_dir", type=str, default=None)
+parser.add_argument("--task", type=str, choices=["kitchen", "dining-room", "living-room"], default="kitchen")
 parser.add_argument("--x_offset", type=float, default=0.1, help="X-axis offset for coordinate calibration (meters)")
 parser.add_argument("--y_offset", type=float, default=0.15, help="Y-axis offset for coordinate calibration (meters)")
 parser.add_argument("--z_offset", type=float, default=-0.07, help="Z-axis offset for coordinate calibration (meters)")
-parser.add_argument("--episode", type=int, default=0)
 args = parser.parse_args()
 
-from isaacsim import SimulationApp
+from diffusion_policy.workspace.base_workspace import BaseWorkspace
+from umi.real_world.real_inference_util import get_real_umi_action, get_real_umi_obs_dict
+from diffusion_policy.common.pytorch_util import dict_apply
+# from diffusion_policy.workspace.base_workspace import BaseWorkspace
+# from umi.real_world.real_inference_util import get_real_umi_action, get_real_umi_obs_dict
+
+import torch
+import dill
+import hydra
+# load checkpoint
+payload = torch.load(open(args.checkpoint, 'rb'), pickle_module=dill)
+omega_cfg = cfg = payload['cfg']
+instance = hydra.utils.get_class(cfg._target_)
+workspace: BaseWorkspace = instance(cfg, output_dir='./data/eval_outputs')
+workspace.load_payload(payload, exclude_keys=None, include_keys=None)
+
+# get policy from workspace
+policy = workspace.model
+if cfg.training.use_ema:
+    policy = workspace.ema_model
+
+policy.cuda()
+policy.eval()
+
+# exit()
+
+from isaacsim.simulation_app import SimulationApp
 
 config = {
     "headless": False,
@@ -71,6 +105,7 @@ from umi_replay import set_gripper_width
 from motion_plan import PickPlace
 
 
+
 assets_root_path = get_assets_root_path()
 if assets_root_path is None:
     print("[Main] ERROR: Could not find Isaac Sim assets folder")
@@ -80,15 +115,15 @@ if assets_root_path is None:
 enable_extension("isaacsim.robot_motion.motion_generation")
 
 # --- Configuration ---
-BASE_SCENE_FP = "/workspace/voilab/assets/ED305_scene/ED305.usd"
-FRANKA_PANDA_FP = "/workspace/voilab/assets/franka_panda/franka_panda_arm.usd"
+BASE_SCENE_FP = "assets/ED305_scene/ED305.usd"
+FRANKA_PANDA_FP = "assets/franka_panda/franka_panda_arm.usd"
 FRANKA_PANDA_PRIM_PATH = "/World/Franka"
 GOPRO_PRIM_PATH = "/World/Franka/panda/panda_link7/gopro_link"
-ASSETS_DIR = "/workspace/voilab/assets/CADs"
+ASSETS_DIR = "assets/CADs"
 
 # CORRECTED: Use these paths in the solver initialization
-LULA_ROBOT_DESCRIPTION_PATH = "/workspace/voilab/assets/lula/frank_umi_descriptor.yaml"
-LULA_URDF_PATH = "/workspace/voilab/assets/franka_panda/franka_panda_umi-isaacsim.urdf"
+LULA_ROBOT_DESCRIPTION_PATH = "assets/lula/frank_umi_descriptor.yaml"
+LULA_URDF_PATH = "assets/franka_panda/franka_panda_umi-isaacsim.urdf"
 PANDA0_PATH = FRANKA_PANDA_PRIM_PATH + "/panda/panda_link0"
 LEFT_PATH = FRANKA_PANDA_PRIM_PATH + "/panda/panda_leftfinger"
 RIGHT_PATH = FRANKA_PANDA_PRIM_PATH + "/panda/panda_rightfinger"
@@ -237,56 +272,6 @@ def get_end_effector_pos_quat_wxyz(panda, lula_solver, art_kine_solver):
     quat_wxyz = quat_xyzw[[3, 0, 1, 2]]
     return ee_pos.astype(np.float64), quat_wxyz.astype(np.float64)
 
-
-def save_multi_episode_dataset(output_path: str, episodes: list[dict]) -> None:
-    compressor = Blosc(cname="zstd", clevel=5, shuffle=Blosc.BITSHUFFLE)
-    store = ZipStore(output_path, mode="w")
-    root = zarr.group(store)
-    data = root.create_group("data")
-
-    rgb = np.concatenate([ep["rgb"] for ep in episodes], axis=0).astype(np.uint8)
-    demo_start = np.concatenate([ep["demo_start"] for ep in episodes], axis=0).astype(np.float64)
-    demo_end = np.concatenate([ep["demo_end"] for ep in episodes], axis=0).astype(np.float64)
-    eef_pos = np.concatenate([ep["eef_pos"] for ep in episodes], axis=0).astype(np.float32)
-    eef_rot = np.concatenate([ep["eef_rot"] for ep in episodes], axis=0).astype(np.float32)
-    gripper = np.concatenate([ep["gripper"] for ep in episodes], axis=0).astype(np.float32)
-
-    data.create_dataset("camera0_rgb", data=rgb, compressor=compressor)
-    data.create_dataset("robot0_demo_start_pose", data=demo_start, compressor=compressor)
-    data.create_dataset("robot0_demo_end_pose", data=demo_end, compressor=compressor)
-    data.create_dataset("robot0_eef_pos", data=eef_pos, compressor=compressor)
-    data.create_dataset("robot0_eef_rot_axis_angle", data=eef_rot, compressor=compressor)
-    data.create_dataset("robot0_gripper_width", data=gripper, compressor=compressor)
-
-    episode_lengths = [len(ep["rgb"]) for ep in episodes]
-    episode_ends = np.cumsum(episode_lengths)
-    meta = root.create_group("meta")
-    meta.create_dataset("episode_ends", data=episode_ends)
-    store.close()
-    print("[SAVE] replay_dataset.zarr.zip saved at:", output_path)
-
-
-def _load_progress(session_dir: str) -> set[int]:
-    progress_path = os.path.join(session_dir, ".previous_progress.json")
-    if not os.path.exists(progress_path):
-        return set()
-    try:
-        with open(progress_path, "r") as f:
-            payload = json.load(f)
-    except (json.JSONDecodeError, OSError) as exc:
-        print(f"[Main] WARNING: Failed to read progress file: {exc}")
-        return set()
-    completed = payload.get("completed_episodes", [])
-    return set(int(x) for x in completed)
-
-
-def _save_progress(session_dir: str, completed: set[int]) -> None:
-    progress_path = os.path.join(session_dir, ".previous_progress.json")
-    payload = {"completed_episodes": sorted(completed)}
-    with open(progress_path, "w") as f:
-        json.dump(payload, f, indent=2)
-
-
 def _normalize_object_name(name: str) -> str:
     return name.strip().lower().replace(" ", "_")
 
@@ -303,8 +288,9 @@ def step_world_and_record(
     render=True,
     sleep_dt=0.01,
     ):
-    world.step(render=render)
-    time.sleep(sleep_dt)
+    world.step(render=True)
+    if render:
+        time.sleep(sleep_dt)
 
     # RGB
     img = camera.get_rgb()
@@ -391,6 +377,11 @@ def main():
     assert cfg.get("camera_pose") is not None, "Camera pose is required"
     is_episode_completed = registry_class.is_episode_completed
 
+    if args.session_dir is not None:
+        object_poses_path = os.path.join(args.session_dir, 'demos', 'mapping', 'object_poses.json')
+    else:
+        object_poses_path = None
+
     print(f"[Main] Configuration: {cfg}")
     franka_pose = cfg.get("franka_pose", {})
     franka_translation = franka_pose.get("translation", [0, 0, 0])
@@ -448,15 +439,8 @@ def main():
     lula_solver = None
     art_kine_solver = None
     object_prims = {}
-    object_poses_path = None
 
-    if args.session_dir is None:
-        print("[Main] ERROR: session_dir is required for multi-episode replay.")
-        simulation_app.close()
-        return
-
-    object_poses_path = os.path.join(args.session_dir, 'demos', 'mapping', 'object_poses.json')
-    print(f"[Main] Looking for object poses at: {object_poses_path}")
+    # input("Press Enter to continue...")
 
     preload_objects = cfg.get("environment_vars", {}).get("PRELOAD_OBJECTS", [])
     preload_by_name = {}
@@ -506,19 +490,14 @@ def main():
         end_effector_frame_name="umi_tcp"
     )
 
-    with open(object_poses_path, "r") as f:
-        object_pose_records = json.load(f)
-    total_episodes = len(object_pose_records)
-    print(f"[Main] Replay initialized for {total_episodes} episodes.")
+    total_episodes = args.num_episodes
 
     # --- Main simulation loop ---
     print("[Main] Starting simulation loop...")
 
-    completed_episodes = _load_progress(args.session_dir)
-    episodes_to_run = [ep for ep in range(total_episodes) if ep not in completed_episodes]
     collected_episodes = []
 
-    for episode_idx in episodes_to_run:
+    for episode_idx in range(total_episodes):
         if not simulation_app.is_running():
             break
 
@@ -535,54 +514,74 @@ def main():
 
         # Object configuration
         if object_poses_path and os.path.exists(object_poses_path):
+            print("Loading object poses from:", object_poses_path)
             object_transforms = load_object_transforms_from_json(
                 object_poses_path,
                 episode_index=episode_idx,
                 aruco_tag_pose=aruco_tag_pose,
                 cfg=cfg,
             )
+        else:
+            def sample_random_pos(range_xy=(0.15, 0.15), height=1.05):
+                x_offset = np.random.uniform(-range_xy[0], range_xy[0])
+                y_offset = np.random.uniform(-range_xy[1], range_xy[1])
+                return [5 + x_offset, 2.7 + y_offset, height]
 
-            if len(object_transforms) == 0:
-                print(f"[ObjectLoader] Skipping episode: {episode_idx} as objects are not constructed successfully.")
+            blue_cup_pos = sample_random_pos()
+            pink_cup_pos = sample_random_pos()
+            while np.linalg.norm(np.array(blue_cup_pos) - np.array(pink_cup_pos)) < 0.1:
+                blue_cup_pos = sample_random_pos()
+                pink_cup_pos = sample_random_pos()
+
+            object_transforms = [
+                dict(object_name="blue_cup", position=blue_cup_pos),
+                dict(object_name="pink_cup", position=pink_cup_pos),
+            ]
+
+        if len(object_transforms) == 0:
+            print(f"[ObjectLoader] Skipping episode: {episode_idx} as objects are not constructed successfully.")
+            continue
+
+        for obj in object_transforms:
+            object_name = _normalize_object_name(obj["object_name"])
+            if object_name == "plate":
                 continue
-
-            for obj in object_transforms:
-                object_name = _normalize_object_name(obj["object_name"])
-                if object_name == "plate":
+            if object_name not in object_prims:
+                preload_entry = preload_by_name.get(object_name)
+                assert preload_entry, f"Object {object_name} missing from PRELOAD_OBJECTS"
+                asset_filename = preload_entry["assets"]
+                prim_path = preload_entry["prim_path"]
+                full_asset_path = os.path.join(ASSETS_DIR, asset_filename)
+                if not os.path.exists(full_asset_path):
+                    print(f"[ObjectLoader] WARNING: Asset not found: {full_asset_path}, skipping {object_name}")
                     continue
-                if object_name not in object_prims:
-                    preload_entry = preload_by_name.get(object_name)
-                    assert preload_entry, f"Object {object_name} missing from PRELOAD_OBJECTS"
-                    asset_filename = preload_entry["assets"]
-                    prim_path = preload_entry["prim_path"]
-                    full_asset_path = os.path.join(ASSETS_DIR, asset_filename)
-                    if not os.path.exists(full_asset_path):
-                        print(f"[ObjectLoader] WARNING: Asset not found: {full_asset_path}, skipping {object_name}")
-                        continue
 
-                    try:
-                        stage_utils.add_reference_to_stage(
-                            usd_path=full_asset_path,
-                            prim_path=prim_path
-                        )
-                    except Exception as e:
-                        print(f"[ObjectLoader] ERROR: Failed to load asset {full_asset_path}: {str(e)}")
-                        continue
+                try:
+                    stage_utils.add_reference_to_stage(
+                        usd_path=full_asset_path,
+                        prim_path=prim_path
+                    )
+                except Exception as e:
+                    print(f"[ObjectLoader] ERROR: Failed to load asset {full_asset_path}: {str(e)}")
+                    continue
 
-                    obj_prim = RigidPrim(prim_path, object_name)
-                    obj_prim.initialize()
-                    object_prims[object_name] = obj_prim
+                obj_prim = RigidPrim(prim_path, object_name)
+                obj_prim.initialize()
+                object_prims[object_name] = obj_prim
 
-                obj_prim = object_prims[object_name]
-                obj_pos = np.array(obj["position"], dtype=np.float64)
-                obj_prim.set_world_pose(position=obj_pos)
-                print(f"[ObjectLoader] Positioned {object_name} at {obj_pos}")
+            obj_prim = object_prims[object_name]
+            obj_pos = np.array(obj["position"], dtype=np.float64)
+            obj_prim.set_world_pose(position=obj_pos)
+            print(f"[ObjectLoader] Positioned {object_name} at {obj_pos}")
 
         # Make simulation settle
+        # for _ in range(10000):
         for _ in range(100):
             set_gripper_width(panda, width=0.1, threshold=0.0, step=0.05)
-            world.step(render=True)
-            time.sleep(1 / 60)
+            world.step(render=False)
+            # world.step(render=args.render)
+            # if args.render:
+            #     time.sleep(1 / 60)
 
         curr_pos, _ = get_end_effector_pos_quat_wxyz(panda, lula_solver, art_kine_solver)
         get_object_world_pose = make_get_object_world_pose(prim_mgr)
@@ -632,11 +631,16 @@ def main():
         eef_pose6d = None
         episode_start_pose = None
         episode_end_pose = None
+        actions = None
+        action_t = 0
+
+        motion_planner.step(panda, lula_solver, art_kine_solver)
 
         while simulation_app.is_running():
 
             # Predefine motion planning to collect data
-            motion_planner.step(panda, lula_solver, art_kine_solver)
+            if not args.policy_control:
+                motion_planner.step(panda, lula_solver, art_kine_solver)
 
             eef_pose6d = step_world_and_record(
                 world,
@@ -648,15 +652,92 @@ def main():
                 eef_pos_list,
                 eef_rot_list,
                 gripper_list,
-                render=True,
+                render=args.render,
             )
-
             if episode_start_pose is None:
                 episode_start_pose = eef_pose6d.copy()
 
             if motion_planner.is_done():
                 episode_end_pose = eef_pose6d.copy()
                 print("[Main] Motion plan finished")
+                break
+
+            t = len(rgb_list)
+            if t > args.max_length:
+                print(f"[Main] Reached max episode length: {args.max_length}")
+                break
+
+            if t == 4 or (t > 0 and t % 45 == 0):
+                obs_dict = dict(
+                    camera0_rgb=np.stack([rgb_list[-4], rgb_list[-1]]),
+                    robot0_eef_pos=np.stack([eef_pos_list[-4], eef_pos_list[-1]]),
+                    robot0_eef_rot_axis_angle=np.stack([eef_rot_list[-4], eef_rot_list[-1]]),
+                    robot0_gripper_width=np.stack([gripper_list[-4], gripper_list[-1]]),
+                )
+                umi_obs_dict = get_real_umi_obs_dict(
+                    obs_dict, omega_cfg.task.shape_meta, omega_cfg.task.pose_repr.obs_pose_repr,
+                    episode_start_pose=[episode_start_pose]
+                )
+                umi_obs_dict = dict_apply(umi_obs_dict, lambda x: torch.from_numpy(x).unsqueeze(0).cuda())
+                # print(umi_obs_dict)
+                with torch.no_grad():
+                    umi_action = policy.predict_action(umi_obs_dict)['action']
+                # print(umi_action)
+                actions = get_real_umi_action(
+                    umi_action.squeeze(0).cpu().numpy(),
+                    obs_dict,
+                    action_pose_repr=omega_cfg.task.pose_repr.action_pose_repr,
+                )
+                action_t = 1
+                # print(action)
+
+            if actions is not None:
+                action_idx = action_t // 3
+                DEBUG_DRAW.clear_points()
+                draw_actions = actions[action_idx:, :3].tolist()
+                DEBUG_DRAW.draw_points(draw_actions, [(1, 0, 0, 1)] * len(draw_actions), [10] * len(draw_actions))
+                DEBUG_DRAW.draw_points(eef_pos_list[-1:], [(0, 1, 0, 1)], [10])
+
+                if args.policy_control:
+                    action = actions[action_idx]
+
+                    gripper_open_rate = (action[-1] - pickplace.gripper_close_thresh) / (pickplace.gripper_open_thresh - pickplace.gripper_close_thresh)
+                    # print(gripper_open_rate, action[-1])
+                    if not pickplace.attached:
+
+                        ee_pos, ee_quat = get_end_effector_pos_quat_wxyz(panda, lula_solver, art_kine_solver)
+                        target_T_ee_to_obj = np.array(
+                            [[0.66619042, -0.74381219, 0.05416401, 0.00814615],
+                             [-0.74120343, -0.66838736, -0.06225608, -0.0895842],
+                             [0.08250937, 0.00132786, -0.9965894, -0.12217499],
+                             [0., 0., 0., 1.]]
+                        )
+
+                        quat_xyzw = np.array([ee_quat[1], ee_quat[2], ee_quat[3], ee_quat[0]])
+                        T_ee = np.eye(4)
+                        T_ee[:3, :3] = R.from_quat(quat_xyzw).as_matrix()
+                        T_ee[:3, 3] = ee_pos
+
+                        T_obj = pickplace.get_obj_pose(pickplace.attached_object_path)
+                        T_ee_to_obj = np.linalg.inv(T_ee) @ np.array(T_obj)
+
+                        # print(np.linalg.norm(target_T_ee_to_obj[:3, 3] - T_ee_to_obj[:3, 3]))
+                        if np.linalg.norm(target_T_ee_to_obj[:3, 3] - T_ee_to_obj[:3, 3]) < 0.03:
+                            pickplace.T_ee_to_obj = target_T_ee_to_obj
+                            pickplace.attached = True
+                            print('Start syncing attached object...')
+
+                    pickplace._sync_attached_object(panda, lula_solver, art_kine_solver)
+
+                    target_rot = utils.rvec_to_quaternion_wxyz(action[3:6])
+                    # target_rot = pickplace.grasp_quat
+                    set_gripper_width(panda, action[-1])
+                    apply_ik_solution(panda, art_kine_solver, action[:3], target_rot)
+                    action_t += 1
+            #     # print(action_idx, action[:, 3])
+            #     # exit()
+
+            if is_episode_completed(None):
                 break
 
         if episode_end_pose is None and eef_pos_list:
@@ -688,19 +769,11 @@ def main():
 
         collected_episodes.append(episode_record)
 
-        if episode_success:
-            completed_episodes.add(episode_idx)
-            _save_progress(args.session_dir, completed_episodes)
-
     successful_episodes = [
         ep for ep in collected_episodes
         if ep.get("success", False)
     ]
     print(f"[Main] Total successful trials collected: {len(successful_episodes)}")
-    if successful_episodes:
-        output_zarr = os.path.join(args.session_dir, "simulation_dataset.zarr.zip")
-        save_multi_episode_dataset(output_zarr, successful_episodes)
-
     simulation_app.close()
 
 
