@@ -1,14 +1,9 @@
 """
 Usage:
-python eval.py --checkpoint data/image/pusht/diffusion_policy_cnn/train_0/checkpoints/latest.ckpt -o data/pusht_eval_output --env_runner path/to/env_runner
+python eval.py --checkpoint data/image/pusht/diffusion_policy_cnn/train_0/checkpoints/latest.ckpt -o data/pusht_eval_output --env_runner path.to.env_runner
 """
 
 import sys
-
-# use line-buffering for both stdout and stderr
-sys.stdout = open(sys.stdout.fileno(), mode='w', buffering=1)
-sys.stderr = open(sys.stderr.fileno(), mode='w', buffering=1)
-
 import json
 import os
 import pathlib
@@ -27,10 +22,7 @@ from diffusion_policy.workspace.base_workspace import BaseWorkspace
 @click.option('-o', '--output_dir', required=True)
 @click.option('-d', '--device', default='cuda:0')
 @click.option('-e', '--env_runner_path', default=None)
-@click.option('-urdf', '--urdf_path', default=None)
-def main(checkpoint, output_dir, device, env_runner_path, urdf_path):
-    if os.path.exists(output_dir):
-        click.confirm(f"Output path {output_dir} already exists! Overwrite?", abort=True)
+def main(checkpoint, output_dir, device, env_runner_path):
     pathlib.Path(output_dir).mkdir(parents=True, exist_ok=True)
     
     # load checkpoint
@@ -58,7 +50,6 @@ def main(checkpoint, output_dir, device, env_runner_path, urdf_path):
     env_runner = hydra.utils.instantiate(
         env_runner_path,
         output_dir=output_dir,
-        urdf_path=urdf_path,
         shape_meta=cfg.shape_meta
     )
     runner_log = env_runner.run(policy)

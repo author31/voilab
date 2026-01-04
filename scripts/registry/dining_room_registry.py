@@ -13,20 +13,30 @@ class DiningRoomTaskRegistry:
     # ArUco tag pose
     ARUCO_TAG_TRANSLATION = np.array([1.65, 4.75, 0.8])
     ARUCO_TAG_ROTATION_EULER = np.array([0.0, 0.0, 90.0])
-    ARUCO_TAG_ROTATION_QUAT = Rotation.from_euler('xyz', ARUCO_TAG_ROTATION_EULER, degrees=True).as_quat() # x,y,z,w
+    ARUCO_TAG_ROTATION_QUAT = Rotation.from_euler(
+        "xyz", ARUCO_TAG_ROTATION_EULER, degrees=True
+    ).as_quat()  # x,y,z,w
     FORK_PATH = "/World/fork"
     KNIFE_PATH = "/World/knife"
     PLATE_PATH = "/plate"
 
     # Robot poses (Franka)
-    FRANKA_TRANSLATION = np.array([1.4471314866267897, 4.953638444125494, 0.7547650876392805])
+    FRANKA_TRANSLATION = np.array(
+        [1.4471314866267897, 4.953638444125494, 0.7547650876392805]
+    )
     FRANKA_ROTATION_EULER = np.array([0.0, 0.0, -18.0])
-    FRANKA_ROTATION_QUAT = Rotation.from_euler('xyz', FRANKA_ROTATION_EULER, degrees=True).as_quat() # x,y,z,w
+    FRANKA_ROTATION_QUAT = Rotation.from_euler(
+        "xyz", FRANKA_ROTATION_EULER, degrees=True
+    ).as_quat()  # x,y,z,w
 
     # Camera poses
-    CAMERA_TRANSLATION = np.array([5.300000078976154, 4.90000007301569, 1.600000023841858])
+    CAMERA_TRANSLATION = np.array(
+        [5.300000078976154, 4.90000007301569, 1.600000023841858]
+    )
     CAMERA_ROTATION_EULER = np.array([78.5, 0.0, -270.0])
-    CAMERA_ROTATION_QUAT = Rotation.from_euler('xyz', CAMERA_ROTATION_EULER, degrees=True).as_quat() # x,y,z,w
+    CAMERA_ROTATION_QUAT = Rotation.from_euler(
+        "xyz", CAMERA_ROTATION_EULER, degrees=True
+    ).as_quat()  # x,y,z,w
 
     @classmethod
     def get_config(cls) -> Dict[str, Any]:
@@ -58,26 +68,32 @@ class DiningRoomTaskRegistry:
                         "name": "knife",
                         "assets": "knife.usd",
                         "prim_path": "/World/knife",
-                        "quat_wxyz": np.array([1.,0.,0.,0.]),
+                        "quat_wxyz": np.array([1.0, 0.0, 0.0, 0.0]),
+                        "default_position": [1.65, 4.65, 0.82],
                     },
                     {
                         "name": "fork",
                         "assets": "fork.usd",
                         "prim_path": "/World/fork",
                         "quat_wxyz": np.array([0.707, 0.0, 0.0, -0.707]),
+                        "default_position": [1.65, 4.85, 0.82],
                     },
                 ],
-            }
+            },
         }
 
     @classmethod
     def validate_environment(cls) -> bool:
         """Validate dining table environment setup"""
 
-        if np.any(np.isnan(cls.FRANKA_TRANSLATION)) or np.any(np.isnan(cls.FRANKA_ROTATION_EULER)):
+        if np.any(np.isnan(cls.FRANKA_TRANSLATION)) or np.any(
+            np.isnan(cls.FRANKA_ROTATION_EULER)
+        ):
             return False
 
-        if np.any(np.isnan(cls.CAMERA_TRANSLATION)) or np.any(np.isnan(cls.CAMERA_ROTATION_EULER)):
+        if np.any(np.isnan(cls.CAMERA_TRANSLATION)) or np.any(
+            np.isnan(cls.CAMERA_ROTATION_EULER)
+        ):
             return False
 
         return True
@@ -102,10 +118,7 @@ class DiningRoomTaskRegistry:
         knife_on_right = knife_pos[1] < plate_pos[1]
 
         success = (
-            fork_near_plate
-            and knife_near_plate
-            and fork_on_left
-            and knife_on_right
+            fork_near_plate and knife_near_plate and fork_on_left and knife_on_right
         )
 
         return success
