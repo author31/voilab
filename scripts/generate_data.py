@@ -27,6 +27,7 @@ parser.add_argument("--session_dir", type=str, default=None)
 parser.add_argument("--x_offset", type=float, default=0.1, help="X-axis offset for coordinate calibration (meters)")
 parser.add_argument("--y_offset", type=float, default=0.15, help="Y-axis offset for coordinate calibration (meters)")
 parser.add_argument("--z_offset", type=float, default=-0.07, help="Z-axis offset for coordinate calibration (meters)")
+parser.add_argument("--episode", type=int, default=0)
 args = parser.parse_args()
 
 from isaacsim import SimulationApp

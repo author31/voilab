@@ -29,10 +29,16 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # ——————————————————— SYSTEM DEPENDENCIES ———————————————————
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get update && apt-get upgrade -y && \
+    # Install PPA utilities first
+    apt-get install -y --no-install-recommends software-properties-common && \
+    # Add Deadsnakes PPA for stable Python 3.11
+    add-apt-repository ppa:deadsnakes/ppa -y && \
+    apt-get update && \
+    # Install system dependencies
     apt-get install -y --no-install-recommends \
         git cmake build-essential curl wget gnupg2 lsb-release \
-        software-properties-common locales pkg-config ca-certificates \
-        # Python 3.11 runtime only (no pip, no venv module from pip)
+        locales pkg-config ca-certificates \
+        # Python 3.11 runtime from Deadsnakes PPA
         python3.11 python3.11-dev python3.11-distutils \
         # All the other libraries you had before
         libboost-all-dev libqhull-dev libassimp-dev liboctomap-dev \

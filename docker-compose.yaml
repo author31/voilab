@@ -8,6 +8,7 @@ services:
       - /workspace/voilab/.venv
       - /tmp/.X11-unix:/tmp/.X11-unix
       - /usr/share/vulkan/icd.d:/usr/share/vulkan/icd.d:ro
+      - ${HOME}/.Xauthority:/root/.Xauthority:ro
     stdin_open: true
     tty: true
     environment:
@@ -16,7 +17,7 @@ services:
       - DISPLAY=${DISPLAY:-:1}
       - VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json
       - NVIDIA_DRIVER_CAPABILITIES=all,graphics,display,utility,compute
-      - XAUTHORITY=${XAUTHORITY:-$HOME/.Xauthority}
+      - XAUTHORITY=/root/.Xauthority
       - ROS_LOCALHOST_ONLY=0
       - ROS_DOMAIN_ID=0
       - UV_HTTP_TIMEOUT=600
@@ -40,6 +41,7 @@ services:
       - .:/workspace/voilab
       - /tmp/.X11-unix:/tmp/.X11-unix
       - /usr/share/vulkan/icd.d:/usr/share/vulkan/icd.d:ro
+      - ${HOME}/.Xauthority:/root/.Xauthority:ro
     stdin_open: true
     tty: true
     environment:
@@ -48,6 +50,7 @@ services:
       - DISPLAY=${DISPLAY:-:1}
       - VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json
       - NVIDIA_DRIVER_CAPABILITIES=all,graphics,display,utility,compute
+      - XAUTHORITY=/root/.Xauthority
       - ROS_LOCALHOST_ONLY=0
       - ROS_DOMAIN_ID=0
     ipc: host
