@@ -1,11 +1,3 @@
-"""
-Standalone Isaac Sim evaluation without Hydra (Python 3.11 friendly).
-Uses the shared registry system for task configuration (kitchen, dining-room, living-room).
-
-Example:
-    python run_isaacsim_eval.py --task kitchen --checkpoint /path/to.ckpt --output-dir /tmp/eval
-"""
-
 import argparse
 import importlib
 import json
@@ -43,6 +35,54 @@ TASK_RUNNER_MAP = {
     "living-room": "diffusion_policy.env_runner.isaacsim_registry_runners.LivingRoomIsaacSimAppRunner",
 }
 
+def get_end_effector_pos_quat_wxyz(panda, lula_solver, art_kine_solver):
+    base_pos, base_quat = panda.get_world_pose()
+    lula_solver.set_robot_base_pose(robot_position=base_pos, robot_orientation=base_quat)
+
+    ee_pos, ee_T = art_kine_solver.compute_end_effector_pose()  # ee_T[:3,:3] rotation
+    quat_xyzw = R.from_matrix(ee_T[:3, :3]).as_quat()
+    quat_wxyz = quat_xyzw[[3, 0, 1, 2]]
+    return ee_pos.astype(np.float64), quat_wxyz.astype(np.float64)
+
+def calibrate_robot_base(panda, lula_solver):
+    """
+    Update Lula solver with current robot base pose.
+    Must be called before computing IK.
+    
+    Args:
+        panda: Panda articulation object
+        lula_solver: LulaKinematicsSolver instance
+    """
+    robot_pos, robot_quat = panda.get_world_pose()
+    lula_solver.set_robot_base_pose(
+        robot_position=robot_pos,
+        robot_orientation=robot_quat
+    )
+
+def apply_ik_solution(panda, art_kine_solver, target_pos, target_quat_wxyz):
+    """
+    Compute and apply IK solution for target pose.
+    
+    Args:
+        panda: Panda articulation object
+        art_kine_solver: ArticulationKinematicsSolver instance
+        target_pos: Target position (3,)
+        target_quat_wxyz: Target orientation as quaternion WXYZ (4,)
+        step_idx: Current step index (for logging)
+        
+    Returns:
+        bool: True if IK succeeded
+    """
+    action, success = art_kine_solver.compute_inverse_kinematics(
+        target_position=target_pos,
+        target_orientation=target_quat_wxyz
+    )
+
+    if success:
+        panda.set_joint_positions(action.joint_positions, np.arange(7))
+        return True
+
+    return False
 
 def rot6d_to_rotation_matrix(rot6d: np.ndarray) -> np.ndarray:
     """
@@ -189,6 +229,36 @@ class IsaacSimEnvironment:
             import traceback
 
             traceback.print_exc()
+
+
+    def _set_to_init_pose(self):
+        curr_pos, _ = get_end_effector_pos_quat_wxyz(
+            self.manipulator, self.lula_solver, self.art_kine_solver
+        )
+        print(f'Setting to init pose: {self.task_name}')
+
+        if self.task_name=="kitchen":
+            INIT_EE_POS = curr_pos + np.array([-0.16, 0., 0.13])
+            INIT_EE_QUAT_WXYZ = np.array([0.0081739, -0.9366365, 0.350194, 0.0030561])
+        elif self.task_name=="dining-room":
+            INIT_EE_POS = curr_pos + np.array([-0.16, 0., 0.13])
+            INIT_EE_QUAT_WXYZ = np.array([0.0081739, -0.9366365, 0.350194, 0.0030561])
+        elif self.task_name=="living-room":
+            INIT_EE_POS = curr_pos + np.array([-0.1, 0.2, 0.20])
+            INIT_EE_QUAT_WXYZ = np.array([0.0081739, -0.9366365, 0.350194, 0.0030561])
+        else:
+            raise RuntimeError(
+                f"Unknown task, expected one of 'kitchen', 'dining-room', 'living-room', got {self.task_name}"
+            )
+
+        calibrate_robot_base(self.manipulator, self.lula_solver)
+        success = apply_ik_solution(
+            self.manipulator,
+            self.art_kine_solver,
+            INIT_EE_POS,
+            INIT_EE_QUAT_WXYZ,
+        )
+
 
     def _initialize_world_and_camera(self) -> None:
         import os
@@ -551,6 +621,9 @@ class IsaacSimEnvironment:
 
         self.world.reset()
         self._reposition_objects_to_default()
+
+        # Always return the arm to the canonical start pose before collecting observations.
+        self._set_to_init_pose()
 
         for _ in range(20):
             self.world.step(render=True)
@@ -929,6 +1002,10 @@ def main():
     env_runner = _instantiate(
         {"_target_": runner_target, **runner_kwargs, "output_dir": str(output_dir)}
     )
+
+
+    isaac_env._set_to_init_pose()
+    import time;time.sleep(1)
 
     # 4. Run Evaluation
     print("Starting evaluation...")
