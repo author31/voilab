@@ -1,0 +1,211 @@
+import time
+from abc import ABC, abstractmethod
+from typing import Any, Dict, Optional, Tuple
+
+import numpy as np
+import torch
+
+from diffusion_policy.common.pytorch_util import dict_apply
+from diffusion_policy.env_runner.base_image_runner import BaseImageRunner
+from diffusion_policy.policy.base_image_policy import BaseImagePolicy
+
+BASE_SCENE_FP = "/workspace/voilab/assets/ED305_scene/ED305.usd"
+FRANKA_PANDA_FP = "/workspace/voilab/assets/franka_panda/franka_panda_arm.usd"
+FRANKA_PANDA_PRIM_PATH = "/World/Franka"
+GOPRO_PRIM_PATH = "/World/Franka/panda/panda_link7/gopro_link"
+
+
+class BaseIsaacSimAppRunner(BaseImageRunner, ABC):
+    """
+    Base runner for Isaac Sim inference with diffusion policies.
+
+    Subclasses should manage environment-specific setup and IK using
+    ArticulationKinematicsSolver as shown in `scripts/launch_isaacsim_workspace.py`.
+    """
+
+    def __init__(
+        self,
+        output_dir: str,
+        sim_config: Optional[Dict[str, Any]] = None,
+        shape_meta: Optional[Dict[str, Any]] = None,
+        env=None,
+        n_episodes: int = 1,
+        n_obs_steps: int = 2,
+        n_action_steps: int = 1,
+        save_observation_data: bool = False,
+        scene_config: Optional[Dict[str, Any]] = None,
+        timeout_seconds: Optional[float] = None,
+        max_steps_per_episode: Optional[int] = None,
+    ):
+        super().__init__(output_dir)
+        self.shape_meta = shape_meta or {}
+        self.scene_config = scene_config or getattr(env, "scene_config", {}) or {}
+        self.env = env
+        self.simulation_app = getattr(self.env, "simulation_app", None)
+        self.n_episodes = n_episodes
+        self.n_obs_steps = n_obs_steps
+        self.n_action_steps = n_action_steps
+        self.save_observation_data = save_observation_data
+        self.timeout_seconds = 60
+        self.max_steps_per_episode = max_steps_per_episode
+
+    def _process_observation_for_policy(
+        self, obs: Dict[str, np.ndarray]
+    ) -> Dict[str, torch.Tensor]:
+        """
+        Convert environment observations into policy-ready tensors.
+        """
+        policy_obs: Dict[str, torch.Tensor] = {}
+
+        if "camera0_rgb" in obs:
+            rgb_img = obs["camera0_rgb"]
+            if rgb_img.ndim == 4:
+                rgb_img = rgb_img.transpose(0, 3, 1, 2)
+            elif rgb_img.ndim == 3:
+                rgb_img = rgb_img.transpose(2, 0, 1)[None, ...]
+            policy_obs["camera0_rgb"] = torch.from_numpy(rgb_img).float().unsqueeze(0)
+
+        for key, value in obs.items():
+            if key == "camera0_rgb":
+                continue
+            policy_obs[key] = torch.from_numpy(value).float().unsqueeze(0)
+
+        return policy_obs
+
+    def reset_env(self) -> Dict[str, np.ndarray]:
+        """
+        Reset the environment and return the initial observation.
+        Subclasses should override with Isaac Sim-specific logic.
+        """
+        if self.env is None:
+            raise RuntimeError("IsaacSim environment is not initialized.")
+        return self.env.reset()
+
+    def step_env(
+        self, action: np.ndarray
+    ) -> Tuple[Dict[str, np.ndarray], float, bool, Dict[str, Any]]:
+        """
+        Apply an action to the environment and return (obs, reward, done, info).
+        Subclasses should override with Isaac Sim-specific logic.
+        """
+        if self.env is None:
+            raise RuntimeError("IsaacSim environment is not initialized.")
+        return self.env.step(action)
+
+    def is_timeout(self, start_time: float, step_count: int) -> bool:
+        """
+        Return True if the current episode should timeout.
+
+        Checks both wall-clock time (timeout_seconds) and step count
+        (max_steps_per_episode). Returns True if either limit is exceeded.
+        """
+        if self.timeout_seconds is not None:
+            if (time.time() - start_time) >= self.timeout_seconds:
+                return True
+        if self.max_steps_per_episode is not None:
+            if step_count >= self.max_steps_per_episode:
+                return True
+        return False
+
+    @abstractmethod
+    def should_terminate(self, done: bool, info: Dict[str, Any]) -> bool:
+        """
+        Return True if the current episode should terminate early.
+        """
+
+    def run(self, policy: BaseImagePolicy) -> Dict[str, Any]:
+        device = policy.device
+        episode_stats = []
+        all_results = []
+
+        for episode_idx in range(self.n_episodes):
+            if self.simulation_app is not None:
+                if not self.simulation_app.is_running():
+                    break
+            elif self.env is not None and not self.env.is_running():
+                break
+
+            obs = self.reset_env()
+            policy.reset()
+
+            step_count = 0
+            done = False
+            episode_reward = 0.0
+            episode_start_time = time.time()
+            episode_data = []
+
+            while True:
+                if self.simulation_app is not None:
+                    if not self.simulation_app.is_running():
+                        break
+                elif self.env is not None and not self.env.is_running():
+                    break
+
+                if self.is_timeout(episode_start_time, step_count):
+                    break
+
+                obs_dict = self._process_observation_for_policy(obs)
+                obs_dict = dict_apply(obs_dict, lambda x: x.to(device=device))
+
+                with torch.no_grad():
+                    action_dict = policy.predict_action(obs_dict)
+
+                action = action_dict["action"].detach().cpu().numpy()[0]
+                obs, reward, done, info = self.step_env(action)
+                episode_reward += float(reward)
+
+                if self.save_observation_data:
+                    episode_data.append(
+                        {
+                            "obs": obs_dict,
+                            "action": action,
+                            "reward": reward,
+                            "done": done,
+                            "info": info,
+                        }
+                    )
+
+                step_count += 1
+                if self.simulation_app is not None:
+                    self.simulation_app.update()
+                elif self.env is not None:
+                    self.env.update()
+
+                if self.should_terminate(done, info):
+                    break
+
+            episode_stats.append(
+                {
+                    "episode_idx": episode_idx,
+                    "episode_length": step_count,
+                    "success": bool(done),
+                    "total_reward": episode_reward,
+                }
+            )
+
+            if self.save_observation_data:
+                all_results.extend(episode_data)
+
+        results = {
+            "episode_stats": episode_stats,
+            "total_episodes": len(episode_stats),
+            "avg_episode_length": float(
+                np.mean([ep["episode_length"] for ep in episode_stats])
+            )
+            if episode_stats
+            else 0.0,
+            "success_rate": float(np.mean([ep["success"] for ep in episode_stats]))
+            if episode_stats
+            else 0.0,
+        }
+
+        if self.save_observation_data:
+            results["all_step_data"] = all_results
+
+        return results
+
+    def close(self) -> None:
+        if self.env:
+            self.env.close()
+        self.env = None
+        self.simulation_app = None
