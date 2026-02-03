@@ -1,0 +1,52 @@
+version: "3.9"
+
+services:
+  isaac-sim-voilab:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - .:/workspace/voilab                 # 專案掛載
+      - /workspace/voilab/.venv             # 保護 venv
+      - /tmp/.X11-unix:/tmp/.X11-unix
+      - $HOME/.Xauthority:/root/.Xauthority:ro
+    stdin_open: true
+    tty: true
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,graphics,utility
+      - OMNI_KIT_ACCEPT_EULA=Y
+      - PRIVACY_CONSENT=Y
+      - DISPLAY=${DISPLAY}
+      - XAUTHORITY=/root/.Xauthority
+      - ROS_LOCALHOST_ONLY=0
+      - ROS_DOMAIN_ID=0
+      - UV_HTTP_TIMEOUT=600
+      - UV_HTTP_RETRIES=10
+      - OMNI_KIT_ARGS=--/rtx/verifyDriverVersion/enabled=false
+      - OMNI_DISABLE_DRIVER_CHECK=1
+    ipc: host
+    network_mode: host
+    gpus: all
+    runtime: nvidia
+
+  voilab-workspace:
+    build:
+      context: .
+      dockerfile: Dockerfile.client
+    volumes:
+      - .:/workspace/voilab
+      - /tmp/.X11-unix:/tmp/.X11-unix
+    stdin_open: true
+    tty: true
+    environment:
+      - DISPLAY=${DISPLAY}
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      - ROS_LOCALHOST_ONLY=0
+      - ROS_DOMAIN_ID=0
+    ipc: host
+    network_mode: host
+    gpus: all
+    command: >
+      bash -c "source /opt/ros/humble/setup.bash &&
+               tail -f /dev/null"

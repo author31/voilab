@@ -1,0 +1,5 @@
+data/
+video/
+wandb/
+*.txt
+*.patch
