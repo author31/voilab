@@ -60,6 +60,7 @@ from isaacsim.core.prims import SingleRigidPrim, SingleXFormPrim
 from isaacsim.core.prims import RigidPrim
 from isaacsim.storage.native import get_assets_root_path
 from isaacsim.sensors.camera import Camera
+from isaacsim.core.api.objects import DynamicCuboid
 from pxr import Usd, UsdGeom, UsdPhysics, Sdf, Gf
 
 from scipy.spatial.transform import Rotation as R, Slerp
@@ -82,7 +83,7 @@ enable_extension("isaacsim.robot_motion.motion_generation")
 
 # --- Configuration ---
 BASE_SCENE_FP = "/workspace/voilab/assets/ED305_scene/ED305.usd"
-FRANKA_PANDA_FP = "/workspace/voilab/assets/franka_panda/franka_panda_arm.usd"
+FRANKA_PANDA_FP = "/workspace/voilab/assets/franka_panda/franka_panda_arm_v2.usd"
 FRANKA_PANDA_PRIM_PATH = "/World/Franka"
 GOPRO_PRIM_PATH = "/World/Franka/panda/panda_link7/gopro_link"
 ASSETS_DIR = "/workspace/voilab/assets/CADs"
@@ -427,6 +428,15 @@ def main():
             name="my_franka",
             end_effector_prim_path=FRANKA_PANDA_PRIM_PATH + "/panda/panda_rightfinger",
             gripper=gripper,
+        )
+    )
+    cube = world.scene.add(
+        DynamicCuboid(
+            name="cube",
+            position=np.array([(4.92640495300293, 2.568295955657959, 1.0328670740127563)]),
+            prim_path="/World/Cube",
+            size=0.06,
+            color=np.array([0,0,1])
         )
     )
     panda.gripper.set_default_state(panda.gripper.joint_opened_positions)

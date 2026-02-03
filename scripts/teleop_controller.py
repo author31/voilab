@@ -51,13 +51,13 @@ class TeleopController:
             self.pressed["left"] = True
         elif k == 'd':
             self.pressed["right"] = True
-        elif key == Key.space:
+        elif k == 'v':
             self.pressed["up"] = True
-        elif key == Key.caps_lock:
+        elif k == 'c':
             self.pressed["down"] = True
-        elif key == Key.up:
+        elif k == 'k':
             self.pressed["open_gripper"] = True
-        elif key == Key.down:
+        elif k == 'j':
             self.pressed["close_gripper"] = True
         elif key == Key.left:
             self.pressed["rotate_ccw"] = True
@@ -77,13 +77,13 @@ class TeleopController:
             self.pressed["left"] = False
         elif k == 'd':
             self.pressed["right"] = False
-        elif key == Key.space:
+        elif k == 'v':
             self.pressed["up"] = False
-        elif key == Key.caps_lock:
+        elif k == 'c':
             self.pressed["down"] = False
-        elif key == Key.up:
+        elif k == 'k':
             self.pressed["open_gripper"] = False
-        elif key == Key.down:
+        elif k == 'j':
             self.pressed["close_gripper"] = False
         elif key == Key.left:
             self.pressed["rotate_ccw"] = False
@@ -113,8 +113,8 @@ class TeleopController:
         print("Teleoperation Controls:")
         print("  W/S: Move Forward/Backward")
         print("  A/D: Move Left/Right")
-        print("  Space/Caps Lock: Move Up/Down")
-        print("  Up/Down Arrow: Open/Close Gripper")
+        print("  V/C: Move Up/Down")
+        print("  K/J: Open/Close Gripper")
         print("  Left/Right Arrow: Rotate CCW/CW")
         print("  E: Start Recording")
         print("  R: Restart Same Episode")
