@@ -30,10 +30,9 @@ def launch_dataset_visualizer():
 @click.option('--task', type=click.Choice(['kitchen', 'dining-room', 'living-room']),
               required=True, help='Task environment to load')
 @click.option('--session_dir', type=str, help='Path to UMI session directory for trajectory replay')
-@click.option('--episode', default=0, type=int, help='Episode to replay')
 @click.option('--width', default=1280, help='Window width')
 @click.option('--height', default=720, help='Window height')
-def launch_simulator(task, session_dir, episode, width, height):
+def launch_simulator(task, session_dir, width, height):
     """Launch Isaac Sim with ROS2 bridge enabled"""
     try:
         # Prepare environment
@@ -60,7 +59,7 @@ def launch_simulator(task, session_dir, episode, width, height):
         build_cmd = ["docker", "compose", "build", "isaac-sim"]
         subprocess.run(build_cmd, env=env_vars, check=True)
 
-        container_command = f".venv/bin/python scripts/generate_data.py --task {task} --session_dir {session_dir} --episode {episode}"
+        container_command = f".venv/bin/python scripts/generate_data.py --task {task} --session_dir {session_dir}"
         
         # Run container with host network
         click.echo("[CLI] Starting Docker container with host network...")
