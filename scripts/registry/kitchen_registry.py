@@ -16,7 +16,7 @@ class KitchenTaskRegistry:
     ENVIRONMENT_NAME = "kitchen"
     TASK_NAME = "stacking"
     # ArUco tag pose
-    ARUCO_TAG_TRANSLATION = np.array([4.9652, 2.45, 0.9])
+    ARUCO_TAG_TRANSLATION = np.array([4.3652, 2.45, 0.9])
     ARUCO_TAG_ROTATION_EULER = np.array([0.0, 0.0, 180.0])
     ARUCO_TAG_ROTATION_QUAT = Rotation.from_euler(
         "xyz", ARUCO_TAG_ROTATION_EULER, degrees=True

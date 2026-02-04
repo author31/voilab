@@ -13,7 +13,7 @@ name = "diffusion-policy"
 version = "0.1.0" 
 description = "Dependencies for the Diffusion Policy package."
 readme = "README.md"
-requires-python = ">=3.11" 
+requires-python = ">=3.10" 
 
 dependencies = [
     "huggingface-hub==0.24.2",
