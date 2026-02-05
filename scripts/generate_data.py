@@ -17,6 +17,7 @@ import argparse
 import numpy as np
 import time
 import sys
+from simulation_dataset_accumulator import SimulationDatasetAccumulator
 import zarr
 from zarr.storage import ZipStore
 from numcodecs import Blosc
@@ -652,6 +653,7 @@ def main():
     )
 
     # 2. Top-Down Camera: camera from BEV.
+    """     
     top_cam_pos = np.array(franka_translation) + np.array([0.6, 0.0, 1.8])
     top_cam_target = np.array(franka_translation) + np.array([0.6, 0.0, 0.0])
     top_cam_quat = calculate_camera_orientation(top_cam_pos, top_cam_target, up_axis=np.array([1, 0, 0]))
@@ -663,7 +665,7 @@ def main():
         orientation=top_cam_quat,
         resolution=(224, 224)
     )
-
+    """
     # 3. Angled Camera: camera from side-view, overlooking the whole workspace
     angle_cam_pos = np.array(franka_translation) + np.array([1.6, -2.0, 1.3])
     
@@ -1044,14 +1046,14 @@ def main():
             # 設定影片屬性 (寬度 = 224 * 3, 高度 = 224)
             video_path = os.path.join(debug_dir, f"episode_{episode_idx:04d}_video.mp4")
             fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            out = cv2.VideoWriter(video_path, fourcc, 30.0, (224 * 3, 224))
+            out = cv2.VideoWriter(video_path, fourcc, 30.0, (224 * 2, 224))
 
             for frame_data in rgb_dict_list:
                 w = cv2.cvtColor(frame_data["wrist"], cv2.COLOR_RGB2BGR)
-                t = cv2.cvtColor(frame_data["top"], cv2.COLOR_RGB2BGR)
+                #t = cv2.cvtColor(frame_data["top"], cv2.COLOR_RGB2BGR)
                 a = cv2.cvtColor(frame_data["angle"], cv2.COLOR_RGB2BGR)
                 
-                combined = cv2.hconcat([w, t, a])
+                combined = cv2.hconcat([w, a])
                 out.write(combined)
             
             out.release()
@@ -1070,9 +1072,27 @@ def main():
         if ep.get("success", False)
     ]
     print(f"[Main] Total successful trials collected: {len(successful_episodes)}")
+
     if successful_episodes:
-        output_zarr = os.path.join(args.session_dir, "simulation_dataset.zarr.zip")
-        save_multi_episode_dataset(output_zarr, successful_episodes)
+        # 1️⃣ 先存「這一輪新產生的 dataset」
+        new_dataset_path = os.path.join(
+            args.session_dir, "simulation_dataset.zarr.zip"
+        )
+        save_multi_episode_dataset(new_dataset_path, successful_episodes)
+
+        # 2️⃣ 再丟進「長期累積的 merged dataset」
+        merged_dataset_path = os.path.join(
+            args.session_dir, "simulation_dataset_merged.zarr.zip"
+        )
+
+        merger = SimulationDatasetAccumulator(
+            merged_path=merged_dataset_path
+        )
+
+        merger.update_with(
+            new_dataset_path=new_dataset_path
+        )
+
     simulation_app.close()
 
 
