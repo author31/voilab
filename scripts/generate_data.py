@@ -163,6 +163,29 @@ def apply_ik_solution(panda, art_kine_solver, target_pos, target_quat_wxyz):
 
     return False
 
+def ik_solution(panda, art_kine_solver, target_pos, target_quat_wxyz):
+    """
+    Compute IK solution for target pose.
+    
+    Args:
+        panda: Panda articulation object
+        art_kine_solver: ArticulationKinematicsSolver instance
+        target_pos: Target position (3,)
+        target_quat_wxyz: Target orientation as quaternion WXYZ (4,)
+        
+    Returns:
+        ArticulationAction or None: IK solution action if successful, else None
+    """
+    action, success = art_kine_solver.compute_inverse_kinematics(
+        target_position=target_pos,
+        target_orientation=target_quat_wxyz
+    )
+
+    if success:
+        return action
+
+    return None
+
 
 class RigidPrimManager:
     def __init__(self):
@@ -433,7 +456,7 @@ def main():
     cube = world.scene.add(
         DynamicCuboid(
             name="cube",
-            position=np.array([(4.92640495300293, 2.568295955657959, 1.0328670740127563)]),
+            position=np.array([(4.9, 2.568295955657959, 1.0328670740127563)]),
             prim_path="/World/Cube",
             size=0.06,
             color=np.array([0,0,1])
@@ -629,7 +652,7 @@ def main():
         else: 
             teleop_controller = TeleopController(
                 get_end_effector_pose_fn=get_end_effector_pos_quat_wxyz,
-                apply_ik_solution_fn=apply_ik_solution,
+                ik_solution_fn=ik_solution,
                 init_ee_pos = INIT_EE_POS,
                 init_ee_quat_wxyz = INIT_EE_QUAT_WXYZ,
             )
