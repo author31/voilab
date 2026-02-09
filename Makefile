@@ -48,6 +48,18 @@ install-cmake:
 	sudo apt update
 	sudo apt install -y cmake
 
+.PHONY: install-ffmpeg
+install-ffmpeg:
+	@echo "Checking for ffmpeg..."
+	@if command -v ffmpeg >/dev/null 2>&1; then \
+		echo "ffmpeg is already installed: $$(ffmpeg -version | head -n1)"; \
+	else \
+		echo "Installing ffmpeg via apt..."; \
+		sudo apt update; \
+		sudo apt install -y ffmpeg; \
+		echo "ffmpeg installed successfully: $$(ffmpeg -version | head -n1)"; \
+	fi
+
 .PHONY launch-workspace:
 launch-workspace:
 	@echo "Launching Docker workspace for development..."
