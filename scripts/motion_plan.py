@@ -6,6 +6,11 @@ from scipy.spatial.transform import Rotation as R
 from pynput import keyboard
 
 class PickPlace:
+    GRIPPER_THRESHOLDS = {
+        "kitchen": 0.038,
+        "dining-room": 0.004,
+        "living-room": 0.004,
+    }
     def __init__(
         self,
         *,
@@ -28,11 +33,9 @@ class PickPlace:
         release_dist_thresh = 0.13,
         gripper_close_thresh = 0.085,
         gripper_open_thresh = 0.0875,
-        teleop=None,
         world=None,
         task=None
         ):
-        self.teleop = teleop
         self.get_ee_pose = get_end_effector_pose_fn
         self.get_obj_pose = get_object_world_pose_fn
         self.apply_ik = apply_ik_solution_fn
@@ -46,6 +49,7 @@ class PickPlace:
         self.hold_steps = hold_steps
         self.step_move = step_move
         self.step_descend = step_descend
+        
         self.world = world
         self.task = task
         self.prev_grip_width = None
@@ -59,14 +63,9 @@ class PickPlace:
         self.release_dist_thresh = release_dist_thresh
         self.gripper_close_thresh = gripper_close_thresh
         self.gripper_open_thresh  = gripper_open_thresh
-        self.teleop_yaw = 0.0
-        self.R_grasp_to_tool = R.from_euler(
-            'xyz', [0.0, 0.0, 45.0], degrees=True).as_matrix()
-        self._teleop_prev_enabled = False
-        self._force_rebuild_once = False
         self.reset()
 
-    # -------------------------
+    
     def reset(self):
         self.phase = "idle"
         self.traj = []
@@ -79,7 +78,7 @@ class PickPlace:
         self.attached_object_path = None
         self.target_object_path = None
 
-    # -------------------------
+    
     def start(self, pick_above, pick, lift_offset, place_above, place, 
             attached_object_path=None, target_object_path=None,
             fix_target_pose=None, retreat_after_place=False):
@@ -104,71 +103,7 @@ class PickPlace:
         self.close_counter = 0
         self.prev_grip_width = None
         self.stall_count = 0
-
-    # -------------------------
-    def _teleop_step(self, panda, lula, ik):
-        # sync object
-        self._sync_attached_object(panda, lula, ik)
-
-        dpos, dyaw, grip, next_ep = self.teleop.consume()
-
-        if np.linalg.norm(dpos) < 1e-4:
-            dpos[:] = 0.0
-        if abs(dyaw) < 1e-3:
-            dyaw = 0.0
-
-        ee_pos, _ = self.get_ee_pose(panda, lula, ik)
-        target_pos = ee_pos + dpos
-
-        # yaw state
-        self.teleop_yaw += dyaw
-        self.teleop_yaw = (self.teleop_yaw + 180) % 360 - 180
-
-        R_base = R.from_quat(self.grasp_quat, scalar_first=True)
-        R_yaw  = R.from_euler('z', self.teleop_yaw, degrees=True)
-        quat_wxyz = (R_yaw * R_base).as_quat(scalar_first=True)
-
-        self.apply_ik(panda, ik, target_pos, quat_wxyz)
-
-        if grip == "close":
-            set_gripper_width(panda, self.close_width)
-            self._try_attach_object(panda, lula, ik)
-
-        elif grip == "open":
-            set_gripper_width(panda, self.open_width)
-            self.attached = False
-            self.T_ee_to_obj = None
-
-        return next_ep
     
-
-    def _try_attach_object(self, panda, lula, ik):
-        if self.attached:
-            return
-
-        if self.attached_object_path is None:
-            return
-
-        ee_pos, ee_quat = self.get_ee_pose(panda, lula, ik)
-        T_obj = self.get_obj_pose(self.attached_object_path)
-        obj_pos = T_obj[:3, 3]
-
-        dist = np.linalg.norm(obj_pos - ee_pos)
-        if dist > self.attach_dist_thresh:
-            return
-
-        # --- build EE transform ---
-        quat_xyzw = np.array([ee_quat[1], ee_quat[2], ee_quat[3], ee_quat[0]])
-        T_ee = np.eye(4)
-        T_ee[:3, :3] = R.from_quat(quat_xyzw).as_matrix()
-        T_ee[:3, 3] = ee_pos
-
-        # --- attach ---
-        self.T_ee_to_obj = np.linalg.inv(T_ee) @ T_obj
-        self.attached = True
-
-        print(f"[Teleop] Object attached: {self.attached_object_path}")
-        
     def _compute_grasp_quat_from_object(self, obj_path):
         # --- 1. Get object pose in world frame ---
         T_obj = self.get_obj_pose(obj_path)
@@ -252,10 +187,6 @@ class PickPlace:
         quat = R.from_matrix(R_ee).as_quat(scalar_first=True)
         return quat
 
-
-        # -------------------------
-
-
     def _run_traj(self, panda, lula, ik, target, step):
         import numpy as np
         from isaacsim.core.utils.types import ArticulationAction
@@ -263,14 +194,13 @@ class PickPlace:
         # ---------- 初始化 trajectory ----------
         if not self.traj:
 
-            # ✅ 重新計算 grasp quaternion（跟著物體姿態）
+            # 重新計算 grasp quaternion（跟著物體姿態）
             if self.attached_object_path is not None and self.task in ["dining_room"]:
                 self.grasp_quat = self._compute_grasp_quat_from_object(self.attached_object_path)
-                print("Updated grasp quat:", self.grasp_quat)
 
             ee_pos, ee_quat = self.get_ee_pose(panda, lula, ik)
 
-            # 🔥 用新的 grasp_quat 進行 motion planning
+            # 用新的 grasp_quat 進行 motion planning
             cart_traj = self.plan(ee_pos, ee_quat, target, self.grasp_quat, step)
 
             self.traj = []
@@ -298,12 +228,9 @@ class PickPlace:
                         joint_indices=np.array([7, 8])
                     )
                 )
-            print(self.phase, "Gripper before close command:", panda.gripper.get_joint_positions())
-            print(self.phase, "Gripper after close command:", panda.gripper.get_joint_positions())
-
 
         # ---------- 移動手臂 ----------
-        panda.controller.apply_action(
+        panda.apply_action(
             ArticulationAction(
                 joint_positions=self.traj[self.i],
                 joint_indices=np.arange(7)
@@ -312,87 +239,18 @@ class PickPlace:
 
         self.i += 1
         return False
-
-
-
-
-        
-    # -------------------------
-    def _sync_attached_object(self, panda, lula, ik):
-        if (not self.attached) or (self.T_ee_to_obj is None) or (self.attached_object_path is None):
-            return
-        ee_pos, ee_quat_wxyz = self.get_ee_pose(panda, lula, ik)
-        
-        quat_xyzw = np.array([ee_quat_wxyz[1], ee_quat_wxyz[2], ee_quat_wxyz[3], ee_quat_wxyz[0]])
-        T_ee = np.eye(4)
-        T_ee[:3, :3] = R.from_quat(quat_xyzw).as_matrix()
-        T_ee[:3, 3] = ee_pos
-        T_obj = T_ee @ self.T_ee_to_obj
-        pos = T_obj[:3, 3]
-        quat_wxyz = R.from_matrix(T_obj[:3, :3]).as_quat(scalar_first=True)  # wxyz
-
-        set_prim_world_pose(self.attached_object_path, pos, quat_wxyz)
-
-    # -------------------------
-# -------------------------
+    
     def _object_target(self, obj_path, offset_obj):
         # Get object pose in world frame
         T_obj = self.get_obj_pose(obj_path)
-        R_obj = T_obj[:3, :3]
         p_obj = T_obj[:3, 3]
-
-        # Object local axes
-        x_obj = R_obj[:, 0]  # object long axis
-        z_obj = R_obj[:, 2]  # object up axis
-
-        # --- 1. Compute yaw of the object long axis projected onto the XY plane ---
-        x_xy = x_obj.copy()
-        x_xy[2] = 0  # project onto XY plane
-        if np.linalg.norm(x_xy) < 1e-6:
-            yaw = 0.0
-        else:
-            x_xy /= np.linalg.norm(x_xy)
-            yaw = np.arctan2(x_xy[1], x_xy[0])
-
-        # --- 2. Yaw rotation matrix around world Z-axis ---
-        R_yaw = np.array([
-            [np.cos(yaw), -np.sin(yaw), 0],
-            [np.sin(yaw),  np.cos(yaw), 0],
-            [0, 0, 1]
-        ])
-
-        # --- 3. Check object up direction after yaw alignment ---
-        # Used to disambiguate orientation (e.g., knife vs. fork)
-        z_after_yaw = R_yaw @ np.array([0, 0, 1])
-        dot = np.dot(z_obj, z_after_yaw)
-
-        # Apply object-specific offset correction if orientation is flipped
-        if ("knife" in obj_path.lower() and dot > 0):
-            pass
-            #offset_obj[1] = -0.0
-            #offset_obj[0] = -0.0
-            # Optional: rotate yaw by 180 degrees if full orientation flip is required
-            # R_knife_flip = R.from_euler('z', -180, degrees=True).as_matrix()
-            # R_yaw = R_yaw @ R_knife_flip
-        if ("fork" in obj_path.lower() and dot < 0):
-            pass
-            #offset_obj[1] = 0.15
-            #offset_obj[0] = -0.08
-            # Optional: rotate yaw by 180 degrees if full orientation flip is required
-            # R_fork_flip = R.from_euler('z', -180, degrees=True).as_matrix()
-            # R_yaw = R_yaw @ R_fork_flip
-        #print(obj_path, "dot =", dot)
-        #print("Block detected with flipped orientation, applying offset correction.")
-        # --- 4. Transform offset from object-aligned frame to world frame ---
-        offset_world = R_yaw @ offset_obj
         return p_obj + offset_obj
 
-
-    # -------------------------
     def _place_target(self, offset):
         if self.fix_target_pose is not None:
             return np.asarray(self.fix_target_pose) + offset
         return self._object_target(self.target_object_path, offset)
+    
     def close_gripper(self, panda, target_width, step=0.005, threshold=0.005, min_step=0.0005):
         import numpy as np
         from isaacsim.core.utils.types import ArticulationAction
@@ -411,8 +269,6 @@ class PickPlace:
         dynamic_step = max(min_step, step * abs(diff) / step)  # 距離越小，步伐越小
         move = np.clip(diff, -dynamic_step, dynamic_step)
         new_positions = current_positions + move
-
-        print(f"[GRIP] width={current_width:.4f}, target={target_width:.4f}, move={move:.4f}, step={dynamic_step:.6f}")
 
         # ===== 套用位置控制 =====
         panda.gripper.apply_action(
@@ -439,129 +295,104 @@ class PickPlace:
 
         return current_width, reached, stalled
 
-
-
-
-
-    # -------------------------
     def step(self, panda, lula, ik):
         if self.phase in ["idle", "done"]:
             return
 
-        # ================= MOVE ABOVE =================
         if self.phase == "move_above":
-            target = self._object_target(self.attached_object_path, self.pick_above)
-            if self._run_traj(panda, lula, ik, target, self.step_move):
-                self.phase = "descend"
-
-        # ================= DESCEND =================
+            self._step_move_above(panda, lula, ik)
         elif self.phase == "descend":
-            target = self._object_target(self.attached_object_path, self.pick)
-            if self._run_traj(panda, lula, ik, target, self.step_descend):
-                self.phase = "close"
-                self.close_counter = 0
-                self.prev_grip_width = None
-                self.reach = False
-                self.stall = False
-                self.stall_count = 0
-                self.close_counter = 0
-
-        # ================= CLOSE GRIPPER =================
+            self._step_descend(panda, lula, ik)
         elif self.phase == "close":
-            self.close_counter += 1
-
-            if self.task == "dining-room":
-                self.width, self.reached, self.stalled = self.close_gripper(
-                    panda,
-                    target_width=self.close_width,
-                    step=0.01,
-                    threshold=0.004
-                )
-            elif self.task == "kitchen":
-                self.width, self.reached, self.stalled = self.close_gripper(
-                    panda,
-                    target_width=self.close_width,
-                    step=0.01,
-                    threshold=0.038
-                )
-            elif self.task == "living-room":
-                self.width, self.reached, self.stalled = self.close_gripper(
-                    panda,
-                    target_width=self.close_width,
-                    step=0.01,
-                    threshold=0.004
-                )
-            print(f"[GRIP] width={self.width:.4f}, reached={self.reached}, stalled={self.stalled}")
-
-            # 成功抓到（contact 或 fully closed）
-            if self.reached or self.stalled:
-                print(">>> GRASP SUCCESS")
-                self.phase = "lift"
-
-            # safety timeout
-            if self.close_counter > 300:
-                print(">>> GRASP TIMEOUT -> FORCE LIFT")
-                self.phase = "lift"
-
-        # ================= LIFT (IMPORTANT HOLD FORCE) =================
+            self._step_close_gripper(panda)
         elif self.phase == "lift":
-            from isaacsim.core.utils.types import ArticulationAction
-            import numpy as np
-
-            # 🔥 持續夾持（超重要）
-
-
-            ee_pos, _ = self.get_ee_pose(panda, lula, ik)
-            target = ee_pos + self.lift_offset
-
-            if self._run_traj(panda, lula, ik, target, self.step_move):
-                self.phase = "move_place"
-
-        # ================= MOVE TO PLACE =================
+            self._step_lift(panda, lula, ik)
         elif self.phase == "move_place":
-            from isaacsim.core.utils.types import ArticulationAction
-            import numpy as np
-
-            target = self._place_target(self.place_above)
-            if self._run_traj(panda, lula, ik, target, self.step_move):
-                self.phase = "descend_place"
-
-        # ================= DESCEND PLACE =================
+            self._step_move_place(panda, lula, ik)
         elif self.phase == "descend_place":
-            from isaacsim.core.utils.types import ArticulationAction
-            import numpy as np
-
-            target = self._place_target(self.place)
-            if self._run_traj(panda, lula, ik, target, self.step_descend):
-                self.phase = "release"
-                self.cnt = 0
-
-        # ================= RELEASE =================
+            self._step_descend_place(panda, lula, ik)
         elif self.phase == "release":
-            from isaacsim.core.utils.types import ArticulationAction
-            import numpy as np
-            self.cnt += 1
-            panda.gripper.apply_action(
-                ArticulationAction(
-                    joint_efforts=np.array([0.0, 0.0], dtype=np.float32),
-                    joint_positions=np.array([0.04, 0.04], dtype=np.float32),
-                    joint_indices=np.array([7, 8])
-                )
-            )
-            if self.cnt > 50 and self.retreat_after_place:
-                self.phase = "post_place_lift"
-            elif self.cnt > 50:
-                self.phase = "done"
+            self._step_release(panda)
         elif self.phase == "post_place_lift":
-            ee_pos, _ = self.get_ee_pose(panda, lula, ik)
-            target = ee_pos + self.lift_offset
-            if self._run_traj(panda, lula, ik, target, self.step_move):
-                self.phase = "done"
-                
-            
+            self._step_post_place_lift(panda, lula, ik)
+        else:
+            raise RuntimeError(f"Unknown phase: {self.phase}")
 
+    # ---------------- PHASE FUNCTIONS ----------------
+    def _step_move_above(self, panda, lula, ik):
+        target = self._object_target(self.attached_object_path, self.pick_above)
+        if self._run_traj(panda, lula, ik, target, self.step_move):
+            self.phase = "descend"
+
+    def _step_descend(self, panda, lula, ik):
+        target = self._object_target(self.attached_object_path, self.pick)
+        if self._run_traj(panda, lula, ik, target, self.step_descend):
+            self.phase = "close"
+            self.close_counter = 0
+            self.prev_grip_width = None
+            self.reach = False
+            self.stall = False
+            self.stall_count = 0
+
+    def _step_close_gripper(self, panda):
+        self.close_counter += 1
+        threshold = self.GRIPPER_THRESHOLDS.get(self.task, 0.004)
+
+        self.width, self.reached, self.stalled = self.close_gripper(
+            panda,
+            target_width=self.close_width,
+            step=0.01,
+            threshold=threshold
+        )
+
+        if self.reached or self.stalled:
+            self.phase = "lift"
+
+        if self.close_counter > 300:
+            self.phase = "lift"
+
+    def _step_lift(self, panda, lula, ik):
+        ee_pos, _ = self.get_ee_pose(panda, lula, ik)
+        target = ee_pos + self.lift_offset
+        if self._run_traj(panda, lula, ik, target, self.step_move):
+            self.phase = "move_place"
+
+    def _step_move_place(self, panda, lula, ik):
+        target = self._place_target(self.place_above)
+        if self._run_traj(panda, lula, ik, target, self.step_move):
+            self.phase = "descend_place"
+
+    def _step_descend_place(self, panda, lula, ik):
+        target = self._place_target(self.place)
+        if self._run_traj(panda, lula, ik, target, self.step_descend):
+            self.phase = "release"
+            self.cnt = 0
+
+    def _step_release(self, panda):
+        self.cnt += 1
+        # 直接打開 gripper
+        from isaacsim.core.utils.types import ArticulationAction
+        panda.gripper.apply_action(
+            ArticulationAction(
+                joint_efforts=np.array([0.0, 0.0], dtype=np.float32),
+                joint_positions=np.array([0.04, 0.04], dtype=np.float32),
+                joint_indices=np.array([7, 8])
+            )
+        )
+
+        if self.cnt > 50:
+            self.phase = "post_place_lift" if self.retreat_after_place else "done"
+
+    def _step_post_place_lift(self, panda, lula, ik):
+        ee_pos, _ = self.get_ee_pose(panda, lula, ik)
+        target = ee_pos + self.lift_offset
+        if self._run_traj(panda, lula, ik, target, self.step_move):
+            self.phase = "done"
+
+    # ---------------- UTILS ----------------
     def is_done(self):
         return self.phase == "done"
+
 
 class DiningRoomMotionPlanner:
     def __init__(self, cfg, *, get_object_world_pose_fn, pickplace):
@@ -627,64 +458,6 @@ class DiningRoomMotionPlanner:
     
     def is_done(self):
         return self.current_idx >= len(self.cutlery)
-    
-class TeleopEEController:
-    def __init__(self):
-        self.delta_pos = np.zeros(3)
-        self.delta_yaw = 0.0
-        self.grip_cmd = None
-        self.next_episode = False
-        self.enabled = False
-
-        self.step_xy = 0.01
-        self.step_z  = 0.01
-        self.step_yaw = 5.0  # deg
-
-        self.listener = keyboard.Listener(
-            on_press=self._on_press
-        )
-        self.listener.start()
-
-    def _on_press(self, key):
-        try:
-            k = key.char.lower()
-        except:
-            return
-
-        if k == 't':
-            self.enabled = not self.enabled
-            print(f"[Teleop] enabled = {self.enabled}")
-        
-        if not self.enabled:
-            return
-
-        if k == 'w': self.delta_pos[1] += self.step_xy
-        if k == 's': self.delta_pos[1] -= self.step_xy
-        if k == 'a': self.delta_pos[0] -= self.step_xy
-        if k == 'd': self.delta_pos[0] += self.step_xy
-        if k == 'q': self.delta_pos[2] += self.step_z
-        if k == 'e': self.delta_pos[2] -= self.step_z
-
-        if k == 'j': self.delta_yaw += self.step_yaw
-        if k == 'l': self.delta_yaw -= self.step_yaw
-
-        if k == 'g': self.grip_cmd = "close"
-        if k == 'r': self.grip_cmd = "open"
-        if k == 'n': self.next_episode = True
-
-    def consume(self):
-        dpos = self.delta_pos.copy()
-        dyaw = self.delta_yaw
-        grip = self.grip_cmd
-        next_ep = self.next_episode
-
-        self.delta_pos[:] = 0
-        self.delta_yaw = 0
-        self.grip_cmd = None
-        self.next_episode = False
-
-        return dpos, dyaw, grip, next_ep
-    
 
 class KitchenMotionPlanner:
     def __init__(self, cfg, *, get_object_world_pose_fn, pickplace):

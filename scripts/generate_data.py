@@ -52,11 +52,8 @@ from isaacsim.core.utils.extensions import enable_extension
 from isaacsim.core.prims import Articulation, SingleArticulation
 from isaacsim.robot_motion.motion_generation import (
     LulaKinematicsSolver,
-    ArticulationKinematicsSolver,
-    LulaTaskSpaceTrajectoryGenerator,
-    ArticulationTrajectory
+    ArticulationKinematicsSolver
 )
-from isaacsim.core.api.controllers.articulation_controller import ArticulationController
 from isaacsim.robot.manipulators.grippers import ParallelGripper
 from isaacsim.robot.manipulators import SingleManipulator
 from isaacsim.core.utils.viewports import set_camera_view
@@ -74,7 +71,7 @@ import utils
 import lula
 from pxr import UsdPhysics
 from umi_replay import set_gripper_width
-from motion_plan import PickPlace, TeleopEEController
+from motion_plan import PickPlace
 
 
 
@@ -176,44 +173,42 @@ def quat_wxyz_to_rpy_deg(quat_wxyz):
     rpy = R.from_quat(quat_xyzw).as_euler('xyz', degrees=True)
     return rpy  # roll, pitch, yaw (deg)
 
-def calculate_camera_orientation(eye_pos, target_pos, up_axis=np.array([0, 0, 1])):
-    """
-    Helper function.
-    Computes the quaternion (WXYZ) for a Robotics Camera (Look=X, Up=Z)
-    at eye_pos looking at target_pos.
-    """
-    eye_pos = np.array(eye_pos)
-    target_pos = np.array(target_pos)
-    
-    # 1. Forward Vector (Camera X-axis)
+def calculate_camera_orientation(eye_pos, target_pos, up_axis=np.array([0,0,1])):
+    eye_pos = np.array(eye_pos, dtype=np.float64)
+    target_pos = np.array(target_pos, dtype=np.float64)
+
     fwd = target_pos - eye_pos
-    fwd = fwd / np.linalg.norm(fwd)
-    
-    # 2. Right Vector
+    norm_fwd = np.linalg.norm(fwd)
+    if norm_fwd < 1e-6:
+        # pos 與 target 太接近，使用預設方向
+        fwd = np.array([1.0, 0.0, 0.0])
+    else:
+        fwd = fwd / norm_fwd
+
     right = np.cross(fwd, up_axis)
-    
-    # Handle degenerate case (looking straight up/down)
-    if np.linalg.norm(right) < 1e-6:
-        right = np.array([0, 1, 0])
-        
-    right = right / np.linalg.norm(right)
-    
-    # 3. Up Vector (Camera Z-axis)
+    norm_right = np.linalg.norm(right)
+    if norm_right < 1e-6:
+        # fwd 與 up_axis 幾乎平行，選擇任意垂直向量
+        if abs(fwd[0]) < 0.9:
+            right = np.cross(fwd, [1,0,0])
+        else:
+            right = np.cross(fwd, [0,1,0])
+        right = right / np.linalg.norm(right)
+    else:
+        right = right / norm_right
+
     z_axis = np.cross(right, fwd)
-    z_axis = z_axis / np.linalg.norm(z_axis)
-    
-    # Y_axis (Camera Left)
+    z_axis /= np.linalg.norm(z_axis)
+
     y_axis = np.cross(z_axis, fwd)
-    y_axis = y_axis / np.linalg.norm(y_axis)
-    
-    # Basis: X=fwd, Y=y_axis, Z=z_axis
+    y_axis /= np.linalg.norm(y_axis)
+
     R_matrix = np.column_stack((fwd, y_axis, z_axis))
-    
-    # Convert to quaternion (Scalar-Last xyzw -> WXYZ for Isaac Sim)
     quat_xyzw = R.from_matrix(R_matrix).as_quat()
     quat_wxyz = np.array([quat_xyzw[3], quat_xyzw[0], quat_xyzw[1], quat_xyzw[2]])
-    
+
     return quat_wxyz
+
 
 
 def get_T_world_base() -> np.ndarray:
@@ -499,26 +494,6 @@ def step_world_and_record(
 
     return eef_pose6d
 
-def _set_fixed_objects_for_episode(cfg, object_prims):
-    if cfg.get("environment_vars", {}).get("SCENE_CONFIG") != "living_scene":
-        return
-
-    fixed = cfg.get("environment_vars", {}).get("FIXED_OBJECTS", [])
-    stage = omni.usd.get_context().get_stage()
-
-    for item in fixed:
-        name = _normalize_object_name(item["name"])
-        prim = object_prims.get(name)
-        if prim is None:
-            continue
-        pos = np.array(item["position"], dtype=np.float64)
-        quat_wxyz = np.array(item["rotation_quat_wxyz"], dtype=np.float64)
-        prim.set_world_pose(position=pos, orientation=quat_wxyz)
-        prim_usd = stage.GetPrimAtPath(prim.prim_path)
-        rigid_api = UsdPhysics.RigidBodyAPI.Apply(prim_usd)
-        rigid_api.CreateRigidBodyEnabledAttr(True)
-        rigid_api.CreateKinematicEnabledAttr(True)
-
 def wxyz_to_xyzw(q_wxyz):
     return np.array([q_wxyz[1], q_wxyz[2], q_wxyz[3], q_wxyz[0]])
 
@@ -551,212 +526,41 @@ def plan_line_cartesian(
 
     return [np.concatenate([p, q_wxyz]) for p, q_wxyz in zip(positions, quats_wxyz)]
 
-def save_episode_video(rgb_seq, episode_idx, session_dir, fps=30):
-    """
-    rgb_seq: (T, H, W, 3), uint8 or float
-    """
-    assert rgb_seq.ndim == 4, "Expected (T, H, W, 3)"
+EE_INIT_CONFIG = {
+    "kitchen": {"offset": [-0.16, 0.0, 0.13], "orientation": [0.0081739, -0.9366365, 0.350194, 0.0030561]},
+    "dining-room": {"offset": [-0.16, 0.0, 0.13], "orientation": [0.0081739, -0.9366365, 0.350194, 0.0030561]},
+    "living-room": {"offset": [-0.1, 0.2, 0.2], "orientation": [0.0081739, -0.9366365, 0.350194, 0.0030561]},
+}
 
-    vis_dir = os.path.join(session_dir, "videos")
-    os.makedirs(vis_dir, exist_ok=True)
+def get_init_ee_pose(task_name, current_pos):
+    cfg = EE_INIT_CONFIG.get(task_name)
+    if cfg is None:
+        raise ValueError(f"Unknown task {task_name}")
+    pos = current_pos + np.array(cfg["offset"])
+    quat = np.array(cfg["orientation"])
+    return pos, quat
 
-    h, w = rgb_seq.shape[1:3]
-    out_path = os.path.join(vis_dir, f"episode_{episode_idx:04d}.mp4")
+OBJECT_ORIENTATION_PRESETS = {
+    "fork": [0.707, 0.0, 0.0, 0.707],
+    "knife": [0.707, 0.0, 0.0, -0.707],
+    "blue_block": [0.707107, 0.707107, 0, 0],
+    "red_block": [0.0677732, -0.7038514, -0.0677732, -0.7038514],
+    "green_block": [0.5, 0.5, 0.5, -0.5],
+}
 
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    writer = cv2.VideoWriter(out_path, fourcc, fps, (w, h))
+def get_object_orientation(name, default_orientation=[1.0, 0.0, 0.0, 0.0]):
+    for key, quat in OBJECT_ORIENTATION_PRESETS.items():
+        if key in name.lower():
+            return np.array(quat)
+    return np.array(default_orientation)
 
-    for frame in rgb_seq:
-        if frame.dtype != np.uint8:
-            frame = (frame * 255).clip(0, 255).astype(np.uint8)
+CAMERA_OFFSETS = {
+    "wrist": {"pos_offset": [0.0, 0.0, 0.0], "target_offset": [0.0, 0.0, 0.0], "up_axis": [0, 0, 1]},
+    "top": {"pos_offset": [0.6, 0.0, 1.8], "target_offset": [0.6, 0.0, 0.0], "up_axis": [1, 0, 0]},
+    "angle": {"pos_offset": [1.6, -2.0, 1.3], "target_offset": [0.3, 0.0, 0.2], "up_axis": [0, 0, 1]},
+}
 
-        frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-        writer.write(frame_bgr)
 
-    writer.release()
-    print(f"[Video] Saved episode video: {out_path}")
-
-from pxr import Usd, UsdPhysics, PhysxSchema
-
-def debug_usd_physics(prim):
-    print("\n========== USD / PhysX DEBUG ==========")
-    print("Prim path:", prim.GetPath())
-    print("Prim type:", prim.GetTypeName())
-    print("Is valid:", prim.IsValid())
-    print("Is active:", prim.IsActive())
-
-    stage = prim.GetStage()
-    rb = UsdPhysics.RigidBodyAPI.Get(stage, prim.GetPath())
-    print("Has RigidBodyAPI:", rb is not None)
-
-    if rb:
-        print("  rigidBodyEnabled:",
-              rb.GetRigidBodyEnabledAttr().Get())
-        print("  kinematicEnabled:",
-              rb.GetKinematicEnabledAttr().Get())
-
-    stage = prim.GetStage()
-    physx_rb = PhysxSchema.PhysxRigidBodyAPI.Get(
-        stage,
-        prim.GetPath()
-    )
-
-    print("Has PhysxRigidBodyAPI:", physx_rb is not None)
-
-    if physx_rb:
-        print("  disableGravity:",
-              physx_rb.GetDisableGravityAttr().Get())
-        print("  linearDamping:",
-              physx_rb.GetLinearDampingAttr().Get())
-        print("  angularDamping:",
-              physx_rb.GetAngularDampingAttr().Get())
-
-def debug_dynamic_state(prim):
-    stage = prim.GetStage()
-    rb = UsdPhysics.RigidBodyAPI.Get(stage, prim.GetPath())
-    print("\n========== DYNAMIC STATE ==========")
-
-    if not rb:
-        print("❌ No RigidBodyAPI → cannot be dynamic")
-        return
-
-    enabled = rb.GetRigidBodyEnabledAttr().Get()
-    kinematic = rb.GetKinematicEnabledAttr().Get()
-
-    print("RigidBody enabled:", enabled)
-    print("Kinematic:", kinematic)
-
-    if not enabled:
-        print("❌ RigidBody is DISABLED")
-
-    if kinematic:
-        print("⚠️ Object is KINEMATIC (cannot be grasped by force)")
-
-from pxr import UsdGeom
-
-def debug_collision(stage, prim):
-    print("\n========== COLLISION DEBUG ==========")
-    collision_found = False
-
-    for child in Usd.PrimRange(prim):
-        stage = child.GetStage()
-        col = UsdPhysics.CollisionAPI.Get(
-            stage,
-            child.GetPath()
-        )
-
-        if col:
-            collision_found = True
-            print("Collision on:", child.GetPath())
-            print("  enabled:",
-                  col.GetCollisionEnabledAttr().Get())
-
-            mesh = UsdGeom.Mesh(child)
-            if mesh:
-                print("  collider mesh:", child.GetTypeName())
-
-    if not collision_found:
-        print("❌ NO COLLISION FOUND → fingers pass through")
-
-def debug_mass_inertia(prim):
-    print("\n========== MASS / INERTIA ==========")
-
-    stage = prim.GetStage()
-    mass_api = UsdPhysics.MassAPI.Get(
-        stage,
-        prim.GetPath()
-    )
-
-    if not mass_api:
-        print("❌ No MassAPI → PhysX auto mass (danger)")
-        return
-
-    print("Mass:", mass_api.GetMassAttr().Get())
-    print("Density:", mass_api.GetDensityAttr().Get())
-    print("CenterOfMass:", mass_api.GetCenterOfMassAttr().Get())
-    print("DiagonalInertia:",
-          mass_api.GetDiagonalInertiaAttr().Get())
-
-    mass = mass_api.GetMassAttr().Get()
-    if mass is None or mass <= 0:
-        print("❌ INVALID MASS")
-
-from pxr import UsdShade
-
-def debug_physics_material(stage, prim):
-    print("\n========== PHYSICS MATERIAL ==========")
-
-    for child in Usd.PrimRange(prim):
-        mat = UsdShade.Material.Get(stage, child.GetPath())
-        if mat:
-            print("Material found:", child.GetPath())
-
-    stage = prim.GetStage()
-    physx_mat = PhysxSchema.PhysxMaterialAPI.Get(
-        stage,
-        prim.GetPath()
-    )
-    if not physx_mat:
-        print("❌ No PhysxMaterialAPI → friction default (usually low)")
-        return
-
-    print("Static friction:",
-          physx_mat.GetStaticFrictionAttr().Get())
-    print("Dynamic friction:",
-          physx_mat.GetDynamicFrictionAttr().Get())
-    print("Restitution:",
-          physx_mat.GetRestitutionAttr().Get())
-
-from pxr import UsdPhysics
-
-def find_rigid_body_prim(root_prim):
-    for p in Usd.PrimRange(root_prim):
-        if UsdPhysics.RigidBodyAPI.Get(
-            p.GetStage(), p.GetPath()
-        ):
-            return p
-    return None
-
-from pxr import Usd, UsdPhysics, UsdShade, Sdf
-
-def fix_rigid_object_physx(prim, static_friction=0.8, dynamic_friction=0.6, restitution=0.0):
-    """
-    Fix a rigid object in Isaac Sim PhysX:
-    - Assigns proper PhysX material (friction, restitution)
-    - Binds material to all collider shapes under the prim
-    """
-
-    stage = prim.GetStage()
-    if stage is None:
-        print(f"[PhysXFix] ERROR: Prim {prim.GetPath()} has no stage")
-        return
-
-    # --- Step 1: Create or get a Material prim ---
-    material_path = Sdf.Path(f"/World/Materials/{prim.GetName()}_physx_material")
-    if not stage.GetPrimAtPath(material_path):
-        mat_prim = UsdShade.Material.Define(stage, material_path)
-    else:
-        mat_prim = UsdShade.Material(stage.GetPrimAtPath(material_path))
-
-    # --- Step 2: Apply MaterialAPI and set friction / restitution ---
-    mat_api = UsdPhysics.MaterialAPI.Apply(mat_prim.GetPrim())
-    mat_api.CreateStaticFrictionAttr().Set(static_friction)
-    mat_api.CreateDynamicFrictionAttr().Set(dynamic_friction)
-    mat_api.CreateRestitutionAttr().Set(restitution)
-
-    # --- Step 3: Bind this material to all collider shapes under the prim ---
-    def bind_material_to_colliders(obj_prim):
-        for child in obj_prim.GetAllChildren():
-            if child.HasAPI(UsdPhysics.CollisionAPI):
-                binding_api = UsdShade.MaterialBindingAPI.Apply(child)
-                binding_api.Bind(mat_prim, UsdShade.Tokens.weakerThanDescendants, "physics")
-            # 遞迴綁定
-            bind_material_to_colliders(child)
-
-    bind_material_to_colliders(prim)
-
-    print(f"[PhysXFix] Applied PhysX Material to {prim.GetPath()}: "
-          f"static_friction={static_friction}, dynamic_friction={dynamic_friction}, restitution={restitution}")
 
 def main():
     """Main entry point."""
@@ -797,7 +601,7 @@ def main():
         end_effector_prim_path=FRANKA_PANDA_PRIM_PATH + "/panda/panda_rightfinger",
         joint_prim_names=["panda_finger_joint1", "panda_finger_joint2"],
         joint_opened_positions=np.array([0.04, 0.04]),
-        joint_closed_positions=np.array([0.0, 0.0]),  # 🔥關鍵
+        joint_closed_positions=np.array([0.0, 0.0]),
         action_deltas=np.array([0.005, 0.005]),
     )
 
@@ -818,69 +622,31 @@ def main():
         orientation=np.array(franka_rotation)
     )
     set_camera_view(camera_translation, franka_translation)
-    # camera = Camera(
-    #     prim_path=f"{GOPRO_PRIM_PATH}/Camera",
-    #     name="gopro_camera",
-    #     resolution=(224,224)
-    # )
-    # camera.initialize()
 
-    # --- 在創建 panda 後 ---
-    # 1️⃣ 創建 controller
-    controller = ArticulationController()
-
-    # 2️⃣ 初始化 controller，使用 SingleManipulator 的 articulation view
-    controller.initialize(panda._articulation_view)
-
-    # 3️⃣ 將 controller 保存到 panda 物件或其他 class
-    panda.controller = controller
-
-        #################### START MULTI-CAM ####################
     cameras = {}
-    
-    # 1. Wrist Camera: original camera, attached to the robot arm.
-    cameras["wrist"] = Camera(
-        prim_path=f"{GOPRO_PRIM_PATH}/Camera",
-        name="wrist_camera",
-        resolution=(224, 224)
-    )
 
-    # 2. Top-Down Camera: camera from BEV.
-    """     
-    top_cam_pos = np.array(franka_translation) + np.array([0.6, 0.0, 1.8])
-    top_cam_target = np.array(franka_translation) + np.array([0.6, 0.0, 0.0])
-    top_cam_quat = calculate_camera_orientation(top_cam_pos, top_cam_target, up_axis=np.array([1, 0, 0]))
+    # 建立所有相機
+    for cam_name in CAMERA_OFFSETS.keys():
+        prim_path = f"/World/{cam_name.capitalize()}Camera"
+        if cam_name == "wrist":
+            prim_path = f"{GOPRO_PRIM_PATH}/Camera"
+        cameras[cam_name] = Camera(
+            prim_path=prim_path,
+            name=f"{cam_name}_camera",
+            position=np.array(franka_translation) + np.array(CAMERA_OFFSETS[cam_name]["pos_offset"]),
+            orientation=calculate_camera_orientation(
+                np.array(franka_translation) + np.array(CAMERA_OFFSETS[cam_name]["pos_offset"]),
+                np.array(franka_translation) + np.array(CAMERA_OFFSETS[cam_name]["target_offset"]),
+                up_axis=np.array(CAMERA_OFFSETS[cam_name]["up_axis"])
+            ),
+            resolution=(224,224)
+        )
 
-    cameras["top"] = Camera(
-        prim_path="/World/TopCamera",
-        name="top_camera",
-        position=top_cam_pos,
-        orientation=top_cam_quat,
-        resolution=(224, 224)
-    )
-    """
-    # 3. Angled Camera: camera from side-view, overlooking the whole workspace
-    angle_cam_pos = np.array(franka_translation) + np.array([1.6, -2.0, 1.3])
-    
-    angle_cam_target = np.array(franka_translation) + np.array([0.3, 0.0, 0.2])
-    angle_cam_quat = calculate_camera_orientation(
-        angle_cam_pos, 
-        angle_cam_target, 
-        up_axis=np.array([0, 0, 1])
-    )
-
-    cameras["angle"] = Camera(
-        prim_path="/World/AngleCamera",
-        name="angle_camera",
-        position=angle_cam_pos,
-        orientation=angle_cam_quat,
-        resolution=(224, 224)
-    )
-
+    # 初始化相機
     for cam in cameras.values():
         cam.initialize()
-    #################### END MULTI-CAM ####################
-    
+
+    print(f"[Main] Cameras initialized: {list(cameras.keys())}")
 
     world.reset()
     prim_mgr = RigidPrimManager()
@@ -955,10 +721,8 @@ def main():
     with open(object_poses_path, "r") as f:
         object_pose_records = json.load(f)
     
-    # [Data Generation] Multiply episodes to get multiple robot starts per object layout
-    N_REPEATS = 2
-    total_episodes = len(object_pose_records) * N_REPEATS
-    print(f"[Main] Replay initialized for {total_episodes} episodes ({len(object_pose_records)} layouts * {N_REPEATS} repeats).")
+    total_episodes = len(object_pose_records)
+    print(f"[Main] Replay initialized for {total_episodes} episodes ({len(object_pose_records)} layouts).")
 
 
     # --- Main simulation loop ---
@@ -1031,117 +795,30 @@ def main():
                     object_prims[object_name] = obj_prim
 
                 obj_prim = object_prims[object_name]
-                # fix_rigid_object_physx(
-                #     prim,
-                #     static_friction=0.8,
-                #     dynamic_friction=0.6,
-                #     restitution=0.0
-                # )
-
-                # debug_usd_physics(prim)
-                # debug_dynamic_state(prim)
-                # debug_collision(stage, prim)
-                # debug_mass_inertia(prim)
-                # debug_physics_material(stage, prim)
-
-                # rb_prim = find_rigid_body_prim(prim)
-                # if rb_prim is None:
-                #     print("❌ No RigidBody found under", prim.GetPath())
-                # else:
-                #     print("✅ RigidBody found at", rb_prim.GetPath())
-                #     debug_usd_physics(rb_prim)
-
-                # if "knife" in prim_path.lower()():
-                #     obj_prim.set_world_pose(position=np.array([1.98354244, 4.99211439, 0.7627228]))
-                # else:
                 obj_pos = np.array(obj["position"], dtype=np.float64)
-
                 # 預設 orientation
                 orientation = np.array([1.0, 0.0, 0.0, 0.0])  # w, x, y, z
                 if args.task == "kitchen":
-                    obj_pos[0] -= 0.05  # 🔥微調位置，讓物體不會太靠近牆面
-                else:obj_pos[2] -= 0.25 # 🔥微調高度，避免物體懸空或穿地面
-                if "fork" in object_name.lower():
-                    orientation = np.array([0.707, 0.0, 0.0, 0.707])
-                    print(f"[ObjectLoader] Positioned {object_name} with fork-specific orientation at {obj_pos}")
-                elif "knife" in object_name.lower():
-                    orientation = np.array([0.707, 0.0, 0.0, -0.707])
-                    print(f"[ObjectLoader] Positioned {object_name} with knife-specific orientation at {obj_pos}")
-                elif "blue_block" in object_name.lower():
-                    orientation = np.array([0.707107, 0.707107, 0, 0])  # 45 degree yaw
-                    print(f"[ObjectLoader] Positioned {object_name} with block-specific orientation at {obj_pos}")
-                elif "red_block" in object_name.lower():
-                    orientation = np.array([0.0677732, -0.7038514, -0.0677732, -0.7038514])  # 45 degree yaw
-                    print(f"[ObjectLoader] Positioned {object_name} with block-specific orientation at {obj_pos}")
-                elif "green_block" in object_name.lower():
-                    orientation = np.array([0.5, 0.5, 0.5, -0.5])  # 45 degree yaw
-                    print(f"[ObjectLoader] Positioned {object_name} with block-specific orientation at {obj_pos}")
+                    obj_pos[0] -= 0.05
+                else:obj_pos[2] -= 0.25
+                orientation = get_object_orientation(object_name)
                 # 最後一次性設置
                 obj_prim.set_world_pose(position=obj_pos, orientation=orientation)
 
 
         curr_pos, _ = get_end_effector_pos_quat_wxyz(panda, lula_solver, art_kine_solver)
 
-        #fork_origin, rot_quat_wxyz1 = get_object_pose("/World/fork")
-        #knife_origin, rot_quat_wxyz2 = get_object_pose("/World/knife")
-
-        #fork_rpy = quat_wxyz_to_rpy_deg(rot_quat_wxyz1)
-        #knife_rpy = quat_wxyz_to_rpy_deg(rot_quat_wxyz2)
-
-        #print("fork origin:", fork_origin)
-        #print("fork RPY (deg): roll={:.2f}, pitch={:.2f}, yaw={:.2f}".format(*fork_rpy))
-
-        #print("knife origin:", knife_origin)
-        #print("knife RPY (deg): roll={:.2f}, pitch={:.2f}, yaw={:.2f}".format(*knife_rpy))
-
-        teleop = TeleopEEController()
         get_object_world_pose = make_get_object_world_pose(prim_mgr)
         pickplace = PickPlace(
             get_end_effector_pose_fn=get_end_effector_pos_quat_wxyz,
             get_object_world_pose_fn=get_object_world_pose,
             apply_ik_solution_fn=apply_ik_solution,
             plan_line_cartesian_fn=plan_line_cartesian,
-            teleop=teleop,
             world=world,
             task=args.task,
         )
 
-        if args.task=="kitchen":
-            INIT_EE_POS = curr_pos + np.array([-0.16, 0., 0.13])
-            INIT_EE_QUAT_WXYZ = np.array([0.0081739, -0.9366365, 0.350194, 0.0030561])
-        elif args.task=="dining-room":
-            INIT_EE_POS = curr_pos + np.array([-0.16, 0., 0.13])
-            INIT_EE_QUAT_WXYZ = np.array([0.0081739, -0.9366365, 0.350194, 0.0030561])
-        elif args.task=="living-room":
-            INIT_EE_POS = curr_pos + np.array([-0.1, 0.2, 0.20])
-            INIT_EE_QUAT_WXYZ = np.array([0.0081739, -0.9366365, 0.350194, 0.0030561])
-        else:
-            raise RuntimeError(f"Unknown task, expected one of 'kitchen', 'dining-room', 'living-room', got {args.task}")
-        
-        # [Data Augmentation] Add random noise to initial EE pose
-        # Position noise: +/- 5cm
-        pos_noise = np.random.uniform(-0.2, 0.2, size=3)
-        #INIT_EE_POS = INIT_EE_POS + pos_noise
-
-        # Rotation noise: +/- 5 degrees around random axis
-        # Convert WXYZ -> SciPy (which uses x,y,z,w scalar_last usually, but we check input)
-        # R.from_quat expects (x, y, z, w). INIT_EE_QUAT_WXYZ is w,x,y,z.
-        w, x, y, z = INIT_EE_QUAT_WXYZ
-        base_rot = R.from_quat([x, y, z, w])
-        
-        # Random axis-angle rotation
-        rand_axis = np.random.normal(size=3)
-        rand_axis /= np.linalg.norm(rand_axis)
-        rand_angle_deg = np.random.uniform(-10, 10)
-        rand_rot = R.from_rotvec(rand_axis * np.deg2rad(rand_angle_deg))
-        
-        # Apply noise
-        final_rot = rand_rot * base_rot
-        fx, fy, fz, fw = final_rot.as_quat() # x,y,z,w
-        INIT_EE_QUAT_WXYZ = np.array([fw, fx, fy, fz]) # Back to w,x,y,z
-        
-        print(f"[Init] Random Noise Applied. Pos Noise: {pos_noise}, Angle Noise (deg): {rand_angle_deg:.2f}")
-
+        INIT_EE_POS, INIT_EE_QUAT_WXYZ = get_init_ee_pose(args.task, curr_pos)
         
         # Motion planner initialization
         motion_planner = registry.get_motion_planner(
@@ -1171,7 +848,7 @@ def main():
         eef_pos_list = []
         eef_rot_list = []
         gripper_list = []
-        joint_pos_list = [] # <--- NEW
+        joint_pos_list = []
         eef_pose6d = None
         episode_start_pose = None
         episode_end_pose = None
@@ -1193,37 +870,9 @@ def main():
                 eef_pos_list,
                 eef_rot_list,
                 gripper_list,
-                joint_pos_list=joint_pos_list, # <--- NEW
+                joint_pos_list=joint_pos_list,
                 render=True,
             )
-            # --- 新增：即時視覺化監看 ---
-            """
-            
-            if rgb_dict_list:
-                # 取得最後一幀的影像字典
-                # 假設 rgb_dict_list 存儲的是每一幀各相機的圖像
-                # 如果 step_world_and_record 直接回傳 rgb_dict 會更方便
-                last_frame_wrist = rgb_dict_list[-1]["wrist"]
-                last_frame_top = rgb_dict_list[-1]["top"]
-                last_frame_angle = rgb_dict_list[-1]["angle"]
-
-                # 將 RGB 轉為 BGR (OpenCV 格式)
-                img_wrist = cv2.cvtColor(last_frame_wrist, cv2.COLOR_RGB2BGR)
-                img_top = cv2.cvtColor(last_frame_top, cv2.COLOR_RGB2BGR)
-                img_angle = cv2.cvtColor(last_frame_angle, cv2.COLOR_RGB2BGR)
-
-                # 水平拼接三張影像 (Hconcat)
-                # 因為你的分辨率都是 224x224，拼接後會是 672x224
-                combined_view = cv2.hconcat([img_wrist, img_top, img_angle])
-
-                # 加入文字標籤 (選配)
-                cv2.putText(combined_view, f"Wrist | Top | Angle - Ep: {episode_idx}", (10, 20), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-
-                # 顯示視窗
-                cv2.imshow("Multi-Camera Monitor", combined_view)
-                cv2.waitKey(1) # 給予 1ms 時間刷新視窗
-            """
             if episode_start_pose is None:
                 episode_start_pose = eef_pose6d.copy()
 
@@ -1246,7 +895,7 @@ def main():
             "eef_pos": np.stack(eef_pos_list, 0),
             "eef_rot": np.stack(eef_rot_list, 0),
             "gripper": np.stack(gripper_list, 0),
-            "joint_pos": np.stack(joint_pos_list, 0), # <--- NEW
+            "joint_pos": np.stack(joint_pos_list, 0),
             "demo_start": demo_start_list,
             "demo_end": demo_end_list,
         }
@@ -1257,7 +906,7 @@ def main():
             frames = [step[cam_key] for step in rgb_dict_list]
             episode_record[f"{cam_key}_rgb"] = np.stack(frames, 0)
             
-            # Extrinsics (NEW)
+            # Extrinsics
             exts = [step[cam_key] for step in extrinsics_dict_list]
             episode_record[f"{cam_key}_extrinsics"] = np.stack(exts, 0)
         
@@ -1269,14 +918,12 @@ def main():
         episode_record["success"] = episode_success
 
         if episode_success:
-            # 設定影片屬性 (寬度 = 224 * 3, 高度 = 224)
             video_path = os.path.join(debug_dir, f"episode_{episode_idx:04d}_video.mp4")
             fourcc = cv2.VideoWriter_fourcc(*'mp4v')
             out = cv2.VideoWriter(video_path, fourcc, 30.0, (224 * 2, 224))
 
             for frame_data in rgb_dict_list:
                 w = cv2.cvtColor(frame_data["wrist"], cv2.COLOR_RGB2BGR)
-                #t = cv2.cvtColor(frame_data["top"], cv2.COLOR_RGB2BGR)
                 a = cv2.cvtColor(frame_data["angle"], cv2.COLOR_RGB2BGR)
                 
                 combined = cv2.hconcat([w, a])
