@@ -16,7 +16,7 @@ class KitchenTaskRegistry:
     ENVIRONMENT_NAME = "kitchen"
     TASK_NAME = "stacking"
     # ArUco tag pose
-    ARUCO_TAG_TRANSLATION = np.array([4.3652, 2.45, 0.9])
+    ARUCO_TAG_TRANSLATION = np.array([-0.5, -0.3, 0.0])
     ARUCO_TAG_ROTATION_EULER = np.array([0.0, 0.0, 180.0])
     ARUCO_TAG_ROTATION_QUAT = Rotation.from_euler(
         "xyz", ARUCO_TAG_ROTATION_EULER, degrees=True
@@ -26,28 +26,28 @@ class KitchenTaskRegistry:
             "name": "pink cup",
             "assets": "cup_pink.usd",
             "prim_path": "/World/pink_cup",
-            "default_position": [4.9652, 2.35, 0.92],
+            "default_position": [-0.3, -0.2, 0.8],
             "quat_wxyz": np.array([1.0, 0.0, 0.0, 0.0]),
         },
         {
             "name": "blue cup",
             "assets": "cup_blue.usd",
             "prim_path": "/World/blue_cup",
-            "default_position": [4.9652, 2.55, 0.92],
+            "default_position": [-0.33, -0.2, 0.8],
             "quat_wxyz": np.array([1.0, 0.0, 0.0, 0.0]),
         },
     ]
 
     # Robot poses (Franka)
-    FRANKA_TRANSLATION = np.array([4.5, 2.7, 0.9000000134110451])
-    FRANKA_ROTATION_EULER = np.array([0.0, 0.0, 0.0])
+    FRANKA_TRANSLATION = np.array([0, -0.5, 0])
+    FRANKA_ROTATION_EULER = np.array([0.0, 0.0, 90.0])
     FRANKA_ROTATION_QUAT = Rotation.from_euler(
         "xyz", FRANKA_ROTATION_EULER, degrees=True
     ).as_quat()  # x,y,z,w
 
     # Camera poses (enhanced from current)
-    CAMERA_TRANSLATION = np.array([7.5, 2.68664950400609, 2.2])
-    CAMERA_ROTATION_EULER = np.array([71.30, 0.0, 89.0])
+    CAMERA_TRANSLATION = np.array([0, 3.32, 1.32])
+    CAMERA_ROTATION_EULER = np.array([66.2, 0.0, 180])
     CAMERA_ROTATION_QUAT = Rotation.from_euler(
         "xyz", CAMERA_ROTATION_EULER, degrees=True
     ).as_quat()  # x,y,z,w
