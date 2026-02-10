@@ -94,6 +94,7 @@ class UMISimEnv:
         manipulator,
         camera,
         art_kine_solver,
+        lula_solver,
         frequency: float = 10.0,  # policy frequency
         camera_obs_horizon: int = 2,
         robot_obs_horizon: int = 2,
@@ -106,6 +107,7 @@ class UMISimEnv:
         self.manipulator = manipulator
         self.camera = camera
         self.art_kine_solver = art_kine_solver
+        self.lula_solver = lula_solver
 
         self.frequency = frequency
         self.dt = 1.0 / frequency
@@ -137,26 +139,15 @@ class UMISimEnv:
 
     def _get_eef_pose_axis_angle(self) -> np.ndarray:
         """Get EEF pose as [x, y, z, ax, ay, az] in robot base frame."""
-        ee_pos, ee_T = self.art_kine_solver.compute_end_effector_pose()
-
-        # Convert to base frame if needed (see your earlier code)
         base_pos, base_quat = self.manipulator.get_world_pose()
-        T_base_world = pose_to_transform_matrix(base_pos, base_quat)
-        T_world_base = np.linalg.inv(T_base_world)
+        self.lula_solver.set_robot_base_pose(
+            robot_position=base_pos,
+            robot_orientation=base_quat,
+        )
 
-        T_eef_world = np.eye(4)
-        T_eef_world[:3, :3] = ee_T[:3, :3]
-        T_eef_world[:3, 3] = ee_pos
-
-        T_eef_base = T_world_base @ T_eef_world
-
-        pos = T_eef_base[:3, 3]
-        rot_matrix = T_eef_base[:3, :3]
-
-        # Convert to axis-angle (UMI format)
-        axis_angle = R.from_matrix(rot_matrix).as_rotvec()
-
-        return np.concatenate([pos, axis_angle])
+        ee_pos, ee_rot_matrix = self.art_kine_solver.compute_end_effector_pose()
+        eef_rot = R.from_matrix(ee_rot_matrix[:3, :3]).as_rotvec()
+        return np.concatenate([ee_pos.astype(np.float64), eef_rot.astype(np.float64)])
 
     def _get_gripper_width(self) -> float:
         """Get gripper width in meters."""
@@ -548,20 +539,18 @@ def main():
     lula_solver, art_kine_solver = initialize_ik_solvers(manipulator)
 
     # Create environment
-    env = UMISimEnv(world, manipulator, camera, art_kine_solver)
+    env = UMISimEnv(world, manipulator, camera, art_kine_solver, lula_solver)
 
     obs_pose_rep = "relative"  # Policy trained with relative poses
     action_pose_repr = "relative"  # Actions are in relative frame
     tx_robot1_robot0 = None  # Single robot, no inter-robot transform
 
     set_to_init_pose(manipulator, lula_solver, art_kine_solver, args.task)
-    # Warm up buffer (run sim steps before inference)
     for _ in range(50):
         world.step(render=True)
         env.step_accumulate()
 
     # Capture episode start pose for computing robot0_eef_rot_axis_angle_wrt_start
-    # This is required by the policy's shape_meta
     initial_obs = env.get_obs()
     # episode_start_pose is a list of poses, one per robot
     # Each pose is [x, y, z, ax, ay, az] (position + axis-angle rotation)
@@ -573,33 +562,6 @@ def main():
             ]
         )
     ]
-
-    curr_pos, _ = get_end_effector_pos_quat_wxyz(
-        manipulator, lula_solver, art_kine_solver
-    )
-
-    if args.task == "kitchen":
-        INIT_EE_POS = curr_pos + np.array([-0.16, 0.0, 0.13])
-        INIT_EE_QUAT_WXYZ = np.array([0.0081739, -0.9366365, 0.350194, 0.0030561])
-    elif args.task == "dining-room":
-        INIT_EE_POS = curr_pos + np.array([-0.16, 0.0, 0.13])
-        INIT_EE_QUAT_WXYZ = np.array([0.0081739, -0.9366365, 0.350194, 0.0030561])
-    elif args.task == "living-room":
-        INIT_EE_POS = curr_pos + np.array([-0.1, 0.2, 0.20])
-        INIT_EE_QUAT_WXYZ = np.array([0.0081739, -0.9366365, 0.350194, 0.0030561])
-    else:
-        raise RuntimeError(
-            f"Unknown task, expected one of 'kitchen', 'dining-room', 'living-room', got {args.task}"
-        )
-
-    success = apply_ik_solution(
-        manipulator,
-        art_kine_solver,
-        INIT_EE_POS,
-        INIT_EE_QUAT_WXYZ,
-    )
-
-    time.sleep(5)
 
     while simulation_app.is_running():
         world.step(render=True)
@@ -644,34 +606,14 @@ def main():
         # action shape: (horizon, 7) = [x, y, z, rx, ry, rz, gripper_width]
         # Actions are in robot base frame, need to transform to world frame for IK
         n_action_steps = min(cfg.n_action_steps, len(action))
-        base_pos, base_quat = manipulator.get_world_pose()
-        T_base_world = pose_to_transform_matrix(base_pos, base_quat)
-
         for step_idx in range(n_action_steps):
             action_step = action[step_idx]
 
             # Extract pose and gripper from action (in robot base frame)
-            target_pos_base = action_step[:3]
+            target_pos = action_step[:3]
             target_rot_axis_angle = action_step[3:6]
             target_gripper_width = action_step[6]
-
-            # Convert axis-angle to rotation matrix
-            target_rot_matrix_base = R.from_rotvec(target_rot_axis_angle).as_matrix()
-
-            # Build 4x4 transform matrix for target pose in base frame
-            T_target_base = np.eye(4)
-            T_target_base[:3, :3] = target_rot_matrix_base
-            T_target_base[:3, 3] = target_pos_base
-
-            # Transform from base frame to world frame: T_target_world = T_base_world @ T_target_base
-            T_target_world = T_base_world @ T_target_base
-
-            # Extract world-frame position and rotation
-            target_pos_world = T_target_world[:3, 3]
-            target_rot_matrix_world = T_target_world[:3, :3]
-
-            # Convert rotation matrix to quaternion (wxyz) for IK
-            target_quat_xyzw = R.from_matrix(target_rot_matrix_world).as_quat()
+            target_quat_xyzw = R.from_rotvec(target_rot_axis_angle).as_quat()
             target_quat_wxyz = np.array(
                 [
                     target_quat_xyzw[3],  # w
@@ -681,10 +623,9 @@ def main():
                 ]
             )
 
-
-            # Apply IK to move robot arm (expects world frame)
+            # Apply IK to move robot arm
             success = apply_ik_solution(
-                manipulator, art_kine_solver, target_pos_world, target_quat_wxyz
+                manipulator, art_kine_solver, target_pos, target_quat_wxyz
             )
 
             if not success:
