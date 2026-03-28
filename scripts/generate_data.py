@@ -22,12 +22,31 @@ from zarr.storage import ZipStore
 from numcodecs import Blosc
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--task", type=str, choices=["kitchen", "dining-room", "living-room"], required=True)
+parser.add_argument(
+    "--task", type=str, choices=["kitchen", "dining-room", "living-room"], required=True
+)
 parser.add_argument("--session_dir", type=str, default=None)
-parser.add_argument("--x_offset", type=float, default=0.1, help="X-axis offset for coordinate calibration (meters)")
-parser.add_argument("--y_offset", type=float, default=0.15, help="Y-axis offset for coordinate calibration (meters)")
-parser.add_argument("--z_offset", type=float, default=-0.07, help="Z-axis offset for coordinate calibration (meters)")
-parser.add_argument("--teleop", type=bool, default=False, help="Whether to use teleop mode")
+parser.add_argument(
+    "--x_offset",
+    type=float,
+    default=0.1,
+    help="X-axis offset for coordinate calibration (meters)",
+)
+parser.add_argument(
+    "--y_offset",
+    type=float,
+    default=0.15,
+    help="Y-axis offset for coordinate calibration (meters)",
+)
+parser.add_argument(
+    "--z_offset",
+    type=float,
+    default=-0.07,
+    help="Z-axis offset for coordinate calibration (meters)",
+)
+parser.add_argument(
+    "--teleop", type=bool, default=False, help="Whether to use teleop mode"
+)
 args = parser.parse_args()
 
 from isaacsim import SimulationApp
@@ -37,7 +56,7 @@ config = {
     "width": 1280,
     "height": 720,
     "enable_streaming": False,
-    "extensions": ["isaacsim.robot_motion.motion_generation"]
+    "extensions": ["isaacsim.robot_motion.motion_generation"],
 }
 simulation_app = SimulationApp(config)
 
@@ -51,7 +70,7 @@ from isaacsim.robot_motion.motion_generation import (
     LulaKinematicsSolver,
     ArticulationKinematicsSolver,
     LulaTaskSpaceTrajectoryGenerator,
-    ArticulationTrajectory
+    ArticulationTrajectory,
 )
 from isaacsim.robot.manipulators.grippers import ParallelGripper
 from isaacsim.robot.manipulators import SingleManipulator
@@ -112,10 +131,12 @@ def get_T_world_base() -> np.ndarray:
 
 
 def get_T_world_aruco(aruco_tag_pose: dict) -> np.ndarray:
-    aruco_translation = np.array(aruco_tag_pose['translation'])
-    aruco_quat_wxyz = np.array(aruco_tag_pose['rotation_quat'])
-    aruco_quat_xyzw = np.array([aruco_quat_wxyz[1], aruco_quat_wxyz[2], aruco_quat_wxyz[3], aruco_quat_wxyz[0]])
-    
+    aruco_translation = np.array(aruco_tag_pose["translation"])
+    aruco_quat_wxyz = np.array(aruco_tag_pose["rotation_quat"])
+    aruco_quat_xyzw = np.array(
+        [aruco_quat_wxyz[1], aruco_quat_wxyz[2], aruco_quat_wxyz[3], aruco_quat_wxyz[0]]
+    )
+
     T_world_aruco = np.eye(4)
     T_world_aruco[:3, 3] = aruco_translation
     T_world_aruco[:3, :3] = R.from_quat(aruco_quat_xyzw).as_matrix()
@@ -126,35 +147,33 @@ def calibrate_robot_base(panda, lula_solver):
     """
     Update Lula solver with current robot base pose.
     Must be called before computing IK.
-    
+
     Args:
         panda: Panda articulation object
         lula_solver: LulaKinematicsSolver instance
     """
     robot_pos, robot_quat = panda.get_world_pose()
     lula_solver.set_robot_base_pose(
-        robot_position=robot_pos,
-        robot_orientation=robot_quat
+        robot_position=robot_pos, robot_orientation=robot_quat
     )
 
 
 def apply_ik_solution(panda, art_kine_solver, target_pos, target_quat_wxyz):
     """
     Compute and apply IK solution for target pose.
-    
+
     Args:
         panda: Panda articulation object
         art_kine_solver: ArticulationKinematicsSolver instance
         target_pos: Target position (3,)
         target_quat_wxyz: Target orientation as quaternion WXYZ (4,)
         step_idx: Current step index (for logging)
-        
+
     Returns:
         bool: True if IK succeeded
     """
     action, success = art_kine_solver.compute_inverse_kinematics(
-        target_position=target_pos,
-        target_orientation=target_quat_wxyz
+        target_position=target_pos, target_orientation=target_quat_wxyz
     )
 
     if success:
@@ -163,22 +182,22 @@ def apply_ik_solution(panda, art_kine_solver, target_pos, target_quat_wxyz):
 
     return False
 
+
 def ik_solution(panda, art_kine_solver, target_pos, target_quat_wxyz):
     """
     Compute IK solution for target pose.
-    
+
     Args:
         panda: Panda articulation object
         art_kine_solver: ArticulationKinematicsSolver instance
         target_pos: Target position (3,)
         target_quat_wxyz: Target orientation as quaternion WXYZ (4,)
-        
+
     Returns:
         ArticulationAction or None: IK solution action if successful, else None
     """
     action, success = art_kine_solver.compute_inverse_kinematics(
-        target_position=target_pos,
-        target_orientation=target_quat_wxyz
+        target_position=target_pos, target_orientation=target_quat_wxyz
     )
 
     if success:
@@ -196,10 +215,7 @@ class RigidPrimManager:
 
     def get(self, prim_path):
         if prim_path not in self._cache:
-            prim = RigidPrim(
-                prim_path,
-                name=prim_path.replace("/", "_")
-            )
+            prim = RigidPrim(prim_path, name=prim_path.replace("/", "_"))
             prim.initialize()
             self._cache[prim_path] = prim
         return self._cache[prim_path]
@@ -212,16 +228,19 @@ def make_get_object_world_pose(prim_mgr):
         pos = pos_batch[0]
         quat_wxyz = quat_wxyz_batch[0]
 
-        quat_xyzw = np.array([
-            quat_wxyz[1],
-            quat_wxyz[2],
-            quat_wxyz[3],
-            quat_wxyz[0],
-        ])
+        quat_xyzw = np.array(
+            [
+                quat_wxyz[1],
+                quat_wxyz[2],
+                quat_wxyz[3],
+                quat_wxyz[0],
+            ]
+        )
         T = np.eye(4)
         T[:3, :3] = R.from_quat(quat_xyzw).as_matrix()
         T[:3, 3] = pos
         return T
+
     return _get_object_world_pose
 
 
@@ -230,7 +249,9 @@ def get_object_world_size(object_prim_path: str):
     prim = stage.GetPrimAtPath(object_prim_path)
     if not prim.IsValid():
         raise RuntimeError(f"Object prim not found: {object_prim_path}")
-    bbox_cache = UsdGeom.BBoxCache(Usd.TimeCode.Default(), includedPurposes=[UsdGeom.Tokens.default_])
+    bbox_cache = UsdGeom.BBoxCache(
+        Usd.TimeCode.Default(), includedPurposes=[UsdGeom.Tokens.default_]
+    )
     bbox_cache.Clear()
     prim_bbox = bbox_cache.ComputeWorldBound(prim)
     prim_range = prim_bbox.ComputeAlignedRange()
@@ -255,7 +276,9 @@ def get_end_effector_pose(panda, lula_solver, art_kine_solver) -> np.ndarray:
 
 def get_end_effector_pos_quat_wxyz(panda, lula_solver, art_kine_solver):
     base_pos, base_quat = panda.get_world_pose()
-    lula_solver.set_robot_base_pose(robot_position=base_pos, robot_orientation=base_quat)
+    lula_solver.set_robot_base_pose(
+        robot_position=base_pos, robot_orientation=base_quat
+    )
 
     ee_pos, ee_T = art_kine_solver.compute_end_effector_pose()  # ee_T[:3,:3] rotation
     quat_xyzw = R.from_matrix(ee_T[:3, :3]).as_quat()
@@ -270,17 +293,31 @@ def save_multi_episode_dataset(output_path: str, episodes: list[dict]) -> None:
     data = root.create_group("data")
 
     rgb = np.concatenate([ep["rgb"] for ep in episodes], axis=0).astype(np.uint8)
-    demo_start = np.concatenate([ep["demo_start"] for ep in episodes], axis=0).astype(np.float64)
-    demo_end = np.concatenate([ep["demo_end"] for ep in episodes], axis=0).astype(np.float64)
-    eef_pos = np.concatenate([ep["eef_pos"] for ep in episodes], axis=0).astype(np.float32)
-    eef_rot = np.concatenate([ep["eef_rot"] for ep in episodes], axis=0).astype(np.float32)
-    gripper = np.concatenate([ep["gripper"] for ep in episodes], axis=0).astype(np.float32)
+    demo_start = np.concatenate([ep["demo_start"] for ep in episodes], axis=0).astype(
+        np.float64
+    )
+    demo_end = np.concatenate([ep["demo_end"] for ep in episodes], axis=0).astype(
+        np.float64
+    )
+    eef_pos = np.concatenate([ep["eef_pos"] for ep in episodes], axis=0).astype(
+        np.float32
+    )
+    eef_rot = np.concatenate([ep["eef_rot"] for ep in episodes], axis=0).astype(
+        np.float32
+    )
+    gripper = np.concatenate([ep["gripper"] for ep in episodes], axis=0).astype(
+        np.float32
+    )
 
     data.create_dataset("camera0_rgb", data=rgb, compressor=compressor)
-    data.create_dataset("robot0_demo_start_pose", data=demo_start, compressor=compressor)
+    data.create_dataset(
+        "robot0_demo_start_pose", data=demo_start, compressor=compressor
+    )
     data.create_dataset("robot0_demo_end_pose", data=demo_end, compressor=compressor)
     data.create_dataset("robot0_eef_pos", data=eef_pos, compressor=compressor)
-    data.create_dataset("robot0_eef_rot_axis_angle", data=eef_rot, compressor=compressor)
+    data.create_dataset(
+        "robot0_eef_rot_axis_angle", data=eef_rot, compressor=compressor
+    )
     data.create_dataset("robot0_gripper_width", data=gripper, compressor=compressor)
 
     episode_lengths = [len(ep["rgb"]) for ep in episodes]
@@ -315,10 +352,12 @@ def _save_progress(session_dir: str, completed: set[int]) -> None:
 def _normalize_object_name(name: str) -> str:
     return name.strip().lower().replace(" ", "_")
 
+
 def step_world(world, render=True, sleep_dt=0.01):
     """Advance the simulation world by one step."""
     world.step(render=render)
     time.sleep(sleep_dt)
+
 
 def record_state(
     camera,
@@ -348,11 +387,14 @@ def record_state(
 
     return eef_pose6d
 
+
 def wxyz_to_xyzw(q_wxyz):
     return np.array([q_wxyz[1], q_wxyz[2], q_wxyz[3], q_wxyz[0]])
 
+
 def xyzw_to_wxyz(q_xyzw):
     return np.array([q_xyzw[3], q_xyzw[0], q_xyzw[1], q_xyzw[2]])
+
 
 def plan_line_cartesian(
     p_start: np.ndarray,
@@ -360,7 +402,7 @@ def plan_line_cartesian(
     p_goal: np.ndarray,
     q_goal_wxyz: np.ndarray,
     step_m: float = 0.005,
-    ):
+):
     p_start = np.asarray(p_start, dtype=float)
     p_goal = np.asarray(p_goal, dtype=float)
 
@@ -380,6 +422,7 @@ def plan_line_cartesian(
 
     return [np.concatenate([p, q_wxyz]) for p, q_wxyz in zip(positions, quats_wxyz)]
 
+
 # Fixed orientation for motin planning mode for now
 OBJECT_ORIENTATION_PRESETS = {
     "fork": [0.707, 0.0, 0.0, 0.707],
@@ -388,16 +431,19 @@ OBJECT_ORIENTATION_PRESETS = {
     "red_block": [0.0677732, -0.7038514, -0.0677732, -0.7038514],
     "green_block": [0.5, 0.5, 0.5, -0.5],
 }
+
+
 def get_object_orientation(name, default_orientation=[1.0, 0.0, 0.0, 0.0]):
     for key, quat in OBJECT_ORIENTATION_PRESETS.items():
         if key in name.lower():
             return np.array(quat)
     return np.array(default_orientation)
 
+
 def main():
     """Main entry point."""
     print(f"[Main] Starting with task: {args.task}")
-    
+
     # --- Load registry configuration ---
     registry_class = registry.get_task_registry(args.task)
     if not registry_class.validate_environment():
@@ -422,7 +468,9 @@ def main():
     world.scene.add_default_ground_plane()
 
     # --- Setup robot ---
-    robot = stage_utils.add_reference_to_stage(usd_path=FRANKA_PANDA_FP, prim_path=FRANKA_PANDA_PRIM_PATH)
+    robot = stage_utils.add_reference_to_stage(
+        usd_path=FRANKA_PANDA_FP, prim_path=FRANKA_PANDA_PRIM_PATH
+    )
     robot.GetVariantSet("Gripper").SetVariantSelection("AlternateFinger")
     robot.GetVariantSet("Mesh").SetVariantSelection("Quality")
 
@@ -451,13 +499,13 @@ def main():
     # Set robot position after world reset
     robot_xform.set_local_pose(
         translation=np.array(franka_translation) / stage_utils.get_stage_units(),
-        orientation=np.array(franka_rotation)
+        orientation=np.array(franka_rotation),
     )
     set_camera_view(camera_translation, franka_translation)
     camera = Camera(
         prim_path=f"{GOPRO_PRIM_PATH}/Camera",
         name="gopro_camera",
-        resolution=(224,224)
+        resolution=(224, 224),
     )
     camera.initialize()
     world.reset()
@@ -473,7 +521,9 @@ def main():
         simulation_app.close()
         return
 
-    object_poses_path = os.path.join(args.session_dir, 'demos', 'mapping', 'object_poses.json')
+    object_poses_path = os.path.join(
+        args.session_dir, "demos", "mapping", "object_poses.json"
+    )
     print(f"[Main] Looking for object poses at: {object_poses_path}")
 
     preload_objects = cfg.get("environment_vars", {}).get("PRELOAD_OBJECTS", [])
@@ -494,19 +544,26 @@ def main():
 
         full_asset_path = os.path.join(ASSETS_DIR, asset_filename)
         if not os.path.exists(full_asset_path):
-            print(f"[ObjectLoader] WARNING: Asset not found: {full_asset_path}, skipping {raw_name}")
+            print(
+                f"[ObjectLoader] WARNING: Asset not found: {full_asset_path}, skipping {raw_name}"
+            )
             continue
 
         try:
             stage_utils.add_reference_to_stage(
-                usd_path=full_asset_path,
-                prim_path=prim_path
+                usd_path=full_asset_path, prim_path=prim_path
             )
         except Exception as e:
-            print(f"[ObjectLoader] ERROR: Failed to load asset {full_asset_path}: {str(e)}")
+            print(
+                f"[ObjectLoader] ERROR: Failed to load asset {full_asset_path}: {str(e)}"
+            )
             continue
 
-        obj_prim = SingleXFormPrim(prim_path=prim_path, name=object_name, orientation=entry.get("quat_wxyz", np.array([1,0,0,0])))
+        obj_prim = SingleXFormPrim(
+            prim_path=prim_path,
+            name=object_name,
+            orientation=entry.get("quat_wxyz", np.array([1, 0, 0, 0])),
+        )
         world.scene.add(obj_prim)
         object_prims[object_name] = obj_prim
         print(f"[ObjectLoader] Preloaded {raw_name} as {prim_path}")
@@ -514,14 +571,11 @@ def main():
     # Initialize kinematics solvers
     print(f"[Main] Initializing Kinematics with UMI config...")
     lula_solver = LulaKinematicsSolver(
-        robot_description_path=LULA_ROBOT_DESCRIPTION_PATH,
-        urdf_path=LULA_URDF_PATH
+        robot_description_path=LULA_ROBOT_DESCRIPTION_PATH, urdf_path=LULA_URDF_PATH
     )
 
     art_kine_solver = ArticulationKinematicsSolver(
-        panda,
-        kinematics_solver=lula_solver,
-        end_effector_frame_name="umi_tcp"
+        panda, kinematics_solver=lula_solver, end_effector_frame_name="umi_tcp"
     )
 
     with open(object_poses_path, "r") as f:
@@ -533,7 +587,9 @@ def main():
     print("[Main] Starting simulation loop...")
 
     completed_episodes = _load_progress(args.session_dir)
-    episodes_to_run = [ep for ep in range(total_episodes) if ep not in completed_episodes]
+    episodes_to_run = [
+        ep for ep in range(total_episodes) if ep not in completed_episodes
+    ]
     collected_episodes = []
 
     idx = 0
@@ -549,7 +605,7 @@ def main():
         # Environment setup
         robot_xform.set_local_pose(
             translation=np.array(franka_translation) / stage_utils.get_stage_units(),
-            orientation=np.array(franka_rotation)
+            orientation=np.array(franka_rotation),
         )
         set_camera_view(camera_translation, franka_translation)
 
@@ -563,7 +619,9 @@ def main():
             )
 
             if len(object_transforms) == 0:
-                print(f"[ObjectLoader] Skipping episode: {episode_idx} as objects are not constructed successfully.")
+                print(
+                    f"[ObjectLoader] Skipping episode: {episode_idx} as objects are not constructed successfully."
+                )
                 continue
 
             for obj in object_transforms:
@@ -572,21 +630,26 @@ def main():
                     continue
                 if object_name not in object_prims:
                     preload_entry = preload_by_name.get(object_name)
-                    assert preload_entry, f"Object {object_name} missing from PRELOAD_OBJECTS"
+                    assert preload_entry, (
+                        f"Object {object_name} missing from PRELOAD_OBJECTS"
+                    )
                     asset_filename = preload_entry["assets"]
                     prim_path = preload_entry["prim_path"]
                     full_asset_path = os.path.join(ASSETS_DIR, asset_filename)
                     if not os.path.exists(full_asset_path):
-                        print(f"[ObjectLoader] WARNING: Asset not found: {full_asset_path}, skipping {object_name}")
+                        print(
+                            f"[ObjectLoader] WARNING: Asset not found: {full_asset_path}, skipping {object_name}"
+                        )
                         continue
 
                     try:
                         stage_utils.add_reference_to_stage(
-                            usd_path=full_asset_path,
-                            prim_path=prim_path
+                            usd_path=full_asset_path, prim_path=prim_path
                         )
                     except Exception as e:
-                        print(f"[ObjectLoader] ERROR: Failed to load asset {full_asset_path}: {str(e)}")
+                        print(
+                            f"[ObjectLoader] ERROR: Failed to load asset {full_asset_path}: {str(e)}"
+                        )
                         continue
 
                     obj_prim = RigidPrim(prim_path, object_name)
@@ -616,7 +679,9 @@ def main():
             world.step(render=True)
             time.sleep(1 / 60)
 
-        curr_pos, _ = get_end_effector_pos_quat_wxyz(panda, lula_solver, art_kine_solver)
+        curr_pos, _ = get_end_effector_pos_quat_wxyz(
+            panda, lula_solver, art_kine_solver
+        )
         get_object_world_pose = make_get_object_world_pose(prim_mgr)
         pickplace = PickPlace(
             get_end_effector_pose_fn=get_end_effector_pos_quat_wxyz,
@@ -627,18 +692,20 @@ def main():
             task=args.task,
         )
 
-        if args.task=="kitchen":
-            INIT_EE_POS = curr_pos + np.array([-0.16, 0., 0.13])
+        if args.task == "kitchen":
+            INIT_EE_POS = curr_pos + np.array([-0.16, 0.0, 0.13])
             INIT_EE_QUAT_WXYZ = np.array([0.0081739, -0.9366365, 0.350194, 0.0030561])
-        elif args.task=="dining-room":
-            INIT_EE_POS = curr_pos + np.array([-0.16, 0., 0.13])
+        elif args.task == "dining-room":
+            INIT_EE_POS = curr_pos + np.array([-0.16, 0.0, 0.13])
             INIT_EE_QUAT_WXYZ = np.array([0.0081739, -0.9366365, 0.350194, 0.0030561])
-        elif args.task=="living-room":
+        elif args.task == "living-room":
             INIT_EE_POS = curr_pos + np.array([-0.1, 0.2, 0.20])
             INIT_EE_QUAT_WXYZ = np.array([0.0081739, -0.9366365, 0.350194, 0.0030561])
         else:
-            raise RuntimeError(f"Unknown task, expected one of 'kitchen', 'dining-room', 'living-room', got {args.task}")
-        
+            raise RuntimeError(
+                f"Unknown task, expected one of 'kitchen', 'dining-room', 'living-room', got {args.task}"
+            )
+
         # Motion planner initialization
         if not args.teleop:
             motion_planner = registry.get_motion_planner(
@@ -647,12 +714,12 @@ def main():
                 get_object_world_pose_fn=get_object_world_pose,
                 pickplace=pickplace,
             )
-        else: 
+        else:
             teleop_controller = TeleopController(
                 get_end_effector_pose_fn=get_end_effector_pos_quat_wxyz,
                 ik_solution_fn=ik_solution,
-                init_ee_pos = INIT_EE_POS,
-                init_ee_quat_wxyz = INIT_EE_QUAT_WXYZ,
+                init_ee_pos=INIT_EE_POS,
+                init_ee_quat_wxyz=INIT_EE_QUAT_WXYZ,
             )
 
         # Initialize end-effector pose
@@ -666,7 +733,7 @@ def main():
 
         if not success:
             print("[Init] WARNING: Failed to apply EE initial pose")
-        
+
         rgb_list = []
         eef_pos_list = []
         eef_rot_list = []
@@ -676,10 +743,8 @@ def main():
         episode_end_pose = None
 
         if not args.teleop:
-            
             print("[Main] Recording episode in motion planning mode...")
             while simulation_app.is_running():
-
                 # Predefine motion planning to collect data
                 motion_planner.step(panda, lula_solver, art_kine_solver)
 
@@ -703,15 +768,13 @@ def main():
                     print("[Main] Motion plan finished")
                     break
         else:
-            
             teleop_controller.print_instructions()
-            
+
             while simulation_app.is_running():
-                
                 teleop_controller.step(panda, lula_solver, art_kine_solver)
 
                 step_world(world, render=True)
-                
+
                 if teleop_controller.started():
                     eef_pose6d = record_state(
                         camera,
@@ -723,9 +786,11 @@ def main():
                         eef_rot_list,
                         gripper_list,
                     )
-                    
+
                 if teleop_controller.requested_restart():
-                    print("[Main] Teleop control requested restart, resetting episode...")
+                    print(
+                        "[Main] Teleop control requested restart, resetting episode..."
+                    )
                     break
 
                 if episode_start_pose is None and teleop_controller.started():
@@ -736,7 +801,7 @@ def main():
                     episode_end_pose = eef_pose6d.copy()
                     print("[Main] Teleop control finished")
                     break
-                
+
             if teleop_controller.requested_restart():
                 continue
 
@@ -772,13 +837,10 @@ def main():
         if episode_success:
             completed_episodes.add(episode_idx)
             _save_progress(args.session_dir, completed_episodes)
-            
+
         idx += 1
 
-    successful_episodes = [
-        ep for ep in collected_episodes
-        if ep.get("success", False)
-    ]
+    successful_episodes = [ep for ep in collected_episodes if ep.get("success", False)]
     print(f"[Main] Total successful trials collected: {len(successful_episodes)}")
     if successful_episodes:
         output_zarr = os.path.join(args.session_dir, "simulation_dataset.zarr.zip")
