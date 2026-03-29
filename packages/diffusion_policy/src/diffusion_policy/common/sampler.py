@@ -18,6 +18,27 @@ def get_val_mask(n_episodes, val_ratio, seed=0):
     return val_mask
 
 
+def _is_integer_like(value, atol=1e-6):
+    if isinstance(value, (int, np.integer)):
+        return True
+    value = float(value)
+    return abs(value - round(value)) <= atol
+
+
+def _get_exact_indices(
+        current_idx,
+        start_idx,
+        end_idx,
+        horizon,
+        latency_steps,
+        downsample_steps):
+    latency_steps = int(round(float(latency_steps)))
+    downsample_steps = int(round(float(downsample_steps)))
+    idxs = current_idx - np.arange(horizon - 1, -1, -1, dtype=np.int64) * downsample_steps
+    idxs += latency_steps
+    return np.clip(idxs, start_idx, end_idx - 1)
+
+
 class SequenceSampler:
     def __init__(self,
         shape_meta: dict,
@@ -144,35 +165,45 @@ class SequenceSampler:
                     padding = np.repeat(output[:1], this_horizon - output.shape[0], axis=0)
                     output = np.concatenate([padding, output], axis=0)
             else:
-                idx_with_latency = np.array(
-                    [current_idx - idx * this_downsample_steps + this_latency_steps for idx in range(this_horizon)],
-                    dtype=np.float32)
-                idx_with_latency = idx_with_latency[::-1]
-                idx_with_latency = np.clip(idx_with_latency, start_idx, end_idx - 1)
-                interpolation_start = max(int(idx_with_latency[0]) - 5, start_idx)
-                interpolation_end = min(int(idx_with_latency[-1]) + 2 + 5, end_idx)
-
-                if 'rot' in key:
-                    # rotation
-                    rot_preprocess, rot_postprocess = None, None
-                    if key.endswith('quat'):
-                        rot_preprocess = st.Rotation.from_quat
-                        rot_postprocess = st.Rotation.as_quat
-                    elif key.endswith('axis_angle'):
-                        rot_preprocess = st.Rotation.from_rotvec
-                        rot_postprocess = st.Rotation.as_rotvec
-                    else:
-                        raise NotImplementedError
-                    slerp = st.Slerp(
-                        times=np.arange(interpolation_start, interpolation_end),
-                        rotations=rot_preprocess(input_arr[interpolation_start: interpolation_end]))
-                    output = rot_postprocess(slerp(idx_with_latency))
+                if _is_integer_like(this_latency_steps) and _is_integer_like(this_downsample_steps):
+                    idx_with_latency = _get_exact_indices(
+                        current_idx=current_idx,
+                        start_idx=start_idx,
+                        end_idx=end_idx,
+                        horizon=this_horizon,
+                        latency_steps=this_latency_steps,
+                        downsample_steps=this_downsample_steps
+                    )
+                    output = input_arr[idx_with_latency]
                 else:
-                    interp = si.interp1d(
-                        x=np.arange(interpolation_start, interpolation_end),
-                        y=input_arr[interpolation_start: interpolation_end],
-                        axis=0, assume_sorted=True)
-                    output = interp(idx_with_latency)
+                    idx_with_latency = np.array(
+                        [current_idx - idx * this_downsample_steps + this_latency_steps for idx in range(this_horizon)],
+                        dtype=np.float32)
+                    idx_with_latency = idx_with_latency[::-1]
+                    idx_with_latency = np.clip(idx_with_latency, start_idx, end_idx - 1)
+                    interpolation_start = max(int(idx_with_latency[0]) - 5, start_idx)
+                    interpolation_end = min(int(idx_with_latency[-1]) + 2 + 5, end_idx)
+
+                    if 'rot' in key:
+                        rot_preprocess, rot_postprocess = None, None
+                        if key.endswith('quat'):
+                            rot_preprocess = st.Rotation.from_quat
+                            rot_postprocess = st.Rotation.as_quat
+                        elif key.endswith('axis_angle'):
+                            rot_preprocess = st.Rotation.from_rotvec
+                            rot_postprocess = st.Rotation.as_rotvec
+                        else:
+                            raise NotImplementedError
+                        slerp = st.Slerp(
+                            times=np.arange(interpolation_start, interpolation_end),
+                            rotations=rot_preprocess(input_arr[interpolation_start: interpolation_end]))
+                        output = rot_postprocess(slerp(idx_with_latency))
+                    else:
+                        interp = si.interp1d(
+                            x=np.arange(interpolation_start, interpolation_end),
+                            y=input_arr[interpolation_start: interpolation_end],
+                            axis=0, assume_sorted=True)
+                        output = interp(idx_with_latency)
                 
             result[key] = output
 

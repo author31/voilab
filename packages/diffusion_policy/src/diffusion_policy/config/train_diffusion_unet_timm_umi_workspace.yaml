@@ -116,17 +116,19 @@ ema:
 
 dataloader:
   batch_size: 64
-  num_workers: 8
+  num_workers: ${eval:'min(16, max(4, (__import__("os").cpu_count() or 8) // 2))'}
   shuffle: True
   pin_memory: True
   persistent_workers: True
+  prefetch_factor: 4
 
 val_dataloader:
   batch_size: 64
-  num_workers: 8
+  num_workers: ${eval:'min(16, max(4, (__import__("os").cpu_count() or 8) // 2))'}
   shuffle: False
   pin_memory: True
   persistent_workers: True
+  prefetch_factor: 2
 
 # dataloader:
 #   batch_size: 64
@@ -174,6 +176,11 @@ training:
   max_val_steps: null
   # misc
   tqdm_interval_sec: 1.0
+  log_every: 10
+  mixed_precision: "no"
+  allow_tf32: True
+  cudnn_benchmark: True
+  set_float32_matmul_precision: high
 
 logging:
   project: umi
@@ -205,4 +212,3 @@ hydra:
   sweep:
     dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_name}
     subdir: ${hydra.job.num}
-

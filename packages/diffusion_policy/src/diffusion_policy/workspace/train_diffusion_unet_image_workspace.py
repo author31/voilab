@@ -90,7 +90,21 @@ class TrainDiffusionUnetImageWorkspace(BaseWorkspace):
     def run(self):
         cfg = copy.deepcopy(self.cfg)
 
-        accelerator = Accelerator(log_with='wandb')
+        if torch.cuda.is_available():
+            allow_tf32 = bool(cfg.training.get('allow_tf32', False))
+            torch.backends.cuda.matmul.allow_tf32 = allow_tf32
+            if hasattr(torch.backends.cudnn, 'allow_tf32'):
+                torch.backends.cudnn.allow_tf32 = allow_tf32
+            torch.backends.cudnn.benchmark = bool(cfg.training.get('cudnn_benchmark', False))
+
+        matmul_precision = cfg.training.get('set_float32_matmul_precision', None)
+        if matmul_precision:
+            torch.set_float32_matmul_precision(matmul_precision)
+
+        accelerator = Accelerator(
+            log_with='wandb',
+            mixed_precision=cfg.training.get('mixed_precision', 'no')
+        )
         wandb_cfg = OmegaConf.to_container(cfg.logging, resolve=True)
         wandb_cfg.pop('project')
         accelerator.init_trackers(
@@ -204,6 +218,8 @@ class TrainDiffusionUnetImageWorkspace(BaseWorkspace):
             cfg.training.val_every = 1
             cfg.training.sample_every = 1
 
+        log_every = max(1, int(cfg.training.get('log_every', 1)))
+
         # training loop
         log_path = os.path.join(self.output_dir, 'logs.json.txt')
         with JsonLogger(log_path) as json_logger:
@@ -216,7 +232,9 @@ class TrainDiffusionUnetImageWorkspace(BaseWorkspace):
                     self.model.obs_encoder.eval()
                     self.model.obs_encoder.requires_grad_(False)
 
-                train_losses = list()
+                self.optimizer.zero_grad(set_to_none=True)
+                train_loss_sum = torch.zeros((), device=device, dtype=torch.float32)
+                train_loss_count = 0
                 with tqdm.tqdm(train_dataloader, desc=f"Training epoch {self.epoch}", 
                         leave=False, mininterval=cfg.training.tqdm_interval_sec) as tepoch:
                     for batch_idx, batch in enumerate(tepoch):
@@ -229,35 +247,46 @@ class TrainDiffusionUnetImageWorkspace(BaseWorkspace):
                         # compute loss
                         raw_loss = self.model(batch)
                         loss = raw_loss / cfg.training.gradient_accumulate_every
-                        loss.backward()
+                        accelerator.backward(loss)
+
+                        is_last_batch = (batch_idx == (len(train_dataloader)-1))
+                        should_step = (
+                            ((batch_idx + 1) % cfg.training.gradient_accumulate_every == 0)
+                            or is_last_batch
+                        )
 
                         # step optimizer
-                        if self.global_step % cfg.training.gradient_accumulate_every == 0:
+                        if should_step:
                             self.optimizer.step()
-                            self.optimizer.zero_grad()
+                            self.optimizer.zero_grad(set_to_none=True)
                             lr_scheduler.step()
                         
                         # update ema
-                        if cfg.training.use_ema:
+                        if cfg.training.use_ema and should_step:
                             ema.step(accelerator.unwrap_model(self.model))
 
+                        train_loss_sum = train_loss_sum + raw_loss.detach().float()
+                        train_loss_count += 1
+
                         # logging
-                        raw_loss_cpu = raw_loss.item()
-                        tepoch.set_postfix(loss=raw_loss_cpu, refresh=False)
-                        train_losses.append(raw_loss_cpu)
+                        should_log_step = (
+                            is_last_batch
+                            or (self.global_step % log_every == 0)
+                        )
                         step_log = {
-                            'train_loss': raw_loss_cpu,
                             'global_step': self.global_step,
                             'epoch': self.epoch,
                             'lr': lr_scheduler.get_last_lr()[0]
                         }
-
-                        is_last_batch = (batch_idx == (len(train_dataloader)-1))
-                        if not is_last_batch:
+                        if should_log_step:
+                            raw_loss_cpu = raw_loss.detach().float().item()
+                            tepoch.set_postfix(loss=raw_loss_cpu, refresh=False)
+                            step_log['train_loss'] = raw_loss_cpu
+                        if should_log_step and not is_last_batch:
                             # log of last step is combined with validation and rollout
                             accelerator.log(step_log, step=self.global_step)
                             json_logger.log(step_log)
-                            self.global_step += 1
+                        self.global_step += 1
 
                         if (cfg.training.max_train_steps is not None) \
                             and batch_idx >= (cfg.training.max_train_steps-1):
@@ -265,7 +294,7 @@ class TrainDiffusionUnetImageWorkspace(BaseWorkspace):
 
                 # at the end of each epoch
                 # replace train_loss with epoch average
-                train_loss = np.mean(train_losses)
+                train_loss = (train_loss_sum / max(train_loss_count, 1)).item()
                 step_log['train_loss'] = train_loss
 
                 # ========= eval for this epoch ==========

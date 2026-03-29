@@ -196,10 +196,12 @@ class UmiDataset(BaseDataset):
         # enumerate the dataset and save low_dim data
         data_cache = {key: list() for key in self.lowdim_keys + ['action']}
         self.sampler.ignore_rgb(True)
+        normalizer_workers = min(32, max(1, (os.cpu_count() or 1) // 2))
         dataloader = torch.utils.data.DataLoader(
             dataset=self,
             batch_size=64,
-            num_workers=32,
+            num_workers=normalizer_workers,
+            persistent_workers=normalizer_workers > 0,
         )
         for batch in tqdm(dataloader, desc='iterating dataset to get normalization'):
             for key in self.lowdim_keys:
@@ -263,11 +265,13 @@ class UmiDataset(BaseDataset):
             # move channel last to channel first
             # T,H,W,C
             # convert uint8 image to float32
-            obs_dict[key] = np.moveaxis(data[key], -1, 1).astype(np.float32) / 255.
+            rgb = np.moveaxis(data[key], -1, 1).astype(np.float32, copy=False)
+            rgb /= 255.0
+            obs_dict[key] = rgb
             # T,C,H,W
             del data[key]
         for key in self.sampler_lowdim_keys:
-            obs_dict[key] = data[key].astype(np.float32)
+            obs_dict[key] = data[key].astype(np.float32, copy=False)
             del data[key]
         
         # generate relative pose between two ees
@@ -298,8 +302,8 @@ class UmiDataset(BaseDataset):
         # generate relative pose with respect to episode start
         for robot_id in range(self.num_robot):
             # HACK: add noise to episode start pose
-            if (f'robot{other_robot_id}_eef_pos_wrt_start' not in self.shape_meta['obs']) and \
-                (f'robot{other_robot_id}_eef_rot_axis_angle_wrt_start' not in self.shape_meta['obs']):
+            if (f'robot{robot_id}_eef_pos_wrt_start' not in self.shape_meta['obs']) and \
+                (f'robot{robot_id}_eef_rot_axis_angle_wrt_start' not in self.shape_meta['obs']):
                 continue
             
             # convert pose to mat
@@ -367,6 +371,6 @@ class UmiDataset(BaseDataset):
         
         torch_data = {
             'obs': dict_apply(obs_dict, torch.from_numpy),
-            'action': torch.from_numpy(data['action'].astype(np.float32))
+            'action': torch.from_numpy(data['action'].astype(np.float32, copy=False))
         }
         return torch_data
