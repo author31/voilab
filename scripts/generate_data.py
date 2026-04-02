@@ -44,9 +44,6 @@ parser.add_argument(
     default=-0.07,
     help="Z-axis offset for coordinate calibration (meters)",
 )
-parser.add_argument(
-    "--teleop", type=bool, default=False, help="Whether to use teleop mode"
-)
 args = parser.parse_args()
 
 from isaacsim import SimulationApp
@@ -89,7 +86,6 @@ import lula
 from pxr import UsdPhysics
 from umi_replay import set_gripper_width
 from motion_plan import PickPlace
-from teleop_controller import TeleopController
 
 
 assets_root_path = get_assets_root_path()
@@ -181,29 +177,6 @@ def apply_ik_solution(panda, art_kine_solver, target_pos, target_quat_wxyz):
         return True
 
     return False
-
-
-def ik_solution(panda, art_kine_solver, target_pos, target_quat_wxyz):
-    """
-    Compute IK solution for target pose.
-
-    Args:
-        panda: Panda articulation object
-        art_kine_solver: ArticulationKinematicsSolver instance
-        target_pos: Target position (3,)
-        target_quat_wxyz: Target orientation as quaternion WXYZ (4,)
-
-    Returns:
-        ArticulationAction or None: IK solution action if successful, else None
-    """
-    action, success = art_kine_solver.compute_inverse_kinematics(
-        target_position=target_pos, target_orientation=target_quat_wxyz
-    )
-
-    if success:
-        return action
-
-    return None
 
 
 class RigidPrimManager:
@@ -659,17 +632,13 @@ def main():
                 obj_prim = object_prims[object_name]
                 obj_pos = np.array(obj["position"], dtype=np.float64)
 
-                # Fixed orientation for motin planning mode for now
-                if not args.teleop:
-                    orientation = np.array([1.0, 0.0, 0.0, 0.0])  # w, x, y, z
-                    if args.task == "kitchen":
-                        obj_pos[0] -= 0.05
-                    else:
-                        obj_pos[2] -= 0.25
-                    orientation = get_object_orientation(object_name)
-                    obj_prim.set_world_pose(position=obj_pos, orientation=orientation)
+                orientation = np.array([1.0, 0.0, 0.0, 0.0])  # w, x, y, z
+                if args.task == "kitchen":
+                    obj_pos[0] -= 0.05
                 else:
-                    obj_prim.set_world_pose(position=obj_pos)
+                    obj_pos[2] -= 0.25
+                orientation = get_object_orientation(object_name)
+                obj_prim.set_world_pose(position=obj_pos, orientation=orientation)
 
                 print(f"[ObjectLoader] Positioned {object_name} at {obj_pos}")
 
@@ -706,21 +675,12 @@ def main():
                 f"Unknown task, expected one of 'kitchen', 'dining-room', 'living-room', got {args.task}"
             )
 
-        # Motion planner initialization
-        if not args.teleop:
-            motion_planner = registry.get_motion_planner(
-                args.task,
-                cfg,
-                get_object_world_pose_fn=get_object_world_pose,
-                pickplace=pickplace,
-            )
-        else:
-            teleop_controller = TeleopController(
-                get_end_effector_pose_fn=get_end_effector_pos_quat_wxyz,
-                ik_solution_fn=ik_solution,
-                init_ee_pos=INIT_EE_POS,
-                init_ee_quat_wxyz=INIT_EE_QUAT_WXYZ,
-            )
+        motion_planner = registry.get_motion_planner(
+            args.task,
+            cfg,
+            get_object_world_pose_fn=get_object_world_pose,
+            pickplace=pickplace,
+        )
 
         # Initialize end-effector pose
         calibrate_robot_base(panda, lula_solver)
@@ -742,68 +702,29 @@ def main():
         episode_start_pose = None
         episode_end_pose = None
 
-        if not args.teleop:
-            print("[Main] Recording episode in motion planning mode...")
-            while simulation_app.is_running():
-                # Predefine motion planning to collect data
-                motion_planner.step(panda, lula_solver, art_kine_solver)
+        print("[Main] Recording episode in motion planning mode...")
+        while simulation_app.is_running():
+            motion_planner.step(panda, lula_solver, art_kine_solver)
 
-                step_world(world, render=True)
-                eef_pose6d = record_state(
-                    camera,
-                    panda,
-                    lula_solver,
-                    art_kine_solver,
-                    rgb_list,
-                    eef_pos_list,
-                    eef_rot_list,
-                    gripper_list,
-                )
+            step_world(world, render=True)
+            eef_pose6d = record_state(
+                camera,
+                panda,
+                lula_solver,
+                art_kine_solver,
+                rgb_list,
+                eef_pos_list,
+                eef_rot_list,
+                gripper_list,
+            )
 
-                if episode_start_pose is None:
-                    episode_start_pose = eef_pose6d.copy()
+            if episode_start_pose is None:
+                episode_start_pose = eef_pose6d.copy()
 
-                if motion_planner.is_done():
-                    episode_end_pose = eef_pose6d.copy()
-                    print("[Main] Motion plan finished")
-                    break
-        else:
-            teleop_controller.print_instructions()
-
-            while simulation_app.is_running():
-                teleop_controller.step(panda, lula_solver, art_kine_solver)
-
-                step_world(world, render=True)
-
-                if teleop_controller.started():
-                    eef_pose6d = record_state(
-                        camera,
-                        panda,
-                        lula_solver,
-                        art_kine_solver,
-                        rgb_list,
-                        eef_pos_list,
-                        eef_rot_list,
-                        gripper_list,
-                    )
-
-                if teleop_controller.requested_restart():
-                    print(
-                        "[Main] Teleop control requested restart, resetting episode..."
-                    )
-                    break
-
-                if episode_start_pose is None and teleop_controller.started():
-                    print("[Main] Teleop control started, beginning recording...")
-                    episode_start_pose = eef_pose6d.copy()
-
-                if teleop_controller.is_done():
-                    episode_end_pose = eef_pose6d.copy()
-                    print("[Main] Teleop control finished")
-                    break
-
-            if teleop_controller.requested_restart():
-                continue
+            if motion_planner.is_done():
+                episode_end_pose = eef_pose6d.copy()
+                print("[Main] Motion plan finished")
+                break
 
         if episode_end_pose is None and eef_pos_list:
             episode_end_pose = np.concatenate([eef_pos_list[-1], eef_rot_list[-1]])
