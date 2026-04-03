@@ -27,6 +27,18 @@ parser.add_argument(
 )
 parser.add_argument("--session_dir", type=str, default=None)
 parser.add_argument(
+    "--distance",
+    type=float,
+    default=None,
+    help="Kitchen only: clearance above the blue cup for the top-down approach.",
+)
+parser.add_argument(
+    "--grasp-angles",
+    type=str,
+    default=None,
+    help="Kitchen only: comma-separated yaw angles in degrees, e.g. 0,15,30.",
+)
+parser.add_argument(
     "--x_offset",
     type=float,
     default=0.1,
@@ -326,6 +338,27 @@ def _normalize_object_name(name: str) -> str:
     return name.strip().lower().replace(" ", "_")
 
 
+def _parse_grasp_angles(raw_angles: str) -> list[float]:
+    if raw_angles is None:
+        raise ValueError("--grasp-angles is required for the kitchen task")
+
+    tokens = [token.strip() for token in raw_angles.split(",")]
+    tokens = [token for token in tokens if token]
+    if not tokens:
+        raise ValueError("--grasp-angles must contain at least one numeric angle")
+
+    try:
+        return [float(token) for token in tokens]
+    except ValueError as exc:
+        raise ValueError(
+            f"Invalid --grasp-angles value '{raw_angles}'. Expected comma-separated numbers."
+        ) from exc
+
+
+def _format_angle_key(angle_deg: float) -> str:
+    return format(float(angle_deg), "g")
+
+
 def step_world(world, render=True, sleep_dt=0.01):
     """Advance the simulation world by one step."""
     world.step(render=render)
@@ -500,6 +533,13 @@ def main():
     print(f"[Main] Looking for object poses at: {object_poses_path}")
 
     preload_objects = cfg.get("environment_vars", {}).get("PRELOAD_OBJECTS", [])
+    if args.task == "kitchen":
+        if args.distance is None or args.distance <= 0.0:
+            raise ValueError("--distance must be positive for the kitchen task")
+        grasp_angles = _parse_grasp_angles(args.grasp_angles)
+    else:
+        grasp_angles = []
+
     preload_by_name = {}
     for entry in preload_objects:
         assert isinstance(entry, dict), f"PRELOAD_OBJECTS entry must be a dict: {entry}"
@@ -553,25 +593,66 @@ def main():
 
     with open(object_poses_path, "r") as f:
         object_pose_records = json.load(f)
-    total_episodes = len(object_pose_records)
-    print(f"[Main] Replay initialized for {total_episodes} episodes.")
+    total_layout_episodes = len(object_pose_records)
+
+    if args.task == "kitchen":
+        episode_specs = []
+        for layout_episode_idx in range(total_layout_episodes):
+            for grasp_angle_deg in grasp_angles:
+                episode_specs.append(
+                    {
+                        "generated_episode_idx": len(episode_specs),
+                        "layout_episode_idx": layout_episode_idx,
+                        "grasp_angle_deg": float(grasp_angle_deg),
+                    }
+                )
+        grasp_angle_counts = {_format_angle_key(angle): 0 for angle in grasp_angles}
+        num_generated_episodes = len(episode_specs)
+        print(
+            f"[Main] Replay initialized for {total_layout_episodes} layout episodes "
+            f"and {num_generated_episodes} generated kitchen episodes."
+        )
+    else:
+        episode_specs = [
+            {
+                "generated_episode_idx": episode_idx,
+                "layout_episode_idx": episode_idx,
+                "grasp_angle_deg": None,
+            }
+            for episode_idx in range(total_layout_episodes)
+        ]
+        grasp_angle_counts = None
+        num_generated_episodes = len(episode_specs)
+        print(f"[Main] Replay initialized for {num_generated_episodes} episodes.")
 
     # --- Main simulation loop ---
     print("[Main] Starting simulation loop...")
 
     completed_episodes = _load_progress(args.session_dir)
     episodes_to_run = [
-        ep for ep in range(total_episodes) if ep not in completed_episodes
+        spec
+        for spec in episode_specs
+        if spec["generated_episode_idx"] not in completed_episodes
     ]
     collected_episodes = []
 
     idx = 0
     while idx < len(episodes_to_run):
-        episode_idx = episodes_to_run[idx]
+        episode_spec = episodes_to_run[idx]
+        generated_episode_idx = episode_spec["generated_episode_idx"]
+        layout_episode_idx = episode_spec["layout_episode_idx"]
+        grasp_angle_deg = episode_spec["grasp_angle_deg"]
         if not simulation_app.is_running():
             break
 
-        print(f"[Main] Starting episode {episode_idx}")
+        if args.task == "kitchen":
+            print(
+                "[Main] Starting generated episode "
+                f"{generated_episode_idx} (layout={layout_episode_idx}, "
+                f"grasp_angle_deg={grasp_angle_deg})"
+            )
+        else:
+            print(f"[Main] Starting episode {generated_episode_idx}")
         world.reset()
         prim_mgr.clear()
 
@@ -586,15 +667,17 @@ def main():
         if object_poses_path and os.path.exists(object_poses_path):
             object_transforms = load_object_transforms_from_json(
                 object_poses_path,
-                episode_index=episode_idx,
+                episode_index=layout_episode_idx,
                 aruco_tag_pose=aruco_tag_pose,
                 cfg=cfg,
             )
 
             if len(object_transforms) == 0:
                 print(
-                    f"[ObjectLoader] Skipping episode: {episode_idx} as objects are not constructed successfully."
+                    "[ObjectLoader] Skipping generated episode: "
+                    f"{generated_episode_idx} as objects are not constructed successfully."
                 )
+                idx += 1
                 continue
 
             for obj in object_transforms:
@@ -661,38 +744,22 @@ def main():
             task=args.task,
         )
 
+        planner_kwargs = None
         if args.task == "kitchen":
-            INIT_EE_POS = curr_pos + np.array([-0.16, 0.0, 0.13])
-            INIT_EE_QUAT_WXYZ = np.array([0.0081739, -0.9366365, 0.350194, 0.0030561])
-        elif args.task == "dining-room":
-            INIT_EE_POS = curr_pos + np.array([-0.16, 0.0, 0.13])
-            INIT_EE_QUAT_WXYZ = np.array([0.0081739, -0.9366365, 0.350194, 0.0030561])
-        elif args.task == "living-room":
-            INIT_EE_POS = curr_pos + np.array([-0.1, 0.2, 0.20])
-            INIT_EE_QUAT_WXYZ = np.array([0.0081739, -0.9366365, 0.350194, 0.0030561])
-        else:
-            raise RuntimeError(
-                f"Unknown task, expected one of 'kitchen', 'dining-room', 'living-room', got {args.task}"
-            )
-
+            planner_kwargs = {
+                "distance": args.distance,
+                "grasp_angle_deg": grasp_angle_deg,
+            }
         motion_planner = registry.get_motion_planner(
             args.task,
             cfg,
             get_object_world_pose_fn=get_object_world_pose,
             pickplace=pickplace,
+            planner_kwargs=planner_kwargs,
         )
 
         # Initialize end-effector pose
         calibrate_robot_base(panda, lula_solver)
-        success = apply_ik_solution(
-            panda,
-            art_kine_solver,
-            INIT_EE_POS,
-            INIT_EE_QUAT_WXYZ,
-        )
-
-        if not success:
-            print("[Init] WARNING: Failed to apply EE initial pose")
 
         rgb_list = []
         eef_pos_list = []
@@ -730,13 +797,17 @@ def main():
             episode_end_pose = np.concatenate([eef_pos_list[-1], eef_rot_list[-1]])
 
         if not rgb_list:
-            print(f"[Main] WARNING: No frames captured for episode {episode_idx}")
+            print(
+                f"[Main] WARNING: No frames captured for generated episode {generated_episode_idx}"
+            )
+            idx += 1
             continue
 
         demo_start_list = np.repeat(episode_start_pose[None, :], len(rgb_list), axis=0)
         demo_end_list = np.repeat(episode_end_pose[None, :], len(rgb_list), axis=0)
         episode_record = {
-            "episode_idx": episode_idx,
+            "episode_idx": generated_episode_idx,
+            "layout_episode_idx": layout_episode_idx,
             "rgb": np.stack(rgb_list, 0),
             "eef_pos": np.stack(eef_pos_list, 0),
             "eef_rot": np.stack(eef_rot_list, 0),
@@ -750,13 +821,15 @@ def main():
 
         if episode_success:
             print("[Main] Task success")
+            if args.task == "kitchen":
+                grasp_angle_counts[_format_angle_key(grasp_angle_deg)] += 1
         else:
             print("[Main] Task fail")
 
         collected_episodes.append(episode_record)
 
         if episode_success:
-            completed_episodes.add(episode_idx)
+            completed_episodes.add(generated_episode_idx)
             _save_progress(args.session_dir, completed_episodes)
 
         idx += 1
@@ -766,6 +839,19 @@ def main():
     if successful_episodes:
         output_zarr = os.path.join(args.session_dir, "simulation_dataset.zarr.zip")
         save_multi_episode_dataset(output_zarr, successful_episodes)
+
+    if args.task == "kitchen":
+        summary_path = os.path.join(args.session_dir, "kitchen_generation_summary.json")
+        summary_payload = {
+            "distance": args.distance,
+            "num_generated_episodes": num_generated_episodes,
+            "grasp_angle_counts": {
+                key: grasp_angle_counts[key] for key in sorted(grasp_angle_counts)
+            },
+        }
+        with open(summary_path, "w", encoding="utf-8") as f:
+            json.dump(summary_payload, f, indent=2)
+        print(f"[Main] Saved kitchen generation summary to: {summary_path}")
 
     simulation_app.close()
 

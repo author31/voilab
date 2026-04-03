@@ -1,9 +1,7 @@
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 from umi_replay import set_gripper_width
-from utils import set_prim_world_pose, get_preload_prim_path
-from scipy.spatial.transform import Rotation as R
-from pynput import keyboard
+from utils import get_object_world_boundary, get_preload_prim_path
 
 class PickPlace:
     GRIPPER_THRESHOLDS = {
@@ -77,11 +75,13 @@ class PickPlace:
         self.T_ee_to_obj = None
         self.attached_object_path = None
         self.target_object_path = None
+        self.skip_place_descend = False
 
     
     def start(self, pick_above, pick, lift_offset, place_above, place, 
             attached_object_path=None, target_object_path=None,
-            fix_target_pose=None, retreat_after_place=False):
+            fix_target_pose=None, retreat_after_place=False,
+            grasp_quat_wxyz=None, skip_place_descend=False):
         self.pick_above = pick_above
         self.pick = pick
         self.place_above = place_above
@@ -92,6 +92,9 @@ class PickPlace:
         self.target_object_path = target_object_path
         self.fix_target_pose = fix_target_pose
         self.retreat_after_place = retreat_after_place
+        self.skip_place_descend = skip_place_descend
+        if grasp_quat_wxyz is not None:
+            self.grasp_quat = np.asarray(grasp_quat_wxyz, dtype=np.float64)
 
         self.attached = False
         self.T_ee_to_obj = None
@@ -103,7 +106,40 @@ class PickPlace:
         self.close_counter = 0
         self.prev_grip_width = None
         self.stall_count = 0
-    
+
+    def _resolve_default_grasp_quat(self):
+        if self.grasp_mode == "object_based" and self.attached_object_path is not None:
+            return self._compute_grasp_quat_from_object(self.attached_object_path)
+        return np.asarray(self.grasp_quat, dtype=np.float64)
+
+    def _plan_joint_trajectory(
+        self,
+        p_start,
+        q_start_wxyz,
+        p_goal,
+        q_goal_wxyz,
+        ik,
+        step,
+        *,
+        require_full=False,
+    ):
+        cart_traj = self.plan(p_start, q_start_wxyz, p_goal, q_goal_wxyz, step)
+
+        traj = []
+        for wp in cart_traj:
+            action, success = ik.compute_inverse_kinematics(wp[:3], wp[3:])
+            if not success:
+                if require_full:
+                    return None
+                print("[Warning] IK failed for waypoint")
+                continue
+            qpos = np.array(action.joint_positions, dtype=np.float32)
+            traj.append(qpos)
+
+        if not traj:
+            return None
+        return traj
+
     def _compute_grasp_quat_from_object(self, obj_path):
         # --- 1. Get object pose in world frame ---
         T_obj = self.get_obj_pose(obj_path)
@@ -187,29 +223,31 @@ class PickPlace:
         quat = R.from_matrix(R_ee).as_quat(scalar_first=True)
         return quat
 
-    def _run_traj(self, panda, lula, ik, target, step):
-        import numpy as np
+    def _run_traj(self, panda, lula, ik, target, step, target_quat_wxyz=None):
         from isaacsim.core.utils.types import ArticulationAction
 
         # ---------- 初始化 trajectory ----------
         if not self.traj:
-
-            # 重新計算 grasp quaternion（跟著物體姿態）
-            if self.attached_object_path is not None and self.task in ["dining_room"]:
-                self.grasp_quat = self._compute_grasp_quat_from_object(self.attached_object_path)
-
             ee_pos, ee_quat = self.get_ee_pose(panda, lula, ik)
+            target_quat = (
+                self._resolve_default_grasp_quat()
+                if target_quat_wxyz is None
+                else np.asarray(target_quat_wxyz, dtype=np.float64)
+            )
 
-            # 用新的 grasp_quat 進行 motion planning
-            cart_traj = self.plan(ee_pos, ee_quat, target, self.grasp_quat, step)
-
-            self.traj = []
-            for wp in cart_traj:
-                action, success = ik.compute_inverse_kinematics(wp[:3], wp[3:])
-                if not success:
-                    raise RuntimeError("IK failed for waypoint")
-                qpos = np.array(action.joint_positions, dtype=np.float32)
-                self.traj.append(qpos)
+            self.traj = self._plan_joint_trajectory(
+                ee_pos,
+                ee_quat,
+                target,
+                target_quat,
+                ik,
+                step,
+                require_full=False,
+            )
+            if self.traj is None:
+                print("[Warning] Failed to produce a valid trajectory")
+                self.traj = []
+                return False
 
             self.i = 0
 
@@ -321,12 +359,14 @@ class PickPlace:
     # ---------------- PHASE FUNCTIONS ----------------
     def _step_move_above(self, panda, lula, ik):
         target = self._object_target(self.attached_object_path, self.pick_above)
-        if self._run_traj(panda, lula, ik, target, self.step_move):
+        target_quat = None
+        if self._run_traj(panda, lula, ik, target, self.step_move, target_quat):
             self.phase = "descend"
 
     def _step_descend(self, panda, lula, ik):
         target = self._object_target(self.attached_object_path, self.pick)
-        if self._run_traj(panda, lula, ik, target, self.step_descend):
+        target_quat = None
+        if self._run_traj(panda, lula, ik, target, self.step_descend, target_quat):
             self.phase = "close"
             self.close_counter = 0
             self.prev_grip_width = None
@@ -360,7 +400,8 @@ class PickPlace:
     def _step_move_place(self, panda, lula, ik):
         target = self._place_target(self.place_above)
         if self._run_traj(panda, lula, ik, target, self.step_move):
-            self.phase = "descend_place"
+            self.phase = "release" if self.skip_place_descend else "descend_place"
+            self.cnt = 0
 
     def _step_descend_place(self, panda, lula, ik):
         target = self._place_target(self.place)
@@ -460,11 +501,25 @@ class DiningRoomMotionPlanner:
         return self.current_idx >= len(self.cutlery)
 
 class KitchenMotionPlanner:
-    def __init__(self, cfg, *, get_object_world_pose_fn, pickplace):
+    CUP_GRASP_HEIGHT_RATIO = 0.66
+    CUP_STACK_CLEARANCE = 0.01
+    CUP_LIFT_HEIGHT = 0.20
+
+    def __init__(
+        self,
+        cfg,
+        *,
+        get_object_world_pose_fn,
+        pickplace,
+        distance=0.20,
+        grasp_angle_deg=0.0,
+    ):
         self.cfg = cfg
         self.get_object_pose = get_object_world_pose_fn
         self.pickplace = pickplace
         self.started = False
+        self.distance = float(distance)
+        self.grasp_angle_deg = float(grasp_angle_deg)
 
         env = cfg.get("environment_vars", {})
         preload_objects = env.get("PRELOAD_OBJECTS", [])
@@ -480,27 +535,80 @@ class KitchenMotionPlanner:
         if self.blue is None or self.pink is None:
             raise ValueError("Missing PRELOAD_OBJECTS prim_path for kitchen cups.")
 
+    def _top_down_grasp_quat(self):
+        yaw_rad = np.radians(self.grasp_angle_deg)
+        z_ee = np.array([0.0, 0.0, -1.0], dtype=np.float64)
+        x_ee = np.array([np.cos(yaw_rad), np.sin(yaw_rad), 0.0], dtype=np.float64)
+        x_ee /= np.linalg.norm(x_ee)
+        y_ee = np.cross(z_ee, x_ee)
+        y_ee /= np.linalg.norm(y_ee)
+        R_ee = np.column_stack([x_ee, y_ee, z_ee])
+        return R.from_matrix(R_ee).as_quat(scalar_first=True)
 
-        self.pick_above_offset  = np.array([-0.0, -0.0,  0.20])
-        self.pick_offset        = np.array([-0.055, -0.08, -0.12])
-        self.lift_offset        = np.array([-0.050,   0.0,    0.4])
-        self.place_above_offset = np.array([-0.045, -0.07,  0.2])
-        self.place_offset       = np.array([-0.045, -0.07,  0.01])
-    
+    def _get_object_geometry(self, prim_path):
+        min_pt, max_pt = get_object_world_boundary(prim_path)
+        center_xy = 0.5 * (min_pt[:2] + max_pt[:2])
+        bottom_z = float(min_pt[2])
+        top_z = float(max_pt[2])
+        height = max(top_z - bottom_z, 1e-6)
+        center = np.array([center_xy[0], center_xy[1], 0.5 * (bottom_z + top_z)], dtype=np.float64)
+        return {
+            "center": center,
+            "bottom_z": bottom_z,
+            "top_z": top_z,
+            "height": height,
+        }
 
+    def _offset_from_object_pose(self, prim_path, target_position):
+        T_obj = self.get_object_pose(prim_path)
+        obj_pos = T_obj[:3, 3]
+        return np.asarray(target_position, dtype=np.float64) - obj_pos
+
+    def _build_kitchen_targets(self):
+        blue_geom = self._get_object_geometry(self.blue)
+        pink_geom = self._get_object_geometry(self.pink)
+
+        grasp_z = blue_geom["bottom_z"] + self.CUP_GRASP_HEIGHT_RATIO * blue_geom["height"]
+        pick_above = np.array(
+            [blue_geom["center"][0], blue_geom["center"][1], blue_geom["top_z"] + self.distance],
+            dtype=np.float64,
+        )
+        pick = np.array(
+            [blue_geom["center"][0], blue_geom["center"][1], grasp_z],
+            dtype=np.float64,
+        )
+
+        lift_offset = np.array([0.0, 0.0, self.CUP_LIFT_HEIGHT], dtype=np.float64)
+
+        place_z = pink_geom["top_z"] + self.CUP_STACK_CLEARANCE + self.CUP_GRASP_HEIGHT_RATIO * blue_geom["height"]
+        place = np.array(
+            [pink_geom["center"][0], pink_geom["center"][1], place_z],
+            dtype=np.float64,
+        )
+
+        return {
+            "pick_above_offset": self._offset_from_object_pose(self.blue, pick_above),
+            "pick_offset": self._offset_from_object_pose(self.blue, pick),
+            "lift_offset": lift_offset,
+            "place_offset": self._offset_from_object_pose(self.pink, place),
+            "grasp_quat_wxyz": self._top_down_grasp_quat(),
+        }
 
     def step(self, panda, lula, ik):
         if not self.started:
+            targets = self._build_kitchen_targets()
             self.pickplace.reset()
             self.pickplace.grasp_mode = "regular"
             self.pickplace.start(
-                pick_above  = self.pick_above_offset,
-                pick        = self.pick_offset,
-                lift_offset = self.lift_offset,
-                place_above = self.place_above_offset,
-                place       = self.place_offset,
+                pick_above  = targets["pick_above_offset"],
+                pick        = targets["pick_offset"],
+                lift_offset = targets["lift_offset"],
+                place_above = targets["place_offset"],
+                place       = targets["place_offset"],
                 attached_object_path = self.blue,
-                target_object_path = self.pink
+                target_object_path = self.pink,
+                grasp_quat_wxyz = targets["grasp_quat_wxyz"],
+                skip_place_descend = True,
             )
             self.started = True
             return

@@ -23,21 +23,22 @@ def get_episode_completion_fn(task_name: str):
 
 
 MOTION_PLANNER_FACTORIES = {
-    "kitchen": lambda cfg, *, get_object_world_pose_fn, pickplace: (
+    "kitchen": lambda cfg, *, get_object_world_pose_fn, pickplace, **planner_kwargs: (
         KitchenMotionPlanner(
             cfg,
             get_object_world_pose_fn=get_object_world_pose_fn,
-            pickplace=pickplace
+            pickplace=pickplace,
+            **planner_kwargs,
         )
     ),
-    "dining-room": lambda cfg, *, get_object_world_pose_fn, pickplace: (
+    "dining-room": lambda cfg, *, get_object_world_pose_fn, pickplace, **planner_kwargs: (
         DiningRoomMotionPlanner(
             cfg,
             get_object_world_pose_fn=get_object_world_pose_fn,
             pickplace=pickplace
         )
     ),
-    "living-room": lambda cfg, *, get_object_world_pose_fn, pickplace: (
+    "living-room": lambda cfg, *, get_object_world_pose_fn, pickplace, **planner_kwargs: (
         LivingRoomMotionPlanner(
             cfg,
             get_object_world_pose_fn=get_object_world_pose_fn,
@@ -53,6 +54,7 @@ def get_motion_planner(
     *,
     get_object_world_pose_fn=None,
     pickplace=None,
+    planner_kwargs=None,
 ):
     if task_name not in MOTION_PLANNER_FACTORIES:
         raise ValueError(
@@ -74,4 +76,5 @@ def get_motion_planner(
         cfg,
         get_object_world_pose_fn=get_object_world_pose_fn,
         pickplace=pickplace,
+        **(planner_kwargs or {}),
     )

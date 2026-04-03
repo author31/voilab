@@ -1,3 +1,4 @@
+import asyncio
 import argparse
 import json
 import os
@@ -32,6 +33,15 @@ parser.add_argument("--checkpoint", type=str, required=True)
 parser.add_argument(
     "--task", type=str, choices=["kitchen", "dining-room", "living-room"], required=True
 )
+parser.add_argument(
+    "--object_poses_path",
+    type=str,
+    default=None,
+    help=(
+        "Optional object_poses.json path. When provided, episode 0 positions "
+        "override PRELOAD_OBJECTS default positions for fixed-scene eval."
+    ),
+)
 args = parser.parse_args()
 
 from isaacsim import SimulationApp
@@ -51,6 +61,7 @@ from isaacsim.core.utils.extensions import enable_extension
 
 enable_extension("isaacsim.robot_motion.motion_generation")
 
+import omni.kit.app
 import isaacsim.core.utils.stage as stage_utils
 from isaacsim.core.api import World
 from isaacsim.core.prims import SingleXFormPrim
@@ -63,6 +74,9 @@ from isaacsim.robot_motion.motion_generation import (
     ArticulationKinematicsSolver,
     LulaKinematicsSolver,
 )
+from object_loader import load_object_transforms_from_json
+import omni.kit.viewport.utility as vp_util
+import omni.ui as ui
 
 # --- Constants ---
 BASE_SCENE_FP = "/workspace/voilab/assets/ED305_scene/ED305.usd"
@@ -323,17 +337,86 @@ def set_to_init_pose(manipulator, lula_solver, art_kine_solver, task_name):
     )
 
 
-def load_preload_objects(world, registry_config, stage_utils):
-    """Load objects specified in registry config's PRELOAD_OBJECTS at their default positions."""
+def _normalize_object_name(name: str) -> str:
+    return name.strip().lower().replace(" ", "_")
+
+
+def resolve_preload_objects(registry_config, object_poses_path=None):
+    """Resolve PRELOAD_OBJECTS, optionally overriding positions from object_poses.json."""
 
     env_vars = registry_config.get("environment_vars", {})
-    preload_objects = env_vars.get("PRELOAD_OBJECTS", [])
+    preload_objects = [dict(entry) for entry in env_vars.get("PRELOAD_OBJECTS", [])]
+
+    assert len(preload_objects) > 0, "Registry config got empty PRELOAD_OBJECTS"
+
+    if object_poses_path is None:
+        return preload_objects
+
+    if not os.path.exists(object_poses_path):
+        raise FileNotFoundError(
+            f"Object poses override file not found: {object_poses_path}"
+        )
+
+    aruco_tag_pose = registry_config.get("aruco_tag_pose")
+    if aruco_tag_pose is None:
+        raise ValueError("Registry config is missing aruco_tag_pose")
+
+    object_transforms = load_object_transforms_from_json(
+        object_poses_path,
+        episode_index=0,
+        aruco_tag_pose=aruco_tag_pose,
+        cfg=registry_config,
+    )
+    if len(object_transforms) == 0:
+        raise ValueError(
+            "Failed to load any valid object transforms from episode 0 of "
+            f"{object_poses_path}"
+        )
+
+    override_positions = {}
+    preload_by_name = {}
+    for entry in preload_objects:
+        raw_name = entry.get("name")
+        assert raw_name, f"Missing name for PRELOAD_OBJECTS entry: {entry}"
+        normalized_name = _normalize_object_name(raw_name)
+        preload_by_name[normalized_name] = entry
+
+    for obj in object_transforms:
+        object_name = _normalize_object_name(obj["object_name"])
+        if object_name not in preload_by_name:
+            logger.warning(
+                f"Ignoring object pose override for {object_name}; not present in PRELOAD_OBJECTS"
+            )
+            continue
+
+        override_positions[object_name] = np.array(obj["position"], dtype=np.float64)
+
+    missing_objects = [
+        entry["name"]
+        for entry in preload_objects
+        if _normalize_object_name(entry["name"]) not in override_positions
+    ]
+    if missing_objects:
+        raise ValueError(
+            "Object poses override must specify every PRELOAD_OBJECTS entry. "
+            f"Missing: {missing_objects}"
+        )
+
+    for entry in preload_objects:
+        normalized_name = _normalize_object_name(entry["name"])
+        entry["default_position"] = override_positions[normalized_name]
+
+    logger.info(
+        f"Loaded object pose overrides from {object_poses_path} for "
+        f"{len(override_positions)} objects"
+    )
+    return preload_objects
+
+
+def load_preload_objects(world, preload_objects, stage_utils):
+    """Load objects specified in PRELOAD_OBJECTS using their resolved positions."""
 
     object_prims = {}
-
-    assert len(preload_objects) > 0, (
-        f"Registry {registry_config.__name__} got empty list of PRELOAD_OBJECTS"
-    )
 
     for entry in preload_objects:
         raw_name = entry.get("name", "unknown")
@@ -378,8 +461,58 @@ def load_preload_objects(world, registry_config, stage_utils):
 
     return object_prims
 
+import omni.ui as ui
+import omni.kit.app
+from omni.kit.viewport.utility import get_viewport_from_window_name, create_viewport_window
 
-def init_environment(task_name, cfg):
+def setup_dual_viewports():
+    perspective_path = "/OmniverseKit_Persp"
+
+    # Get main viewport window
+    v1_window = ui.Workspace.get_window("Viewport")
+    if not v1_window:
+        print("Error: Main viewport window not found")
+        return
+
+    v1_api = vp_util.get_viewport_from_window_name("Viewport")
+    if v1_api:
+        v1_api.camera_path = perspective_path
+
+    # Get or create secondary viewport window
+    v2_window = ui.Workspace.get_window("Viewport 2")
+    if not v2_window:
+        v2_window = vp_util.create_viewport_window("Viewport 2")
+        # Important: Wait for UI to register the new window
+        omni.kit.app.get_app().update()  # Synchronous frame update
+
+    v2_api = vp_util.get_viewport_from_window_name("Viewport 2")
+    if v2_api:
+        v2_api.camera_path = f"{GOPRO_PRIM_PATH}/Camera"
+
+    # Ensure both windows exist before docking
+    if v1_window and v2_window:
+        # Wait for UI to stabilize before docking
+        omni.kit.app.get_app().update()
+        
+        # Attempt docking with error handling
+        try:
+            v2_window.dock_in(v1_window, ui.DockPosition.RIGHT)
+            print("Viewports docked: [Viewport (Persp)] | [Viewport 2 (Camera)]")
+        except Exception as e:
+            print(f"Docking failed: {str(e)}")
+            # Alternative docking approach if direct docking fails
+            try:
+                # Try docking after another frame
+                omni.kit.app.get_app().update()
+                v2_window.dock_in(v1_window, ui.DockPosition.RIGHT)
+                print("Viewports docked on second attempt")
+            except Exception as e2:
+                print(f"Second docking attempt failed: {str(e2)}")
+    else:
+        print("Error: Could not find one or both viewport windows for docking.")
+
+
+def init_environment(task_name, cfg, object_poses_path=None):
     assert hasattr(cfg, "shape_meta"), (
         "Missing shape_meta attribute from cfg. Please check your checkpoint."
     )
@@ -452,8 +585,11 @@ def init_environment(task_name, cfg):
     camera.initialize()
     world.reset()
 
-    # --- Load preload objects from registry ---
-    load_preload_objects(world, registry_config, stage_utils)
+    setup_dual_viewports()
+    preload_objects = resolve_preload_objects(registry_config, object_poses_path)
+
+    # --- Load preload objects from registry or override file ---
+    load_preload_objects(world, preload_objects, stage_utils)
     return world, manipulator, camera
 
 
@@ -511,6 +647,26 @@ def apply_ik_solution(manipulator, art_kine_solver, target_pos, target_quat_wxyz
     return False
 
 
+def wait_for_start_command():
+    """Block until the operator types 'start'."""
+    prompt = "Type 'start' and press Enter to begin inferencing: "
+    while True:
+        try:
+            user_input = input(prompt).strip().lower()
+        except EOFError as exc:
+            raise RuntimeError("EOF received while waiting for 'start' input.") from exc
+        except KeyboardInterrupt as exc:
+            raise RuntimeError(
+                "Interrupted while waiting for 'start' input."
+            ) from exc
+
+        if user_input == "start":
+            logger.info("Received start command. Beginning inference.")
+            return
+
+        logger.info("Inference has not started. Enter exactly 'start' to continue.")
+
+
 def main():
     logger.info("Initializing inference Workspace.")
     payload = torch.load(open(args.checkpoint, "rb"), pickle_module=dill)
@@ -539,7 +695,9 @@ def main():
     # set inference params
     logger.info("Policy initialized successfully.")
 
-    world, manipulator, camera = init_environment(args.task, cfg)
+    world, manipulator, camera = init_environment(
+        args.task, cfg, args.object_poses_path
+    )
 
     # Initialize step counter for debug image saving
     inference_step_counter = 0
@@ -554,7 +712,7 @@ def main():
     action_pose_repr = "relative"  # Actions are in relative frame
     tx_robot1_robot0 = None  # Single robot, no inter-robot transform
 
-    set_to_init_pose(manipulator, lula_solver, art_kine_solver, args.task)
+    # set_to_init_pose(manipulator, lula_solver, art_kine_solver, args.task)
     # Warm up buffer (run sim steps before inference)
     for _ in range(50):
         world.step(render=True)
@@ -599,7 +757,8 @@ def main():
         INIT_EE_QUAT_WXYZ,
     )
 
-    time.sleep(5)
+    time.sleep(1)
+    wait_for_start_command()
 
     while simulation_app.is_running():
         world.step(render=True)
@@ -647,7 +806,7 @@ def main():
         base_pos, base_quat = manipulator.get_world_pose()
         T_base_world = pose_to_transform_matrix(base_pos, base_quat)
 
-        for step_idx in range(n_action_steps):
+        for step_idx in range(3):
             action_step = action[step_idx]
 
             # Extract pose and gripper from action (in robot base frame)

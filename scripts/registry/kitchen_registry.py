@@ -26,14 +26,14 @@ class KitchenTaskRegistry:
             "name": "pink cup",
             "assets": "cup_pink.usd",
             "prim_path": "/World/pink_cup",
-            "default_position": [4.9652, 2.35, 0.92],
+            "default_position": [4.9652, 2.55, 0.92],
             "quat_wxyz": np.array([1.0, 0.0, 0.0, 0.0]),
         },
         {
             "name": "blue cup",
             "assets": "cup_blue.usd",
             "prim_path": "/World/blue_cup",
-            "default_position": [4.9652, 2.55, 0.92],
+            "default_position": [4.9652, 2.1, 0.92],
             "quat_wxyz": np.array([1.0, 0.0, 0.0, 0.0]),
         },
     ]
