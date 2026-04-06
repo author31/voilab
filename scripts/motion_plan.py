@@ -7,7 +7,7 @@ from pynput import keyboard
 
 class PickPlace:
     GRIPPER_THRESHOLDS = {
-        "kitchen": 0.038,
+        "kitchen": 0.008,
         "dining-room": 0.004,
         "living-room": 0.004,
     }
@@ -225,6 +225,7 @@ class PickPlace:
             panda.gripper.apply_action(
                     ArticulationAction(
                         joint_positions=np.array([self.close_width, self.close_width], dtype=np.float32),
+                        joint_efforts=np.array([-20.0, -20.0], dtype=np.float32),
                         joint_indices=np.array([7, 8])
                     )
                 )

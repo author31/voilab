@@ -7,14 +7,14 @@ services:
       - .:/workspace/voilab
       - /workspace/voilab/.venv
       - /tmp/.X11-unix:/tmp/.X11-unix
-      - /usr/share/vulkan/icd.d:/usr/share/vulkan/icd.d:ro
+      - /etc/vulkan/icd.d/nvidia_icd.json:/etc/vulkan/icd.d/nvidia_icd.json:ro
     stdin_open: true
     tty: true
     environment:
       - OMNI_KIT_ACCEPT_EULA=Y
       - PRIVACY_CONSENT=Y
       - DISPLAY=${DISPLAY:-:1}
-      - VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json
+      - VK_ICD_FILENAMES=/etc/vulkan/icd.d/nvidia_icd.json
       - NVIDIA_DRIVER_CAPABILITIES=all,graphics,display,utility,compute
       - XAUTHORITY=${XAUTHORITY:-$HOME/.Xauthority}
       - ROS_LOCALHOST_ONLY=0
@@ -29,7 +29,6 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
-    runtime: nvidia
     network_mode: host
 
   voilab-workspace:
@@ -39,14 +38,14 @@ services:
     volumes:
       - .:/workspace/voilab
       - /tmp/.X11-unix:/tmp/.X11-unix
-      - /usr/share/vulkan/icd.d:/usr/share/vulkan/icd.d:ro
+      - /etc/vulkan/icd.d/nvidia_icd.json:/etc/vulkan/icd.d/nvidia_icd.json:ro
     stdin_open: true
     tty: true
     environment:
       - ACCEPT_EULA=Y
       - PRIVACY_CONSENT=Y
       - DISPLAY=${DISPLAY:-:1}
-      - VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json
+      - VK_ICD_FILENAMES=/etc/vulkan/icd.d/nvidia_icd.json
       - NVIDIA_DRIVER_CAPABILITIES=all,graphics,display,utility,compute
       - ROS_LOCALHOST_ONLY=0
       - ROS_DOMAIN_ID=0
@@ -58,7 +57,6 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
-    runtime: nvidia
     network_mode: host
     command: >
       bash -c "source /opt/ros/humble/setup.bash &&
