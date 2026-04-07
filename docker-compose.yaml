@@ -7,7 +7,7 @@ services:
       - .:/workspace/voilab
       - /workspace/voilab/.venv
       - /tmp/.X11-unix:/tmp/.X11-unix
-      - /etc/vulkan/icd.d/nvidia_icd.json:/etc/vulkan/icd.d/nvidia_icd.json:ro
+      - ${NVIDIA_ICD_JSON:-/usr/share/vulkan/icd.d/nvidia_icd.json}:/etc/vulkan/icd.d/nvidia_icd.json:ro
     stdin_open: true
     tty: true
     environment:

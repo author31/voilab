@@ -70,6 +70,21 @@ launch-workspace-force:
 	@echo "Launching Docker workspace for development (force rebuild)..."
 	@./launch_workspace.sh --force-rebuild
 
+.PHONY: launch-isaac
+launch-isaac:
+	@set -e; \
+	if [ -f /usr/share/vulkan/icd.d/nvidia_icd.json ]; then \
+		ICD_JSON=/usr/share/vulkan/icd.d/nvidia_icd.json; \
+	elif [ -f /etc/vulkan/icd.d/nvidia_icd.json ]; then \
+		ICD_JSON=/etc/vulkan/icd.d/nvidia_icd.json; \
+	else \
+		echo "Error: nvidia_icd.json not found in /usr/share/vulkan/icd.d or /etc/vulkan/icd.d"; \
+		exit 1; \
+	fi; \
+	echo "Launching Isaac Sim in detached mode with $$ICD_JSON"; \
+	xhost +local: > /dev/null 2>&1 || true; \
+	NVIDIA_ICD_JSON="$$ICD_JSON" docker compose up -d isaac-sim
+
 .PHONY make-init-submodule:
 init-submodule:
 	@echo "Initializing submodules..."
