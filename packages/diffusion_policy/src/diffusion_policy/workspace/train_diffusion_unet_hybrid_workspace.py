@@ -1,27 +1,30 @@
-import os
-from typing import Optional
-import hydra
-import torch
-from omegaconf import OmegaConf
-from torch.utils.data import DataLoader
 import copy
+from contextlib import nullcontext
+import os
+import pickle
 import random
-import wandb
-import tqdm
+from typing import Optional
+
+from accelerate import Accelerator
+import hydra
 import numpy as np
-import shutil
-from diffusion_policy.workspace.base_workspace import BaseWorkspace
+from omegaconf import OmegaConf
+import torch
+from torch.utils.data import DataLoader
+import tqdm
+
+from diffusion_policy.common.checkpoint_util import TopKCheckpointManager
+from diffusion_policy.common.json_logger import JsonLogger
+from diffusion_policy.common.pytorch_util import dict_apply
+from diffusion_policy.dataset.base_dataset import BaseDataset
+from diffusion_policy.dataset.base_dataset import BaseImageDataset
+from diffusion_policy.env_runner.base_image_runner import BaseImageRunner
+from diffusion_policy.model.common.lr_scheduler import get_scheduler
+from diffusion_policy.model.diffusion.ema_model import EMAModel
 from diffusion_policy.policy.diffusion_unet_hybrid_image_policy import (
     DiffusionUnetHybridImagePolicy,
 )
-from diffusion_policy.dataset.base_dataset import BaseImageDataset
-from diffusion_policy.dataset.base_dataset import BaseDataset
-from diffusion_policy.env_runner.base_image_runner import BaseImageRunner
-from diffusion_policy.common.checkpoint_util import TopKCheckpointManager
-from diffusion_policy.common.json_logger import JsonLogger
-from diffusion_policy.common.pytorch_util import dict_apply, optimizer_to
-from diffusion_policy.model.diffusion.ema_model import EMAModel
-from diffusion_policy.model.common.lr_scheduler import get_scheduler
+from diffusion_policy.workspace.base_workspace import BaseWorkspace
 
 OmegaConf.register_new_resolver("eval", eval, replace=True)
 
@@ -56,12 +59,23 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
 
     def run(self):
         cfg = copy.deepcopy(self.cfg)
+        os.makedirs(self.output_dir, exist_ok=True)
+
+        accelerator = Accelerator(log_with="wandb")
+        wandb_cfg = OmegaConf.to_container(cfg.logging, resolve=True)
+        wandb_cfg["dir"] = str(self.output_dir)
+        wandb_cfg.pop("project")
+        accelerator.init_trackers(
+            project_name=cfg.logging.project,
+            config=OmegaConf.to_container(cfg, resolve=True),
+            init_kwargs={"wandb": wandb_cfg},
+        )
 
         # resume training
         if cfg.training.resume:
             lastest_ckpt_path = self.get_checkpoint_path()
             if lastest_ckpt_path.is_file():
-                print(f"Resuming from checkpoint {lastest_ckpt_path}")
+                accelerator.print(f"Resuming from checkpoint {lastest_ckpt_path}")
                 self.load_checkpoint(path=lastest_ckpt_path)
 
         # configure dataset
@@ -69,11 +83,26 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
         dataset = hydra.utils.instantiate(cfg.task.dataset)
         assert isinstance(dataset, BaseImageDataset) or isinstance(dataset, BaseDataset)
         train_dataloader = DataLoader(dataset, **cfg.dataloader)
-        normalizer = dataset.get_normalizer()
+
+        normalizer_path = os.path.join(self.output_dir, "normalizer.pkl")
+        if accelerator.is_main_process:
+            normalizer = dataset.get_normalizer()
+            with open(normalizer_path, "wb") as f:
+                pickle.dump(normalizer, f)
+
+        accelerator.wait_for_everyone()
+        with open(normalizer_path, "rb") as f:
+            normalizer = pickle.load(f)
 
         # configure validation dataset
         val_dataset = dataset.get_validation_dataset()
         val_dataloader = DataLoader(val_dataset, **cfg.val_dataloader)
+        accelerator.print(
+            "train dataset:", len(dataset), "train dataloader:", len(train_dataloader)
+        )
+        accelerator.print(
+            "val dataset:", len(val_dataset), "val dataloader:", len(val_dataloader)
+        )
 
         self.model.set_normalizer(normalizer)
         if cfg.training.use_ema:
@@ -100,35 +129,32 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
 
         # configure env
         env_runner: Optional[BaseImageRunner] = None
-        if OmegaConf.select(cfg, "task.env_runner") is not None:
+        if (
+            accelerator.is_main_process
+            and OmegaConf.select(cfg, "task.env_runner") is not None
+        ):
             env_runner = hydra.utils.instantiate(
                 cfg.task.env_runner, output_dir=self.output_dir
             )
             assert isinstance(env_runner, BaseImageRunner)
-
-        # configure logging
-        wandb_run = wandb.init(
-            dir=str(self.output_dir),
-            config=OmegaConf.to_container(cfg, resolve=True),
-            **cfg.logging,
-        )
-        wandb.config.update(
-            {
-                "output_dir": self.output_dir,
-            }
-        )
 
         # configure checkpoint
         topk_manager = TopKCheckpointManager(
             save_dir=os.path.join(self.output_dir, "checkpoints"), **cfg.checkpoint.topk
         )
 
-        # device transfer
-        device = torch.device(cfg.training.device)
-        self.model.to(device)
+        train_dataloader, val_dataloader, self.model, self.optimizer, lr_scheduler = (
+            accelerator.prepare(
+                train_dataloader,
+                val_dataloader,
+                self.model,
+                self.optimizer,
+                lr_scheduler,
+            )
+        )
+        device = accelerator.device
         if self.ema_model is not None:
             self.ema_model.to(device)
-        optimizer_to(self.optimizer, device)
 
         # save batch for sampling
         train_sampling_batch = None
@@ -142,17 +168,22 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
             cfg.training.val_every = 1
             cfg.training.sample_every = 1
 
-        # training loop
         log_path = os.path.join(self.output_dir, "logs.json.txt")
-        with JsonLogger(log_path) as json_logger:
+        json_logger_context = (
+            JsonLogger(log_path) if accelerator.is_main_process else nullcontext(None)
+        )
+        with json_logger_context as json_logger:
             for local_epoch_idx in range(cfg.training.num_epochs):
+                self.model.train()
                 step_log = dict()
+
                 # ========= train for this epoch ==========
                 train_losses = list()
                 with tqdm.tqdm(
                     train_dataloader,
                     desc=f"Training epoch {self.epoch}",
                     leave=False,
+                    disable=not accelerator.is_local_main_process,
                     mininterval=cfg.training.tqdm_interval_sec,
                 ) as tepoch:
                     for batch_idx, batch in enumerate(tepoch):
@@ -160,13 +191,12 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
                         batch = dict_apply(
                             batch, lambda x: x.to(device, non_blocking=True)
                         )
-                        if train_sampling_batch is None:
-                            train_sampling_batch = batch
+                        train_sampling_batch = batch
 
                         # compute loss
-                        raw_loss = self.model.compute_loss(batch)
+                        raw_loss = self.model(batch)
                         loss = raw_loss / cfg.training.gradient_accumulate_every
-                        loss.backward()
+                        accelerator.backward(loss)
 
                         # step optimizer
                         if (
@@ -179,10 +209,12 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
 
                         # update ema
                         if ema is not None:
-                            ema.step(self.model)
+                            ema.step(accelerator.unwrap_model(self.model))
 
                         # logging
-                        raw_loss_cpu = raw_loss.item()
+                        raw_loss_cpu = accelerator.reduce(
+                            raw_loss.detach(), reduction="mean"
+                        ).item()
                         tepoch.set_postfix(loss=raw_loss_cpu, refresh=False)
                         train_losses.append(raw_loss_cpu)
                         step_log = {
@@ -195,8 +227,9 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
                         is_last_batch = batch_idx == (len(train_dataloader) - 1)
                         if not is_last_batch:
                             # log of last step is combined with validation and rollout
-                            wandb_run.log(step_log, step=self.global_step)
-                            json_logger.log(step_log)
+                            accelerator.log(step_log, step=self.global_step)
+                            if json_logger is not None:
+                                json_logger.log(step_log)
                             self.global_step += 1
 
                         if (cfg.training.max_train_steps is not None) and batch_idx >= (
@@ -210,7 +243,7 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
                 step_log["train_loss"] = train_loss
 
                 # ========= eval for this epoch ==========
-                policy = self.model
+                policy = accelerator.unwrap_model(self.model)
                 if cfg.training.use_ema:
                     assert self.ema_model is not None
                     policy = self.ema_model
@@ -218,11 +251,13 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
 
                 # run rollout
                 if (
-                    env_runner is not None
+                    accelerator.is_main_process
+                    and env_runner is not None
                     and cfg.training.rollout_every is not None
                     and cfg.training.rollout_every > 0
                     and (self.epoch % cfg.training.rollout_every) == 0
                 ):
+                    assert env_runner is not None
                     runner_log = env_runner.run(policy)
                     # log all
                     step_log.update(runner_log)
@@ -235,30 +270,39 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
                             val_dataloader,
                             desc=f"Validation epoch {self.epoch}",
                             leave=False,
+                            disable=not accelerator.is_local_main_process,
                             mininterval=cfg.training.tqdm_interval_sec,
                         ) as tepoch:
                             for batch_idx, batch in enumerate(tepoch):
                                 batch = dict_apply(
                                     batch, lambda x: x.to(device, non_blocking=True)
                                 )
-                                loss = self.model.compute_loss(batch)
-                                val_losses.append(loss)
+                                loss = self.model(batch)
+                                val_losses.append(
+                                    accelerator.reduce(
+                                        loss.detach(), reduction="mean"
+                                    ).item()
+                                )
                                 if (
                                     cfg.training.max_val_steps is not None
                                 ) and batch_idx >= (cfg.training.max_val_steps - 1):
                                     break
                         if len(val_losses) > 0:
-                            val_loss = torch.mean(torch.tensor(val_losses)).item()
+                            val_loss = float(np.mean(val_losses))
                             # log epoch average validation loss
                             step_log["val_loss"] = val_loss
 
                 # run diffusion sampling on a training batch
                 if (
-                    train_sampling_batch is not None
+                    accelerator.is_main_process
+                    and cfg.training.sample_every is not None
+                    and cfg.training.sample_every > 0
+                    and train_sampling_batch is not None
                     and (self.epoch % cfg.training.sample_every) == 0
                 ):
                     with torch.no_grad():
                         # sample trajectory from training set, and evaluate difference
+                        assert train_sampling_batch is not None
                         batch = dict_apply(
                             train_sampling_batch,
                             lambda x: x.to(device, non_blocking=True),
@@ -278,7 +322,15 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
                         del mse
 
                 # checkpoint
-                if (self.epoch % cfg.training.checkpoint_every) == 0:
+                if (
+                    accelerator.is_main_process
+                    and cfg.training.checkpoint_every is not None
+                    and cfg.training.checkpoint_every > 0
+                    and (self.epoch % cfg.training.checkpoint_every) == 0
+                ):
+                    model_ddp = self.model
+                    self.model = accelerator.unwrap_model(self.model)
+
                     # checkpointing
                     if cfg.checkpoint.save_last_ckpt:
                         self.save_checkpoint()
@@ -298,12 +350,17 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
 
                     if topk_ckpt_path is not None:
                         self.save_checkpoint(path=topk_ckpt_path)
+
+                    self.model = model_ddp
                 # ========= eval end for this epoch ==========
-                policy.train()
+                accelerator.wait_for_everyone()
 
                 # end of epoch
                 # log of last step is combined with validation and rollout
-                wandb_run.log(step_log, step=self.global_step)
-                json_logger.log(step_log)
+                accelerator.log(step_log, step=self.global_step)
+                if json_logger is not None:
+                    json_logger.log(step_log)
                 self.global_step += 1
                 self.epoch += 1
+
+        accelerator.end_training()
