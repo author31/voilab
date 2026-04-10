@@ -1,26 +1,19 @@
 import argparse
 import json
 import os
-import sys
 import time
+from collections import deque
 
 import dill
 import hydra
 import numpy as np
 import registry
 import torch
-import zarr
 from loguru import logger
-from numcodecs import Blosc
-from zarr.storage import ZipStore
+from PIL import Image
 
-from umi.real_world.real_inference_util import (
-    get_real_umi_obs_dict,
-    get_real_umi_action,
-)
-from diffusion_policy.common.pytorch_util import dict_apply
+from utils import pose_to_transform_matrix
 from diffusion_policy.workspace.base_workspace import BaseWorkspace
-from diffusion_policy.policy.base_image_policy import BaseImagePolicy
 
 
 parser = argparse.ArgumentParser()
@@ -67,19 +60,17 @@ from isaacsim.core.utils.viewports import set_camera_view
 from isaacsim.robot.manipulators import SingleManipulator
 from isaacsim.robot.manipulators.grippers import ParallelGripper
 from isaacsim.sensors.camera import Camera
-from isaacsim.storage.native import get_assets_root_path
 from isaacsim.robot_motion.motion_generation import (
     ArticulationKinematicsSolver,
     LulaKinematicsSolver,
 )
-from isaacsim.util.debug_draw import _debug_draw
-from isaacsim.core.utils.types import ArticulationAction
 
 import omni.ui as ui
 import omni.kit.app
 import omni.kit.viewport.utility as vp_util
 
 from motion_plan import PickPlace
+from scipy.spatial.transform import Rotation as R
 from scipy.spatial.transform import Slerp
 
 # --- Constants ---
@@ -92,15 +83,6 @@ ASSETS_DIR = "/workspace/voilab/assets/CADs"
 # Lula IK config paths
 LULA_ROBOT_DESCRIPTION_PATH = "/workspace/voilab/assets/lula/frank_umi_descriptor.yaml"
 LULA_URDF_PATH = "/workspace/voilab/assets/franka_panda/franka_panda_umi-isaacsim.urdf"
-
-# Task name to runner class mapping
-TASK_RUNNER_MAP = {
-    "kitchen": "diffusion_policy.env_runner.isaacsim_registry_runners.KitchenIsaacSimAppRunner",
-    "dining-room": "diffusion_policy.env_runner.isaacsim_registry_runners.DiningRoomIsaacSimAppRunner",
-    "living-room": "diffusion_policy.env_runner.isaacsim_registry_runners.LivingRoomIsaacSimAppRunner",
-}
-
-DEBUG_DRAW = _debug_draw.acquire_debug_draw_interface()
 
 
 def setup_dual_viewports():
@@ -151,7 +133,367 @@ def setup_dual_viewports():
         print("Error: Could not find one or both viewport windows for docking.")
 
 
-from scipy.spatial.transform import Rotation as R
+PIL_BILINEAR = (
+    Image.Resampling.BILINEAR if hasattr(Image, "Resampling") else Image.BILINEAR
+)
+
+
+def matrix_to_rot6d(matrix: np.ndarray) -> np.ndarray:
+    matrix = np.asarray(matrix)
+    if matrix.ndim == 2:
+        return np.concatenate([matrix[:, 0], matrix[:, 1]])
+    return np.concatenate([matrix[:, :, 0], matrix[:, :, 1]], axis=-1)
+
+
+def rot6d_to_matrix(rot6d: np.ndarray) -> np.ndarray:
+    rot6d = np.asarray(rot6d)
+    is_batch = rot6d.ndim == 2
+    if not is_batch:
+        rot6d = rot6d[None, :]
+
+    x_raw = rot6d[:, 0:3]
+    y_raw = rot6d[:, 3:6]
+
+    x = x_raw / (np.linalg.norm(x_raw, axis=-1, keepdims=True) + 1e-8)
+    z = np.cross(x, y_raw)
+    z = z / (np.linalg.norm(z, axis=-1, keepdims=True) + 1e-8)
+    y = np.cross(z, x)
+
+    matrix = np.stack([x, y, z], axis=-1)
+    if not is_batch:
+        matrix = matrix[0]
+    return matrix
+
+
+def pose_to_mat(pose: np.ndarray) -> np.ndarray:
+    pose = np.asarray(pose)
+    is_batch = pose.ndim == 2
+    if not is_batch:
+        pose = pose[None, :]
+
+    pos = pose[:, :3]
+    rot_mat = R.from_rotvec(pose[:, 3:6]).as_matrix()
+
+    mat = np.zeros((pose.shape[0], 4, 4), dtype=np.float64)
+    mat[:, :3, :3] = rot_mat
+    mat[:, :3, 3] = pos
+    mat[:, 3, 3] = 1.0
+
+    if not is_batch:
+        mat = mat[0]
+    return mat
+
+
+def mat_to_pose(mat: np.ndarray) -> np.ndarray:
+    mat = np.asarray(mat)
+    is_batch = mat.ndim == 3
+    if not is_batch:
+        mat = mat[None, :]
+
+    pos = mat[:, :3, 3]
+    rot = R.from_matrix(mat[:, :3, :3]).as_rotvec()
+    pose = np.concatenate([pos, rot], axis=-1)
+
+    if not is_batch:
+        pose = pose[0]
+    return pose
+
+
+def mat_to_pose10d(mat: np.ndarray) -> np.ndarray:
+    mat = np.asarray(mat)
+    is_batch = mat.ndim == 3
+    if not is_batch:
+        mat = mat[None, :]
+
+    pos = mat[:, :3, 3]
+    rot6d = matrix_to_rot6d(mat[:, :3, :3])
+    pose10d = np.concatenate([pos, rot6d], axis=-1)
+
+    if not is_batch:
+        pose10d = pose10d[0]
+    return pose10d
+
+
+def pose10d_to_mat(pose10d: np.ndarray) -> np.ndarray:
+    pose10d = np.asarray(pose10d)
+    is_batch = pose10d.ndim == 2
+    if not is_batch:
+        pose10d = pose10d[None, :]
+
+    pos = pose10d[:, :3]
+    rot_mat = rot6d_to_matrix(pose10d[:, 3:9])
+
+    mat = np.zeros((pose10d.shape[0], 4, 4), dtype=np.float64)
+    mat[:, :3, :3] = rot_mat
+    mat[:, :3, 3] = pos
+    mat[:, 3, 3] = 1.0
+
+    if not is_batch:
+        mat = mat[0]
+    return mat
+
+
+def convert_pose_mat_rep_local(
+    pose_mat: np.ndarray,
+    base_pose_mat: np.ndarray,
+    pose_rep: str = "abs",
+    backward: bool = False,
+) -> np.ndarray:
+    if not backward:
+        if pose_rep == "abs":
+            return pose_mat
+        if pose_rep == "rel":
+            pos = pose_mat[..., :3, 3] - base_pose_mat[:3, 3]
+            rot = pose_mat[..., :3, :3] @ np.linalg.inv(base_pose_mat[:3, :3])
+            out = np.copy(pose_mat)
+            out[..., :3, :3] = rot
+            out[..., :3, 3] = pos
+            return out
+        if pose_rep == "relative":
+            return np.linalg.inv(base_pose_mat) @ pose_mat
+        if pose_rep == "delta":
+            all_pos = np.concatenate(
+                [base_pose_mat[None, :3, 3], pose_mat[..., :3, 3]], axis=0
+            )
+            out_pos = np.diff(all_pos, axis=0)
+
+            all_rot_mat = np.concatenate(
+                [base_pose_mat[None, :3, :3], pose_mat[..., :3, :3]], axis=0
+            )
+            prev_rot = np.linalg.inv(all_rot_mat[:-1])
+            curr_rot = all_rot_mat[1:]
+            out_rot = np.matmul(curr_rot, prev_rot)
+
+            out = np.copy(pose_mat)
+            out[..., :3, :3] = out_rot
+            out[..., :3, 3] = out_pos
+            return out
+        raise RuntimeError(f"Unsupported pose_rep: {pose_rep}")
+
+    if pose_rep == "abs":
+        return pose_mat
+    if pose_rep == "rel":
+        pos = pose_mat[..., :3, 3] + base_pose_mat[:3, 3]
+        rot = pose_mat[..., :3, :3] @ base_pose_mat[:3, :3]
+        out = np.copy(pose_mat)
+        out[..., :3, :3] = rot
+        out[..., :3, 3] = pos
+        return out
+    if pose_rep == "relative":
+        return base_pose_mat @ pose_mat
+    if pose_rep == "delta":
+        output_pos = np.cumsum(pose_mat[..., :3, 3], axis=0) + base_pose_mat[:3, 3]
+
+        output_rot_mat = np.zeros_like(pose_mat[..., :3, :3])
+        curr_rot = base_pose_mat[:3, :3]
+        for i in range(len(pose_mat)):
+            curr_rot = pose_mat[i, :3, :3] @ curr_rot
+            output_rot_mat[i] = curr_rot
+
+        out = np.copy(pose_mat)
+        out[..., :3, :3] = output_rot_mat
+        out[..., :3, 3] = output_pos
+        return out
+    raise RuntimeError(f"Unsupported pose_rep: {pose_rep}")
+
+
+def prepare_rgb_obs(rgb_obs: np.ndarray, shape: tuple[int, int, int]) -> np.ndarray:
+    rgb_obs = np.asarray(rgb_obs)
+    channels, target_height, target_width = shape
+    if rgb_obs.shape[-1] == 4 and channels == 3:
+        rgb_obs = rgb_obs[..., :3]
+    if rgb_obs.shape[-1] != channels:
+        raise ValueError(
+            f"RGB observation channels mismatch: expected {channels}, got {rgb_obs.shape[-1]}"
+        )
+
+    processed = []
+    for image in rgb_obs:
+        if image.shape[0] != target_height or image.shape[1] != target_width:
+            resize_input = image if image.dtype == np.uint8 else image.astype(np.uint8)
+            image = np.asarray(
+                Image.fromarray(resize_input).resize(
+                    (target_width, target_height), resample=PIL_BILINEAR
+                )
+            )
+
+        if image.dtype == np.uint8:
+            image = image.astype(np.float32) / 255.0
+        else:
+            image = image.astype(np.float32)
+
+        processed.append(np.moveaxis(image, -1, 0))
+
+    return np.stack(processed, axis=0)
+
+
+def build_policy_obs_dict(
+    env_obs: dict,
+    shape_meta: dict,
+    episode_start_pose: np.ndarray,
+    obs_pose_repr: str,
+) -> dict:
+    obs_shape_meta = shape_meta["obs"]
+    obs_dict_np = {}
+
+    for key, attr in obs_shape_meta.items():
+        obs_type = attr.get("type", "low_dim")
+        if obs_type == "rgb":
+            obs_dict_np[key] = prepare_rgb_obs(env_obs[key], tuple(attr.get("shape")))
+        elif obs_type == "low_dim" and "eef" not in key:
+            obs_dict_np[key] = np.asarray(env_obs[key], dtype=np.float32)
+
+    pose = np.concatenate(
+        [env_obs["robot0_eef_pos"], env_obs["robot0_eef_rot_axis_angle"]], axis=-1
+    )
+    pose_mat = pose_to_mat(pose)
+
+    obs_pose_mat = convert_pose_mat_rep_local(
+        pose_mat,
+        base_pose_mat=pose_mat[-1],
+        pose_rep=obs_pose_repr,
+        backward=False,
+    )
+    obs_pose = mat_to_pose10d(obs_pose_mat).astype(np.float32)
+    obs_dict_np["robot0_eef_pos"] = obs_pose[..., :3]
+    obs_dict_np["robot0_eef_rot_axis_angle"] = obs_pose[..., 3:]
+
+    if "robot0_eef_rot_axis_angle_wrt_start" in obs_shape_meta:
+        if episode_start_pose is None:
+            raise RuntimeError("episode_start_pose is required by shape_meta")
+        start_pose_mat = pose_to_mat(episode_start_pose)
+        start_rel_pose_mat = convert_pose_mat_rep_local(
+            pose_mat,
+            base_pose_mat=start_pose_mat,
+            pose_rep="relative",
+            backward=False,
+        )
+        start_rel_pose = mat_to_pose10d(start_rel_pose_mat).astype(np.float32)
+        obs_dict_np["robot0_eef_rot_axis_angle_wrt_start"] = start_rel_pose[..., 3:]
+
+    return obs_dict_np
+
+
+def build_torch_obs_dict(obs_dict_np: dict, device: torch.device) -> dict:
+    return {
+        key: torch.from_numpy(value).unsqueeze(0).to(device)
+        for key, value in obs_dict_np.items()
+    }
+
+
+def decode_policy_action(
+    action: np.ndarray, env_obs: dict, action_pose_repr: str
+) -> np.ndarray:
+    action = np.asarray(action)
+    if action.ndim == 1:
+        action = action[None, :]
+
+    curr_pose = np.concatenate(
+        [env_obs["robot0_eef_pos"][-1], env_obs["robot0_eef_rot_axis_angle"][-1]],
+        axis=-1,
+    )
+    curr_pose_mat = pose_to_mat(curr_pose)
+
+    action_pose_mat = pose10d_to_mat(action[..., :9])
+    action_mat = convert_pose_mat_rep_local(
+        action_pose_mat,
+        base_pose_mat=curr_pose_mat,
+        pose_rep=action_pose_repr,
+        backward=True,
+    )
+    action_pose = mat_to_pose(action_mat)
+    action_gripper = action[..., 9:10]
+    return np.concatenate([action_pose, action_gripper], axis=-1).astype(np.float32)
+
+
+def get_pose_representation(cfg) -> tuple[str, str]:
+    task_cfg = getattr(cfg, "task", None)
+    pose_cfg = getattr(task_cfg, "pose_repr", None)
+
+    obs_pose_repr = "relative"
+    action_pose_repr = "relative"
+    if pose_cfg is not None:
+        obs_pose_repr = getattr(pose_cfg, "obs_pose_repr", obs_pose_repr)
+        action_pose_repr = getattr(pose_cfg, "action_pose_repr", action_pose_repr)
+
+    return str(obs_pose_repr), str(action_pose_repr)
+
+
+def cfg_attr(cfg_obj, key: str, default=None):
+    if cfg_obj is None:
+        return default
+    if isinstance(cfg_obj, dict):
+        return cfg_obj.get(key, default)
+    return getattr(cfg_obj, key, default)
+
+
+def get_shape_meta(cfg):
+    shape_meta = cfg_attr(cfg_attr(cfg, "task"), "shape_meta")
+    if shape_meta is None:
+        shape_meta = cfg_attr(cfg, "shape_meta")
+    if shape_meta is None:
+        raise RuntimeError("Missing shape_meta in cfg and cfg.task")
+    return shape_meta
+
+
+def get_camera_resolution(shape_meta) -> tuple[int, int]:
+    cam_meta = shape_meta.get("obs", {}).get("camera0_rgb", {})
+    cam_shape = cam_meta.get("shape", (3, 224, 224))
+    if len(cam_shape) < 3:
+        return 224, 224
+    _, height, width = cam_shape[:3]
+    return int(width), int(height)
+
+
+def build_umi_sim_env_kwargs(cfg) -> dict:
+    shape_meta = get_shape_meta(cfg)
+    obs_shape_meta = shape_meta.get("obs", {})
+    task_cfg = cfg_attr(cfg, "task")
+
+    task_frequency = cfg_attr(task_cfg, "frequency")
+    frequency = 10.0 if task_frequency is None else float(task_frequency)
+
+    return {
+        "frequency": frequency,
+        "camera_obs_horizon": int(
+            obs_shape_meta.get("camera0_rgb", {}).get("horizon", 2)
+        ),
+        "robot_obs_horizon": int(
+            obs_shape_meta.get("robot0_eef_pos", {}).get("horizon", 2)
+        ),
+        "gripper_obs_horizon": int(
+            obs_shape_meta.get("robot0_gripper_width", {}).get("horizon", 2)
+        ),
+        "camera_down_sample_steps": int(
+            obs_shape_meta.get("camera0_rgb", {}).get("down_sample_steps", 3)
+        ),
+        "robot_down_sample_steps": int(
+            obs_shape_meta.get("robot0_eef_pos", {}).get("down_sample_steps", 1)
+        ),
+        "gripper_down_sample_steps": int(
+            obs_shape_meta.get("robot0_gripper_width", {}).get("down_sample_steps", 1)
+        ),
+    }
+
+
+def get_required_warmup_steps(env_kwargs: dict, margin: int = 10) -> int:
+    required_history = max(
+        int(env_kwargs["camera_obs_horizon"])
+        * int(env_kwargs["camera_down_sample_steps"]),
+        int(env_kwargs["robot_obs_horizon"])
+        * int(env_kwargs["robot_down_sample_steps"]),
+        int(env_kwargs["gripper_obs_horizon"])
+        * int(env_kwargs["gripper_down_sample_steps"]),
+    )
+    return max(required_history + margin, 1)
+
+
+def get_n_action_steps(cfg, policy, action: np.ndarray) -> int:
+    if hasattr(cfg, "n_action_steps"):
+        return min(int(cfg.n_action_steps), len(action))
+    if hasattr(policy, "n_action_steps"):
+        return min(int(policy.n_action_steps), len(action))
+    return len(action)
 
 
 # --- Helper classes and functions for motion planning ---
@@ -235,132 +577,10 @@ def plan_line_cartesian(
     return [np.concatenate([p, q_wxyz]) for p, q_wxyz in zip(positions, quats_wxyz)]
 
 
-def get_end_effector_pose(manipulator, lula_solver, art_kine_solver) -> np.ndarray:
-    base_pos, base_quat = manipulator.get_world_pose()
-    lula_solver.set_robot_base_pose(
-        robot_position=base_pos,
-        robot_orientation=base_quat,
-    )
-    ee_pos, ee_rot_matrix = art_kine_solver.compute_end_effector_pose()
-    eef_rot = R.from_matrix(ee_rot_matrix[:3, :3]).as_rotvec()
-    return np.concatenate([ee_pos.astype(np.float64), eef_rot.astype(np.float64)])
-
-
-def step_world_and_record(
-    world,
-    camera,
-    manipulator,
-    lula_solver,
-    art_kine_solver,
-    rgb_list,
-    eef_pos_list,
-    eef_rot_list,
-    gripper_list,
-    render=True,
-    sleep_dt=0.01,
-):
+def step_world(world, render=True, sleep_dt=0.01):
+    """Advance the simulation world by one step."""
     world.step(render=render)
-    if render:
-        time.sleep(sleep_dt)
-
-    img = camera.get_rgb()
-    if img is not None:
-        rgb_list.append(img)
-
-    eef_pose6d = get_end_effector_pose(manipulator, lula_solver, art_kine_solver)
-    eef_pos_list.append(eef_pose6d[:3])
-    eef_rot_list.append(eef_pose6d[3:])
-
-    joint_pos = manipulator.get_joint_positions()
-    gripper_width = joint_pos[-2] + joint_pos[-1]
-    gripper_list.append([gripper_width])
-
-    return eef_pose6d
-
-
-def cfg_get(cfg_node, key, default=None):
-    if cfg_node is None:
-        return default
-    if hasattr(cfg_node, key):
-        return getattr(cfg_node, key)
-    if hasattr(cfg_node, "get"):
-        value = cfg_node.get(key, default)
-        if value is not None or default is None:
-            return value
-    try:
-        return cfg_node[key]
-    except (KeyError, TypeError, IndexError):
-        return default
-
-
-def resolve_shape_meta(cfg):
-    for cfg_node in (cfg, cfg_get(cfg, "task", None)):
-        shape_meta = cfg_get(cfg_node, "shape_meta", None)
-        if shape_meta is not None:
-            return shape_meta
-    raise KeyError("Missing shape_meta in cfg or cfg.task.")
-
-
-def _get_obs_sample_offsets(obs_meta, key):
-    horizon = int(cfg_get(obs_meta, "horizon", 1))
-    down_sample_steps = int(cfg_get(obs_meta, "down_sample_steps", 1))
-    latency_steps_value = cfg_get(obs_meta, "latency_steps", 0)
-    latency_steps = int(latency_steps_value)
-    if not np.isclose(latency_steps, latency_steps_value):
-        raise ValueError(
-            f"Expected integer latency_steps for {key}, got {latency_steps_value}."
-        )
-    return latency_steps + np.arange(horizon - 1, -1, -1) * down_sample_steps
-
-
-def _sample_recorded_history(buffer, obs_meta, key):
-    offsets = _get_obs_sample_offsets(obs_meta, key)
-    required_history = int(offsets[0]) + 1 if len(offsets) > 0 else 1
-    if len(buffer) < required_history:
-        raise ValueError(
-            f"Not enough history for {key}: need {required_history} frames, got {len(buffer)}."
-        )
-    return np.stack([buffer[-(int(offset) + 1)] for offset in offsets])
-
-
-def get_recorded_obs_required_history(shape_meta):
-    obs_shape_meta = cfg_get(shape_meta, "obs", {})
-    recorded_keys = (
-        "camera0_rgb",
-        "robot0_eef_pos",
-        "robot0_eef_rot_axis_angle",
-        "robot0_gripper_width",
-    )
-
-    required_history = 1
-    for key in recorded_keys:
-        obs_meta = cfg_get(obs_shape_meta, key, None)
-        if obs_meta is None:
-            continue
-        offsets = _get_obs_sample_offsets(obs_meta, key)
-        if len(offsets) > 0:
-            required_history = max(required_history, int(offsets[0]) + 1)
-
-    return required_history
-
-
-def get_recorded_obs(shape_meta, rgb_list, eef_pos_list, eef_rot_list, gripper_list):
-    obs_shape_meta = cfg_get(shape_meta, "obs", {})
-    obs_buffers = {
-        "camera0_rgb": rgb_list,
-        "robot0_eef_pos": eef_pos_list,
-        "robot0_eef_rot_axis_angle": eef_rot_list,
-        "robot0_gripper_width": gripper_list,
-    }
-
-    obs = {}
-    for key, buffer in obs_buffers.items():
-        obs_meta = cfg_get(obs_shape_meta, key, None)
-        if obs_meta is None:
-            continue
-        obs[key] = _sample_recorded_history(buffer, obs_meta, key)
-
-    return obs
+    time.sleep(sleep_dt)
 
 
 def load_object_poses_from_json(json_path: str, episode_index: int = 0) -> list:
@@ -482,6 +702,201 @@ def update_preload_objects_with_poses(
     return updated_objects
 
 
+class UMISimEnv:
+    def __init__(
+        self,
+        world,
+        manipulator,
+        camera,
+        art_kine_solver,
+        frequency: float = 10.0,  # policy frequency
+        camera_obs_horizon: int = 2,
+        robot_obs_horizon: int = 2,
+        gripper_obs_horizon: int = 2,
+        camera_down_sample_steps: int = 3,
+        robot_down_sample_steps: int = 1,
+        gripper_down_sample_steps: int = 1,
+    ):
+        self.world = world
+        self.manipulator = manipulator
+        self.camera = camera
+        self.art_kine_solver = art_kine_solver
+
+        self.frequency = frequency
+        self.dt = 1.0 / frequency
+
+        # Observation horizons
+        self.camera_obs_horizon = camera_obs_horizon
+        self.robot_obs_horizon = robot_obs_horizon
+        self.gripper_obs_horizon = gripper_obs_horizon
+        self.camera_down_sample_steps = camera_down_sample_steps
+        self.robot_down_sample_steps = robot_down_sample_steps
+        self.gripper_down_sample_steps = gripper_down_sample_steps
+
+        # Observation buffers (ring buffers for history)
+        buffer_size = (
+            max(
+                camera_obs_horizon * camera_down_sample_steps,
+                robot_obs_horizon * robot_down_sample_steps,
+                gripper_obs_horizon * gripper_down_sample_steps,
+            )
+            + 10
+        )  # extra margin
+
+        self.camera_buffer = deque(maxlen=buffer_size)
+        self.robot_buffer = deque(maxlen=buffer_size)
+        self.gripper_buffer = deque(maxlen=buffer_size)
+
+        # Gripper joint indices (adjust for your robot)
+        self.gripper_joint_names = ["panda_finger_joint1", "panda_finger_joint2"]
+
+    def _get_eef_pose_axis_angle(self) -> np.ndarray:
+        """Get EEF pose as [x, y, z, ax, ay, az] in robot base frame."""
+        ee_pos, ee_T = self.art_kine_solver.compute_end_effector_pose()
+
+        # Convert to base frame if needed (see your earlier code)
+        base_pos, base_quat = self.manipulator.get_world_pose()
+        T_base_world = pose_to_transform_matrix(base_pos, base_quat)
+        T_world_base = np.linalg.inv(T_base_world)
+
+        T_eef_world = np.eye(4)
+        T_eef_world[:3, :3] = ee_T[:3, :3]
+        T_eef_world[:3, 3] = ee_pos
+
+        T_eef_base = T_world_base @ T_eef_world
+
+        pos = T_eef_base[:3, 3]
+        rot_matrix = T_eef_base[:3, :3]
+
+        # Convert to axis-angle (UMI format)
+        axis_angle = R.from_matrix(rot_matrix).as_rotvec()
+
+        return np.concatenate([pos, axis_angle])
+
+    def _get_gripper_width(self) -> float:
+        """Get gripper width in meters."""
+        joint_positions = self.manipulator.get_joint_positions()
+        # For Franka: width = finger1_pos + finger2_pos
+        # Adjust indices based on your articulation
+        finger1_idx = self.manipulator.get_dof_index(self.gripper_joint_names[0])
+        finger2_idx = self.manipulator.get_dof_index(self.gripper_joint_names[1])
+        return joint_positions[finger1_idx] + joint_positions[finger2_idx]
+
+    def _get_camera_rgb(self) -> np.ndarray:
+        """Get camera RGB image [H, W, 3] uint8."""
+        return self.camera.get_rgb()
+
+    def step_accumulate(self):
+        """Call this every sim step to accumulate observations."""
+        current_time = self.world.current_time
+
+        # Accumulate camera
+        self.camera_buffer.append(
+            {"timestamp": current_time, "color": self._get_camera_rgb()}
+        )
+
+        # Accumulate robot
+        self.robot_buffer.append(
+            {"timestamp": current_time, "eef_pose": self._get_eef_pose_axis_angle()}
+        )
+
+        # Accumulate gripper
+        self.gripper_buffer.append(
+            {"timestamp": current_time, "gripper_width": self._get_gripper_width()}
+        )
+
+    def get_obs(self) -> dict:
+        """
+        Get aligned observations matching UMI format.
+        Call after sufficient history is accumulated.
+        """
+        # Convert buffers to arrays
+        camera_timestamps = np.array([d["timestamp"] for d in self.camera_buffer])
+        camera_colors = np.stack([d["color"] for d in self.camera_buffer])
+
+        robot_timestamps = np.array([d["timestamp"] for d in self.robot_buffer])
+        robot_poses = np.stack([d["eef_pose"] for d in self.robot_buffer])
+
+        gripper_timestamps = np.array([d["timestamp"] for d in self.gripper_buffer])
+        gripper_widths = np.array([d["gripper_width"] for d in self.gripper_buffer])
+
+        # Reference timestamp (latest camera)
+        last_timestamp = camera_timestamps[-1]
+
+        # === Align camera obs ===
+        camera_obs_timestamps = last_timestamp - (
+            np.arange(self.camera_obs_horizon)[::-1]
+            * self.camera_down_sample_steps
+            * self.dt
+        )
+        camera_idxs = [
+            np.argmin(np.abs(camera_timestamps - t)) for t in camera_obs_timestamps
+        ]
+        camera_obs = {
+            "camera0_rgb": camera_colors[camera_idxs]  # [obs_horizon, H, W, 3]
+        }
+
+        # === Align robot obs (interpolate) ===
+        robot_obs_timestamps = last_timestamp - (
+            np.arange(self.robot_obs_horizon)[::-1]
+            * self.robot_down_sample_steps
+            * self.dt
+        )
+        robot_pose_interp = self._interpolate_poses(
+            robot_timestamps, robot_poses, robot_obs_timestamps
+        )
+        robot_obs = {
+            "robot0_eef_pos": robot_pose_interp[..., :3],
+            "robot0_eef_rot_axis_angle": robot_pose_interp[..., 3:],
+        }
+
+        # === Align gripper obs (interpolate) ===
+        gripper_obs_timestamps = last_timestamp - (
+            np.arange(self.gripper_obs_horizon)[::-1]
+            * self.gripper_down_sample_steps
+            * self.dt
+        )
+        gripper_interp = np.interp(
+            gripper_obs_timestamps, gripper_timestamps, gripper_widths
+        )
+        gripper_obs = {"robot0_gripper_width": gripper_interp[..., None]}
+
+        # Combine
+        obs_data = {}
+        obs_data.update(camera_obs)
+        obs_data.update(robot_obs)
+        obs_data.update(gripper_obs)
+        obs_data["timestamp"] = camera_obs_timestamps
+
+        return obs_data
+
+    def _interpolate_poses(
+        self, timestamps: np.ndarray, poses: np.ndarray, query_times: np.ndarray
+    ) -> np.ndarray:
+        """
+        Interpolate poses (pos + axis-angle).
+        For rotation, use SLERP via scipy.
+        """
+        from scipy.interpolate import interp1d
+        from scipy.spatial.transform import Slerp
+
+        # Interpolate position
+        pos_interp = interp1d(
+            timestamps, poses[:, :3], axis=0, fill_value="extrapolate"
+        )
+        interp_pos = pos_interp(query_times)
+
+        # Interpolate rotation (SLERP)
+        rotations = R.from_rotvec(poses[:, 3:])
+        slerp = Slerp(timestamps, rotations)
+
+        # Clamp query times to valid range for SLERP
+        query_times_clamped = np.clip(query_times, timestamps[0], timestamps[-1])
+        interp_rot = slerp(query_times_clamped).as_rotvec()
+
+        return np.concatenate([interp_pos, interp_rot], axis=-1)
+
+
 def get_end_effector_pos_quat_wxyz(manipulator, lula_solver, art_kine_solver):
     base_pos, base_quat = manipulator.get_world_pose()
     lula_solver.set_robot_base_pose(
@@ -579,7 +994,7 @@ def load_preload_objects(world, registry_config, stage_utils):
 
 
 def init_environment(task_name, cfg, object_poses_path=None, episode_index=0):
-    shape_meta = resolve_shape_meta(cfg)
+    shape_meta = get_shape_meta(cfg)
 
     # Get registry config FIRST (before it's used for robot/camera setup)
     registry_class = registry.get_task_registry(task_name)
@@ -665,17 +1080,12 @@ def init_environment(task_name, cfg, object_poses_path=None, episode_index=0):
     set_camera_view(camera_translation, franka_translation)
 
     # --- Setup observation camera ---
-    cam_meta = cfg_get(cfg_get(shape_meta, "obs", {}), "camera0_rgb", {}) or {}
-    cam_shape = cfg_get(cam_meta, "shape", (3, 224, 224)) or (3, 224, 224)
-    if len(cam_shape) >= 3:
-        _, height, width = cam_shape[:3]
-    else:
-        height = width = 224
+    width, height = get_camera_resolution(shape_meta)
 
     camera = Camera(
         prim_path=f"{GOPRO_PRIM_PATH}/Camera",
         name="gopro_camera",
-        resolution=(int(width), int(height)),
+        resolution=(width, height),
     )
     camera.initialize()
     world.reset()
@@ -733,12 +1143,7 @@ def apply_ik_solution(manipulator, art_kine_solver, target_pos, target_quat_wxyz
     )
 
     if success:
-        manipulator.apply_action(
-            ArticulationAction(
-                joint_positions=action.joint_positions,
-                joint_indices=np.arange(7)
-            )
-        )
+        manipulator.set_joint_positions(action.joint_positions, np.arange(7))
         return True
 
     return False
@@ -748,6 +1153,7 @@ def main():
     logger.info("Initializing inference Workspace.")
     payload = torch.load(open(args.checkpoint, "rb"), pickle_module=dill)
     cfg = payload["cfg"]
+    shape_meta = get_shape_meta(cfg)
     instance = hydra.utils.get_class(cfg._target_)
 
     # Create session directory for debug outputs
@@ -758,11 +1164,9 @@ def main():
 
     workspace: BaseWorkspace = instance(cfg, output_dir=session_dir)
     workspace.load_payload(payload, exclude_keys=None, include_keys=None)
-    shape_meta = resolve_shape_meta(cfg)
 
     assert "diffusion" in cfg.name, "Unsupported policy type. Missing 'diffusion' key"
 
-    policy: BaseImagePolicy
     policy = workspace.model
     if cfg.training.use_ema:
         policy = workspace.ema_model
@@ -808,92 +1212,44 @@ def main():
         pickplace=pickplace,
     )
 
-    obs_pose_rep = "relative"  # Policy trained with relative poses
-    action_pose_repr = "relative"  # Actions are in relative frame
-    tx_robot1_robot0 = None  # Single robot, no inter-robot transform
+    # Create environment
+    env_kwargs = build_umi_sim_env_kwargs(cfg)
+    env = UMISimEnv(world, manipulator, camera, art_kine_solver, **env_kwargs)
 
-    rgb_list = []
-    eef_pos_list = []
-    eef_rot_list = []
-    gripper_list = []
+    obs_pose_repr, action_pose_repr = get_pose_representation(cfg)
 
     set_to_init_pose(manipulator, lula_solver, art_kine_solver, args.task)
-    # Warm up recorder history before inference.
-    warmup_steps = max(50, get_recorded_obs_required_history(shape_meta))
+    # Warm up buffer (run sim steps before inference)
+    warmup_steps = get_required_warmup_steps(env_kwargs)
     for _ in range(warmup_steps):
-        step_world_and_record(
-            world,
-            camera,
-            manipulator,
-            lula_solver,
-            art_kine_solver,
-            rgb_list,
-            eef_pos_list,
-            eef_rot_list,
-            gripper_list,
-            render=True,
-        )
-
-    curr_pos, _ = get_end_effector_pos_quat_wxyz(
-        manipulator, lula_solver, art_kine_solver
-    )
-
-    if args.task == "kitchen":
-        INIT_EE_POS = curr_pos + np.array([-0.16, 0.0, 0.13])
-        INIT_EE_QUAT_WXYZ = np.array([0.0081739, -0.9366365, 0.350194, 0.0030561])
-    elif args.task == "dining-room":
-        INIT_EE_POS = curr_pos + np.array([-0.16, 0.0, 0.13])
-        INIT_EE_QUAT_WXYZ = np.array([0.0081739, -0.9366365, 0.350194, 0.0030561])
-    elif args.task == "living-room":
-        INIT_EE_POS = curr_pos + np.array([-0.1, 0.2, 0.20])
-        INIT_EE_QUAT_WXYZ = np.array([0.0081739, -0.9366365, 0.350194, 0.0030561])
-    else:
-        raise RuntimeError(
-            f"Unknown task, expected one of 'kitchen', 'dining-room', 'living-room', got {args.task}"
-        )
-
-    success = apply_ik_solution(
-        manipulator,
-        art_kine_solver,
-        INIT_EE_POS,
-        INIT_EE_QUAT_WXYZ,
-    )
+        world.step(render=True)
+        env.step_accumulate()
 
     # Let simulation settle
     for _ in range(100):
         world.step(render=True)
         time.sleep(1 / 60)
 
-    # Move to the pre-grasp pose while keeping recorder history current.
+    # Move to "move_above" position without recording (like in generate_data.py)
     print("[Main] Moving to position above object...")
     while simulation_app.is_running():
         motion_planner.step(manipulator, lula_solver, art_kine_solver)
-        step_world_and_record(
-            world,
-            camera,
-            manipulator,
-            lula_solver,
-            art_kine_solver,
-            rgb_list,
-            eef_pos_list,
-            eef_rot_list,
-            gripper_list,
-            render=True,
-        )
+        step_world(world, render=True)
+        env.step_accumulate()
 
         # Phase becomes "descend" when robot reaches move_above position
         if motion_planner.pickplace.phase == "descend":
             print("[Main] Reached position above object.")
             break
 
-    episode_start_pose = [
-        np.concatenate(
-            [
-                eef_pos_list[-1],
-                eef_rot_list[-1],
-            ]
-        )
-    ]
+    # Recapture episode start pose after moving above object
+    initial_obs = env.get_obs()
+    episode_start_pose = np.concatenate(
+        [
+            initial_obs["robot0_eef_pos"][-1],
+            initial_obs["robot0_eef_rot_axis_angle"][-1],
+        ]
+    )
 
     # Wait for user to type "start" before beginning evaluation
     print("[Main] Ready to start evaluation. Type 'start' to begin...")
@@ -904,66 +1260,73 @@ def main():
         print("[Main] Invalid input. Type 'start' to begin.")
 
     while simulation_app.is_running():
-        step_world_and_record(
-            world,
-            camera,
-            manipulator,
-            lula_solver,
-            art_kine_solver,
-            rgb_list,
-            eef_pos_list,
-            eef_rot_list,
-            gripper_list,
-            render=True,
-        )
+        world.step(render=True)
+        env.step_accumulate()
 
-        obs = get_recorded_obs(
-            shape_meta, rgb_list, eef_pos_list, eef_rot_list, gripper_list
-        )
+        obs = env.get_obs()
+
+        # Save debug image every 50 inference steps
+        if inference_step_counter % 50 == 0:
+            # Get the latest RGB image from observations
+            rgb_img = obs["camera0_rgb"][-1]  # Last frame in horizon, shape [H, W, 3]
+            img_path = os.path.join(
+                debug_img_dir, f"step_{inference_step_counter:06d}.png"
+            )
+            Image.fromarray(rgb_img).save(img_path)
+            logger.info(f"Saved debug image: {img_path}")
 
         inference_step_counter += 1
 
         with torch.no_grad():
             s = time.time()
-            obs_dict_np = get_real_umi_obs_dict(
+            obs_dict_np = build_policy_obs_dict(
                 env_obs=obs,
                 shape_meta=shape_meta,
-                obs_pose_repr=obs_pose_rep,
-                tx_robot1_robot0=tx_robot1_robot0,
                 episode_start_pose=episode_start_pose,
+                obs_pose_repr=obs_pose_repr,
             )
-            obs_dict = dict_apply(
-                obs_dict_np, lambda x: torch.from_numpy(x).unsqueeze(0).to(device)
-            )
+            obs_dict = build_torch_obs_dict(obs_dict_np, device)
 
             result = policy.predict_action(obs_dict)
-            raw_action = result["action"][0].detach().to("cpu").numpy()
-            action = get_real_umi_action(raw_action, obs, action_pose_repr)
+            action_tensor = result.get("action")
+            if action_tensor is None:
+                action_tensor = result["action_pred"]
+            raw_action = action_tensor[0].detach().to("cpu").numpy()
+            action = decode_policy_action(raw_action, obs, action_pose_repr)
             logger.info(f"Inference latency: {time.time() - s:.3f}s")
 
         # Execute actions
         # action shape: (horizon, 7) = [x, y, z, rx, ry, rz, gripper_width]
-        n_action_steps = min(cfg.n_action_steps, len(action))
+        # Actions are in robot base frame, need to transform to world frame for IK
+        n_action_steps = get_n_action_steps(cfg, policy, action)
+        base_pos, base_quat = manipulator.get_world_pose()
+        T_base_world = pose_to_transform_matrix(base_pos, base_quat)
 
-        for step_idx in range(min(2, n_action_steps)):
+        for step_idx in range(n_action_steps):
             action_step = action[step_idx]
 
-            DEBUG_DRAW.clear_points()
-            draw_actions = action[step_idx:, :3].tolist()
-            DEBUG_DRAW.draw_points(
-                draw_actions,
-                [(1, 0, 0, 1)] * len(draw_actions),
-                [10] * len(draw_actions),
-            )
-            DEBUG_DRAW.draw_points(eef_pos_list[-1:], [(0, 1, 0, 1)], [10])
-
-            # Recorder-based observations track the world-frame EEF pose, so
-            # the recovered policy action is already in world frame.
-            target_pos_world = action_step[:3]
+            # Extract pose and gripper from action (in robot base frame)
+            target_pos_base = action_step[:3]
             target_rot_axis_angle = action_step[3:6]
             target_gripper_width = action_step[6]
 
-            target_quat_xyzw = R.from_rotvec(target_rot_axis_angle).as_quat()
+            # Convert axis-angle to rotation matrix
+            target_rot_matrix_base = R.from_rotvec(target_rot_axis_angle).as_matrix()
+
+            # Build 4x4 transform matrix for target pose in base frame
+            T_target_base = np.eye(4)
+            T_target_base[:3, :3] = target_rot_matrix_base
+            T_target_base[:3, 3] = target_pos_base
+
+            # Transform from base frame to world frame: T_target_world = T_base_world @ T_target_base
+            T_target_world = T_base_world @ T_target_base
+
+            # Extract world-frame position and rotation
+            target_pos_world = T_target_world[:3, 3]
+            target_rot_matrix_world = T_target_world[:3, :3]
+
+            # Convert rotation matrix to quaternion (wxyz) for IK
+            target_quat_xyzw = R.from_matrix(target_rot_matrix_world).as_quat()
             target_quat_wxyz = np.array(
                 [
                     target_quat_xyzw[3],  # w
@@ -984,35 +1347,20 @@ def main():
                 continue
 
             # Set gripper position
-            print(f"{target_gripper_width=}")
+            # Franka gripper: width = finger1 + finger2, so each finger = width/2
+            finger_pos = target_gripper_width / 2.0
+            finger_positions = np.array([finger_pos, finger_pos])
             gripper_joint_indices = np.array(
                 [
                     manipulator.get_dof_index("panda_finger_joint1"),
                     manipulator.get_dof_index("panda_finger_joint2"),
                 ]
             )
-            # if target_gripper_width < 0.078:
-            #     print("closing gripper")
-            #     manipulator.gripper.apply_action(
-            #         ArticulationAction(
-            #             joint_positions=manipulator.gripper.joint_closed_positions,
-            #             joint_indices=gripper_joint_indices,
-            #         )
-            #     )
-            #
+            manipulator.set_joint_positions(finger_positions, gripper_joint_indices)
+
             # Step simulation
-            step_world_and_record(
-                world,
-                camera,
-                manipulator,
-                lula_solver,
-                art_kine_solver,
-                rgb_list,
-                eef_pos_list,
-                eef_rot_list,
-                gripper_list,
-                render=True,
-            )
+            world.step(render=True)
+            env.step_accumulate()
 
 
 if __name__ == "__main__":

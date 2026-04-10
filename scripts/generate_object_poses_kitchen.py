@@ -40,7 +40,8 @@ def parse_args() -> argparse.Namespace:
             "Generate a kitchen object_poses.json variant. The recommended "
             "anchored-relative mode keeps one cup near a nominal location and "
             "samples the other cup relative to it, which is useful for fixed-"
-            "grasp variance studies."
+            "grasp variance studies. Cup separation can be controlled either "
+            "by a target mean distance or a hard maximum distance."
         )
     )
     parser.add_argument(
@@ -60,13 +61,33 @@ def parse_args() -> argparse.Namespace:
             "only enforces pair distance."
         ),
     )
-    parser.add_argument(
+    distance_group = parser.add_mutually_exclusive_group(required=True)
+    distance_group.add_argument(
         "--mean-distance",
         "--distance-mean",
         dest="distance_mean",
         type=positive_float,
-        required=True,
+        default=None,
         help="Target mean XY distance between the two cups in meters.",
+    )
+    distance_group.add_argument(
+        "--max-distance",
+        type=positive_float,
+        default=None,
+        help=(
+            "Hard maximum XY distance between the two cups in meters. "
+            "When used, each entry samples a cup-to-cup distance uniformly "
+            "between --min-distance and this value."
+        ),
+    )
+    parser.add_argument(
+        "--min-distance",
+        type=non_negative_float,
+        default=0.0,
+        help=(
+            "Minimum XY distance between the two cups in meters when using "
+            "--max-distance. Defaults to 0.0."
+        ),
     )
     parser.add_argument(
         "--distance-std",
@@ -74,7 +95,7 @@ def parse_args() -> argparse.Namespace:
         default=0.0,
         help=(
             "Standard deviation of the XY cup-to-cup distance in meters. "
-            "Use 0.0 to keep distance fixed."
+            "Use 0.0 to keep distance fixed. Only applies with --mean-distance."
         ),
     )
     parser.add_argument(
@@ -152,6 +173,15 @@ def parse_args() -> argparse.Namespace:
     if args.angle_min_deg > args.angle_max_deg:
         parser.error("--angle-min-deg must be less than or equal to --angle-max-deg")
 
+    if args.max_distance is not None and args.distance_std != 0.0:
+        parser.error("--distance-std can only be used with --mean-distance")
+
+    if args.max_distance is None and args.min_distance != 0.0:
+        parser.error("--min-distance can only be used with --max-distance")
+
+    if args.max_distance is not None and args.min_distance > args.max_distance:
+        parser.error("--min-distance must be less than or equal to --max-distance")
+
     return args
 
 
@@ -184,16 +214,29 @@ def sanitize_token(value: float) -> str:
 def resolve_output_path(
     output: Path | None,
     mode: str,
-    distance_mean: float,
+    distance_mean: float | None,
+    min_distance: float,
+    max_distance: float | None,
     num_entries: int,
 ) -> Path:
+    assert output is None or output.suffix == ".json", "output must be a JSON file"
+
     if output is not None:
         return output
 
-    distance_token = sanitize_token(distance_mean)
+    if max_distance is not None:
+        distance_token = (
+            f"min{sanitize_token(min_distance)}_max{sanitize_token(max_distance)}"
+        )
+    else:
+        if distance_mean is None:
+            raise ValueError(
+                "distance_mean must be provided when max_distance is unset"
+            )
+        distance_token = f"dist{sanitize_token(distance_mean)}"
     mode_token = "anchored" if mode == "anchored-relative" else "template"
     return DEFAULT_REFERENCE_PATH.parent / (
-        f"object_poses_{mode_token}_n{num_entries}_dist{distance_token}.json"
+        f"object_poses_{mode_token}_n{num_entries}_{distance_token}.json"
     )
 
 
@@ -254,6 +297,22 @@ def sample_positive_gaussian(mean: float, std: float, rng: random.Random) -> flo
     )
 
 
+def sample_distance(
+    distance_mean: float | None,
+    distance_std: float,
+    min_distance: float,
+    max_distance: float | None,
+    rng: random.Random,
+) -> float:
+    if max_distance is not None:
+        return rng.uniform(min_distance, max_distance)
+
+    if distance_mean is None:
+        raise ValueError("distance_mean must be provided when max_distance is unset")
+
+    return sample_positive_gaussian(distance_mean, distance_std, rng)
+
+
 def enforce_xy_distance(
     blue_tvec: list[float],
     pink_tvec: list[float],
@@ -288,8 +347,10 @@ def enforce_xy_distance(
 def generate_template_distance_entries(
     templates: list[dict],
     num_entries: int,
-    distance_mean: float,
+    distance_mean: float | None,
     distance_std: float,
+    min_distance: float,
+    max_distance: float | None,
     rng: random.Random,
 ) -> list[dict]:
     generated = []
@@ -299,7 +360,9 @@ def generate_template_distance_entries(
         blue_obj = template["objects"][blue_idx]
         pink_obj = template["objects"][pink_idx]
 
-        target_distance = sample_positive_gaussian(distance_mean, distance_std, rng)
+        target_distance = sample_distance(
+            distance_mean, distance_std, min_distance, max_distance, rng
+        )
         blue_tvec, pink_tvec = enforce_xy_distance(
             blue_obj["tvec"], pink_obj["tvec"], target_distance, rng
         )
@@ -313,8 +376,10 @@ def generate_template_distance_entries(
 def generate_anchored_relative_entries(
     templates: list[dict],
     num_entries: int,
-    distance_mean: float,
+    distance_mean: float | None,
     distance_std: float,
+    min_distance: float,
+    max_distance: float | None,
     anchor_object: str,
     anchor_x: float,
     anchor_y: float,
@@ -333,7 +398,9 @@ def generate_anchored_relative_entries(
 
         sampled_anchor_x = sample_gaussian(anchor_x, anchor_std_x, rng)
         sampled_anchor_y = sample_gaussian(anchor_y, anchor_std_y, rng)
-        sampled_distance = sample_positive_gaussian(distance_mean, distance_std, rng)
+        sampled_distance = sample_distance(
+            distance_mean, distance_std, min_distance, max_distance, rng
+        )
         sampled_angle_deg = rng.uniform(angle_min_deg, angle_max_deg)
         sampled_angle_rad = math.radians(sampled_angle_deg)
         dx = sampled_distance * math.cos(sampled_angle_rad)
@@ -417,8 +484,10 @@ def describe_entries(entries: list[dict], anchor_object: str) -> dict[str, float
         "anchor_x_std": std(anchor_x_values),
         "anchor_y_mean": mean(anchor_y_values),
         "anchor_y_std": std(anchor_y_values),
+        "distance_min": min(distances),
         "distance_mean": mean(distances),
         "distance_std": std(distances),
+        "distance_max": max(distances),
         "angle_min_deg": min(relative_angles_deg),
         "angle_max_deg": max(relative_angles_deg),
         "angle_mean_deg": mean(relative_angles_deg),
@@ -428,8 +497,17 @@ def describe_entries(entries: list[dict], anchor_object: str) -> dict[str, float
 def main() -> None:
     args = parse_args()
     reference_path = DEFAULT_REFERENCE_PATH
+    assert args.output is None or args.output.suffix == ".json", (
+        "output must be a JSON file"
+    )
+
     output_path = resolve_output_path(
-        args.output, args.mode, args.distance_mean, args.num_entries
+        args.output,
+        args.mode,
+        args.distance_mean,
+        args.min_distance,
+        args.max_distance,
+        args.num_entries,
     )
     rng = random.Random(args.seed)
 
@@ -452,6 +530,8 @@ def main() -> None:
             num_entries=args.num_entries,
             distance_mean=args.distance_mean,
             distance_std=args.distance_std,
+            min_distance=args.min_distance,
+            max_distance=args.max_distance,
             anchor_object=args.anchor_object,
             anchor_x=anchor_x,
             anchor_y=anchor_y,
@@ -467,6 +547,8 @@ def main() -> None:
             num_entries=args.num_entries,
             distance_mean=args.distance_mean,
             distance_std=args.distance_std,
+            min_distance=args.min_distance,
+            max_distance=args.max_distance,
             rng=rng,
         )
 
@@ -478,8 +560,19 @@ def main() -> None:
     print(f"Wrote {len(generated_entries)} entries to {output_path}")
     print(f"Reference templates: {reference_path}")
     print(f"Mode: {args.mode}")
+    if args.max_distance is not None:
+        print(
+            f"Configured min/max distance: {args.min_distance:.6f} / "
+            f"{args.max_distance:.6f} m"
+        )
+    else:
+        print(
+            f"Configured distance mean/std: {args.distance_mean:.6f} / "
+            f"{args.distance_std:.6f} m"
+        )
     print(
-        f"Distance mean/std: {stats['distance_mean']:.6f} / "
+        f"Distance min/mean/max/std: {stats['distance_min']:.6f} / "
+        f"{stats['distance_mean']:.6f} / {stats['distance_max']:.6f} / "
         f"{stats['distance_std']:.6f} m"
     )
     print(

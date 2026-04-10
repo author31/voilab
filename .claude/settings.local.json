@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//workspace/voilab/assets/**)",
+      "Bash(python3 -c \"import isaacsim.robot_motion.motion_generation; print\\(dir\\(isaacsim.robot_motion.motion_generation\\)\\)\")",
+      "Bash(find /home/hcis-s17/author_workdir/voilab -name *.yaml -path */lula/*)",
+      "Bash(find /home/hcis-s17/author_workdir/voilab -name *.urdf)",
+      "Bash(find /home/hcis-s17/author_workdir/voilab/.venv -path */isaacsim* -name *.yaml)",
+      "Bash(find /home/hcis-s17/author_workdir/voilab/.venv -path */motion_generation* -name *.py)",
+      "Bash(docker exec:*)",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\(''scripts/motion_plan.py''\\).read\\(\\)\\); print\\(''motion_plan.py: syntax OK''\\)\")",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\(''scripts/generate_data.py''\\).read\\(\\)\\); print\\(''generate_data.py: syntax OK''\\)\")",
+      "Bash(python3:*)"
+    ]
+  }
+}

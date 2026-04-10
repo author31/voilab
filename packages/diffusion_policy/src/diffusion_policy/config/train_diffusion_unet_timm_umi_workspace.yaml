@@ -43,8 +43,7 @@ policy:
     # frozen: False
 
     ##### from scratch #####
-    # model_name: 'resnet34.a1_in1k'
-    model_name: 'vit_base_patch16_clip_224.openai'
+    model_name: 'resnet34.a1_in1k'
     # model_name: 'convnext_base.clip_laion2b_augreg_ft_in12k'
     pretrained: True
     frozen: False
@@ -55,7 +54,6 @@ policy:
     # 'avg' or 'max' or 'soft_attention' or 'spatial_embedding' or 'transformer' or 'attention_pool_2d'
     feature_aggregation: 'attention_pool_2d'
     # feature_aggregation: null
-    position_encording: 'sinusoidal' # 'learnable' or 'sinusoidal'. it only works for transformer
 
     # it only works for resnet. 32 (7x7) or 16 (14x14)
     downsample_ratio: 32
@@ -157,7 +155,7 @@ training:
   # optimization
   lr_scheduler: cosine
   lr_warmup_steps: 2000
-  num_epochs: 120
+  num_epochs: 1000
   gradient_accumulate_every: 1
   # EMA destroys performance when used with BatchNorm
   # replace BatchNorm with GroupNorm.

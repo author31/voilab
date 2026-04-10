@@ -486,7 +486,7 @@ class KitchenMotionPlanner:
         self.pick_offset        = np.array([-0.055, -0.08, -0.12])
         self.lift_offset        = np.array([-0.050,   0.0,    0.4])
         self.place_above_offset = np.array([-0.045, -0.07,  0.2])
-        self.place_offset       = np.array([-0.045, -0.07,  0.01])
+        self.place_offset       = np.array([-0.045, -0.07,  0.005])
     
 
 
