@@ -87,7 +87,14 @@ class SequenceSampler:
             else:
                 self.replay_buffer[key] = replay_buffer[key][:]
         for key in rgb_keys:
-            self.replay_buffer[key] = replay_buffer[key]
+            # Materialize rgb into a dense in-RAM uint8 array.
+            # zarr chunking is (4706,28,28,1): a single lazy frame read would
+            # decompress ~192 chunks (64 spatial blocks x 3 channels), each
+            # holding 4706 frames. Decompress once here; subsequent frame reads
+            # are plain numpy slices. Forked DataLoader workers share it
+            # copy-on-write, so no per-worker duplication.
+            arr = replay_buffer[key]
+            self.replay_buffer[key] = arr[:] if not isinstance(arr, np.ndarray) else arr
         
         
         if 'action' in replay_buffer:

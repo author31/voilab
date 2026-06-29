@@ -261,10 +261,10 @@ class UmiDataset(BaseDataset):
             if not key in data:
                 continue
             # move channel last to channel first
-            # T,H,W,C
-            # convert uint8 image to float32
-            obs_dict[key] = np.moveaxis(data[key], -1, 1).astype(np.float32) / 255.
-            # T,C,H,W
+            # T,H,W,C -> T,C,H,W
+            # keep uint8; float32 cast + /255 done on GPU in train loop
+            # (4x less CPU work + 4x less host->device transfer)
+            obs_dict[key] = np.ascontiguousarray(np.moveaxis(data[key], -1, 1))
             del data[key]
         for key in self.sampler_lowdim_keys:
             obs_dict[key] = data[key].astype(np.float32)

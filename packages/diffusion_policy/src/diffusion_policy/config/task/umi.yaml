@@ -7,7 +7,7 @@ dataset_frequeny: 0 #59.94
 obs_down_sample_steps: 3 # 3, 1
 
 low_dim_obs_horizon: 2
-img_obs_horizon: 2
+img_obs_horizon: 3
 action_horizon: 16
 ignore_proprioception: False
 

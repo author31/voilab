@@ -192,6 +192,14 @@ class TrainDiffusionUnetImageWorkspace(BaseWorkspace):
         if self.ema_model is not None:
             self.ema_model.to(device)
 
+        # host->device transfer. images arrive as uint8 (T,C,H,W) to cut
+        # CPU work + PCIe bandwidth 4x; cast to float [0,1] on GPU here.
+        def to_device(x):
+            x = x.to(device, non_blocking=True)
+            if x.dtype == torch.uint8:
+                x = x.float().div_(255.)
+            return x
+
         # save batch for sampling
         train_sampling_batch = None
 
@@ -221,7 +229,7 @@ class TrainDiffusionUnetImageWorkspace(BaseWorkspace):
                         leave=False, mininterval=cfg.training.tqdm_interval_sec) as tepoch:
                     for batch_idx, batch in enumerate(tepoch):
                         # device transfer
-                        batch = dict_apply(batch, lambda x: x.to(device, non_blocking=True))
+                        batch = dict_apply(batch, to_device)
                         
                         # always use the latest batch
                         train_sampling_batch = batch
@@ -287,7 +295,7 @@ class TrainDiffusionUnetImageWorkspace(BaseWorkspace):
                 #         with tqdm.tqdm(val_dataloader, desc=f"Validation epoch {self.epoch}", 
                 #                 leave=False, mininterval=cfg.training.tqdm_interval_sec) as tepoch:
                 #             for batch_idx, batch in enumerate(tepoch):
-                #                 batch = dict_apply(batch, lambda x: x.to(device, non_blocking=True))
+                #                 batch = dict_apply(batch, to_device)
                 #                 loss = self.model(batch)
                 #                 val_losses.append(loss)
                 #                 if (cfg.training.max_val_steps is not None) \
@@ -310,14 +318,14 @@ class TrainDiffusionUnetImageWorkspace(BaseWorkspace):
                 if (self.epoch % cfg.training.sample_every) == 0 and accelerator.is_main_process:
                     with torch.no_grad():
                         # sample trajectory from training set, and evaluate difference
-                        batch = dict_apply(train_sampling_batch, lambda x: x.to(device, non_blocking=True))
+                        batch = dict_apply(train_sampling_batch, to_device)
                         gt_action = batch['action']
                         pred_action = policy.predict_action(batch['obs'], None)['action_pred']
                         log_action_mse(step_log, 'train', pred_action, gt_action)
 
                         if len(val_dataloader) > 0:
                             val_sampling_batch = next(iter(val_dataloader))
-                            batch = dict_apply(val_sampling_batch, lambda x: x.to(device, non_blocking=True))
+                            batch = dict_apply(val_sampling_batch, to_device)
                             gt_action = batch['action']
                             pred_action = policy.predict_action(batch['obs'], None)['action_pred']
                             log_action_mse(step_log, 'val', pred_action, gt_action)

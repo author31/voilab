@@ -43,8 +43,8 @@ policy:
     # frozen: False
 
     ##### from scratch #####
-    # model_name: 'resnet34.a1_in1k'
-    model_name: 'vit_base_patch16_clip_224.openai'
+    model_name: 'resnet34.a1_in1k'
+    # model_name: 'vit_base_patch16_clip_224.openai'
     # model_name: 'convnext_base.clip_laion2b_augreg_ft_in12k'
     pretrained: True
     frozen: False
@@ -116,17 +116,19 @@ ema:
 
 dataloader:
   batch_size: 64
-  num_workers: 8
+  num_workers: 16
   shuffle: True
   pin_memory: True
   persistent_workers: True
+  prefetch_factor: 4
 
 val_dataloader:
   batch_size: 64
-  num_workers: 8
+  num_workers: 16
   shuffle: False
   pin_memory: True
   persistent_workers: True
+  prefetch_factor: 4
 
 # dataloader:
 #   batch_size: 64
@@ -178,7 +180,7 @@ training:
 logging:
   project: umi
   resume: False
-  mode: online
+  mode: disabled
   name: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task_name}
   tags: ["${name}", "${task_name}", "${exp_name}"]
   id: null
