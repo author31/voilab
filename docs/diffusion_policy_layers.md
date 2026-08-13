@@ -1,315 +1,175 @@
-# Diffusion Policy Package Layers Documentation
+# Diffusion policy package layers
 
-## Overview
+The layers inside `packages/diffusion_policy`, what each one owns, and which classes in each are still reachable in this fork.
 
-The Diffusion Policy package implements a modular architecture for learning and executing robotic manipulation policies using diffusion models. This document provides a comprehensive overview of the main layers and components.
+**Read this if:** you are reading or extending the training package and need to know where a given behaviour lives.
 
-## Architecture Layers
+**Before you start:** [Training and evaluating a diffusion policy](./training-and-eval.md) — the worked example this page deliberately does not repeat.
 
-### 1. Policy Layer (`src/diffusion_policy/policy/`)
+---
 
-The Policy layer contains the core policy implementations that define how actions are predicted from observations.
+Every path below is relative to `packages/diffusion_policy/src/diffusion_policy/`. This fork dropped
+upstream's vendored gym benchmarks, so parts of the tree that survived the trim no longer import;
+each section says which parts those are.
 
-#### Key Components:
-- **Base Policies**: Abstract base classes for different policy types
-  - `BaseImagePolicy`: For vision-based policies
-  - `BaseLowdimPolicy`: For state-based policies
-- **Policy Implementations**:
-  - `DiffusionUnetImagePolicy`: U-Net based diffusion policy for image inputs
-  - `DiffusionTransformerLowdimPolicy`: Transformer-based policy for state inputs
-  - `DiffusionUnetVideoPolicy`: Video-based policy implementation
-  - `BETLowdimPolicy`: Behavioral Enaction Transformer policy
+## 1. Policy layer (`policy/`)
 
-#### Core Method:
+Defines how actions are predicted from observations.
+
+- **Base classes**: `BaseImagePolicy` (vision), `BaseLowdimPolicy` (state only).
+- **Live implementations**: `DiffusionUnetTimmPolicy` (the default — U-Net denoiser on a timm
+  vision encoder), `DiffusionTransformerTimmPolicy`, `DiffusionUnetImagePolicy`,
+  `DiffusionTransformerLowdimPolicy`, `DiffusionUnetVideoPolicy`, `BETLowdimPolicy` (Behavior
+  Transformer).
+
+The inference entry point, from `policy/base_image_policy.py:10`:
+
 ```python
 def predict_action(self, obs_dict: Dict[str, torch.Tensor],
-                  fixed_action_prefix: torch.Tensor = None) -> Dict[str, torch.Tensor]:
+                   fixed_action_prefix: torch.Tensor = None) -> Dict[str, torch.Tensor]:
     """
-    obs_dict: Dictionary with observation tensors
-    fixed_action_prefix: Optional action prefix for conditioning
-    returns: Dictionary with predicted actions
+    obs_dict: str -> B,To,*
+    fixed_action_prefix: B,Tp,Da
+    return: B,Ta,Da
     """
 ```
 
-### 2. Workspace Layer (`src/diffusion_policy/workspace/`)
+`fixed_action_prefix` is honoured only by `DiffusionUnetTimmPolicy`
+(`policy/diffusion_unet_timm_policy.py:125`); the other policies take `obs_dict` alone.
 
-The Workspace layer manages the training lifecycle, including model initialization, training loops, and checkpointing.
+Constructor arguments are supplied by Hydra from the workspace config, so a policy's `__init__`
+signature and its config block have to agree. `DiffusionUnetImagePolicy.__init__`
+(`policy/diffusion_unet_image_policy.py:15-32`) requires `shape_meta`, `noise_scheduler`,
+`obs_encoder`, `horizon`, `n_action_steps` and `n_obs_steps`; the denoising U-Net
+(`ConditionalUnet1D`, `model/diffusion/conditional_unet1d.py:69`) is built internally at `:49`, not
+passed in.
 
-#### Key Components:
-- **BaseWorkspace**: Abstract base class for all training workspaces
-- **Training Workspaces**: Task-specific training implementations
-  - `TrainDiffusionUnetImageWorkspace`: For vision-based diffusion policies
-  - `TrainDiffusionTransformerHybridWorkspace`: For hybrid vision-state policies
-  - `TrainBETLowdimWorkspace`: For BET policies
+## 2. Workspace layer (`workspace/`)
 
-#### Core Features:
-- Configuration management with Hydra
-- Checkpoint saving/loading
-- Training loop management
-- Logging and monitoring
-- Model initialization and optimization
+Owns the training lifecycle: model and EMA setup, the dataset and normalizer, the epoch loop,
+checkpointing, and wandb logging.
 
-### 3. Configuration Layer (`src/diffusion_policy/config/`)
+- **`BaseWorkspace`** — checkpoint save/load and payload handling.
+- **`TrainDiffusionUnetImageWorkspace`** — what every shipped UMI config targets.
+- **`TrainDiffusionTransformerHybridWorkspace`**, **`TrainBETLowdimWorkspace`**, and the other
+  `train_*_workspace.py` variants.
 
-The Configuration layer provides hierarchical configuration management for different tasks and model architectures.
+`train.py` does not instantiate the workspace recursively. It resolves the class and hands it the
+whole config (`packages/diffusion_policy/train.py:30-32`):
 
-#### Structure:
-- **Main configs**: Workspace-level configurations (`train_*.yaml`)
-- **Task configs**: Task-specific configurations (`task/*.yaml`)
-- **Legacy configs**: Backward compatibility configurations
-
-#### Key Configuration Files:
-- `train_diffusion_transformer_umi_bimanual_workspace.yaml`: UMI bimanual task
-- `task/square.yaml`: Square manipulation task
-- `task/umi_image.yaml`: UMI vision-based task
-
-#### Configuration Structure:
-```yaml
-name: task_name
-shape_meta:
-  obs:
-    camera_image:
-      shape: [3, 84, 84]
-      type: rgb
-      horizon: 2
-    robot_state:
-      shape: [7]
-      type: low_dim
-      horizon: 2
-  action:
-    shape: [10]
-    horizon: 16
-```
-
-### 4. Dataset Layer (`src/diffusion_policy/dataset/`)
-
-The Dataset layer provides interfaces for loading and preprocessing robotics demonstration data.
-
-#### Key Components:
-- **BaseDataset**: Abstract base class for all datasets
-- **BaseImageDataset**: Base class for vision-based datasets
-- **BaseLowdimDataset**: Base class for state-based datasets
-- **Task-specific Datasets**:
-  - `RobomimicReplayDataset`: Robomimic simulation data
-  - `UmiImageDataset`: UMI vision datasets
-  - `RealPushtImageDataset`: Real-world push-T data
-
-#### Core Methods:
 ```python
-def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
-    """Returns observation and action tensors for given index"""
-
-def get_normalizer(self) -> LinearNormalizer:
-    """Returns data normalizer for observations and actions"""
+cls = hydra.utils.get_class(cfg._target_)
+workspace = cls(cfg)
+workspace.run()
 ```
 
-### 5. EnvRunner Layer (`src/diffusion_policy/env_runner/`)
+## 3. Configuration layer (`config/`)
 
-The EnvRunner layer handles policy execution in different environments (simulation or real-world).
+Hydra configs, two levels deep.
 
-#### Key Components:
-- **BaseImageRunner**: Base class for vision-based environment runners
-- **Task-specific Runners**:
-  - `PushtImageRunner`: Push-T environment execution
-  - `RobomimicRunner`: Robomimic simulation environments
-  - `BaseImageRunner`: Generic image-based execution
+- **Workspace configs** (`config/train_*.yaml`) — model, optimizer, training schedule, logging.
+- **Task configs** (`config/task/*.yaml`) — `shape_meta`, horizons, dataset and env_runner targets.
+  Present: `umi`, `umi_image`, `umi_bimanual`, `umi_ros2`, `umi_teleop_image`, `lift`, `square`,
+  `tool_hang`, `tool_hang_abs`.
+- **`config/legacy/`** — older configs kept for reference.
 
-#### Core Method:
-```python
-def run(self, policy: BaseImagePolicy) -> Dict:
-    """Execute policy in environment and return results"""
-```
-
-### 6. Environment Layer (`src/diffusion_policy/env/`)
-
-The Environment layer contains implementations of various robotic environments and task oracles.
-
-#### Key Components:
-- **Task Environments**:
-  - `block_pushing/`: Block manipulation tasks
-  - `pusht/`: Push-T environment
-  - `franka_assembly/`: Franka robot assembly tasks
-  - `kitchen/`: Kitchen manipulation tasks
-- **Environment Registration**: Gym environment registration
-
-#### Example Environment:
-```python
-register(
-    id='pusht-keypoints-v0',
-    entry_point='envs.pusht.pusht_keypoints_env:PushTKeypointsEnv',
-    max_episode_steps=200,
-    reward_threshold=1.0
-)
-```
-
-## Working Example: Training a Diffusion Policy for Block Pushing
-
-Here's a complete example of how to train a diffusion policy for a block pushing task:
-
-### 1. Configuration File (`config/train_block_push_workspace.yaml`)
+`shape_meta` is the contract between dataset, policy and runner. Excerpt from
+`config/task/umi.yaml`:
 
 ```yaml
-defaults:
-  - _self_
-  - task: block_push
-
-name: train_diffusion_unet_block_push
-_target_: diffusion_policy.workspace.train_diffusion_unet_image_workspace.TrainDiffusionUnetImageWorkspace
-
-task_name: ${task.name}
-shape_meta: ${task.shape_meta}
-exp_name: "block_push_experiment"
-
-n_action_steps: 8
-policy:
-  _target_: diffusion_policy.policy.diffusion_unet_image_policy.DiffusionUnetImagePolicy
-
-  shape_meta: ${shape_meta}
-
-  noise_scheduler:
-    _target_: diffusers.DDIMScheduler
-    num_train_timesteps: 50
-    beta_start: 0.0001
-    beta_end: 0.02
-    beta_schedule: squaredcos_cap_v2
-
-  obs_encoder:
-    _target_: diffusion_policy.model.vision.multi_image_obs_encoder.MultiImageObsEncoder
-    shape_meta: ${shape_meta}
-    rgb_model_name: "resnet18"
-
-  diffusion_model:
-    _target_: diffusion_policy.model.diffusion.conditional_unet1d.ConditionalUnet1d
-    input_dim: 10
-    global_cond_dim: 512
-
-dataset:
-  _target_: diffusion_policy.dataset.robomimic_replay_image_dataset.RobomimicReplayImageDataset
-  shape_meta: ${shape_meta}
-  dataset_path: "data/block_push.hdf5"
-  horizon: 16
-  n_obs_steps: 2
-
-training:
-  batch_size: 64
-  num_epochs: 100
-  lr: 1e-4
-  save_every_n_epochs: 10
-  eval_every_n_epochs: 5
-```
-
-### 2. Task Configuration (`config/task/block_push.yaml`)
-
-```yaml
-name: block_push
-
-low_dim_obs_horizon: 2
-img_obs_horizon: 2
-action_horizon: 16
-
 shape_meta: &shape_meta
   obs:
-    agentview_image:
-      shape: [3, 84, 84]
+    camera0_rgb:
+      shape: [3, 224, 224]
       horizon: ${task.img_obs_horizon}
       type: rgb
     robot0_eef_pos:
       shape: [3]
       horizon: ${task.low_dim_obs_horizon}
       type: low_dim
-    robot0_eef_quat:
-      raw_shape: [4]
+    robot0_eef_rot_axis_angle:
+      raw_shape: [3]
       shape: [6]
       horizon: ${task.low_dim_obs_horizon}
       type: low_dim
       rotation_rep: rotation_6d
-    robot0_gripper_qpos:
-      shape: [2]
-      horizon: ${task.low_dim_obs_horizon}
-      type: low_dim
   action:
     shape: [10]
     horizon: ${task.action_horizon}
     rotation_rep: rotation_6d
 ```
 
-### 3. Training Script
+`raw_shape` is the on-disk width, `shape` the width the policy sees after `rotation_rep`
+conversion. The 10-D action is position(3) + 6-D rotation(6) + gripper width(1) — see
+[Data formats](./data-formats.md).
+
+The vision encoder is also configured here. The live encoder is `TimmObsEncoder`
+(`model/vision/timm_obs_encoder.py:53`), selected by a timm `model_name`
+(`train_diffusion_unet_timm_umi_workspace.yaml:33,47`). `MultiImageObsEncoder` still exists but
+takes an already-instantiated `rgb_model` module, not a model name.
+
+## 4. Dataset layer (`dataset/`)
+
+Loads and preprocesses demonstration data.
+
+- **Base classes**: `BaseDataset`, `BaseImageDataset`, `BaseLowdimDataset`
+  (`dataset/base_dataset.py:8,32,55`).
+- **Live datasets**: `UmiDataset` (targeted by `task/umi.yaml`, `umi_ros2.yaml` and
+  `umi_bimanual.yaml`), `UmiImageDataset`, `UmiTeleopImageDataset`, `RobomimicReplayDataset`,
+  `RealPushTImageDataset`.
+- **Non-importable leftover**: `kitchen_mjl_lowdim_dataset.py` imports the removed `env/` package.
 
 ```python
-#!/usr/bin/env python3
-"""
-Example training script for diffusion policy on block pushing task.
-"""
+def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
+    """Returns observation and action tensors for the given index"""
 
-import hydra
-from omegaconf import OmegaConf
-import torch
-import numpy as np
-
-@hydra.main(config_path="config", config_name="train_block_push_workspace")
-def main(cfg):
-    # Set random seeds
-    torch.manual_seed(cfg.training.seed)
-    np.random.seed(cfg.training.seed)
-
-    # Create workspace
-    workspace = hydra.utils.instantiate(cfg)
-
-    # Run training
-    workspace.run()
-
-    print("Training completed successfully!")
-
-if __name__ == "__main__":
-    main()
+def get_normalizer(self) -> LinearNormalizer:
+    """Returns the data normalizer for observations and actions"""
 ```
 
-### 4. Running the Training
+## 5. EnvRunner layer (`env_runner/`)
 
-```bash
-# Activate environment
-conda activate diffusion_policy
+Executes a trained policy and collects metrics. `eval.py -e <import path>` picks a runner, or the
+task config's `env_runner` block does.
 
-# Run training
-python train_block_push.py
+- **`BaseImageRunner`** (`env_runner/base_image_runner.py:4`) — the interface, one method:
 
-# Or with Hydra directly
-python -m hydra.main --config-path=config --config-name=train_block_push_workspace
+```python
+def run(self, policy: BaseImagePolicy) -> Dict:
+    """Execute policy in environment and return results"""
 ```
 
-## Key Design Patterns
+- **`RealPushTImageRunner`** — the default in `config/task/umi.yaml:92`. A stub: its `run()`
+  returns an empty dict.
+- **`ROS2Runner`** — targeted by `config/task/umi_ros2.yaml:92`, the only runner that drives a
+  robot. See [ROS 2 integration design](./ros2_integration_design.md).
 
-### 1. Hierarchical Configuration
-- Use Hydra for configuration management
-- Separate task configurations from training configurations
-- Support configuration inheritance and overrides
+## 6. What this fork removed
 
-### 2. Modular Architecture
-- Clear separation between policy, dataset, and environment components
-- Abstract base classes for extensibility
-- Plugin-style component instantiation
+Upstream's `env/` package — the vendored `block_pushing/`, `pusht/`, `kitchen/` and
+`franka_assembly/` gym environments — is not in this repository and never has been. No gym
+registration happens anywhere in the tree.
 
-### 3. Data Normalization
-- Built-in support for observation and action normalization
-- Configurable normalization strategies
-- Seamless integration with training pipeline
+Ten modules were left behind that still import `diffusion_policy.env.*` at module level, so any
+import of them raises `ModuleNotFoundError`: `env_runner/pusht_image_runner.py`,
+`pusht_keypoints_runner.py`, `blockpush_lowdim_runner.py`, `robomimic_runner.py`,
+`robomimic_image_runner.py`, `robomimic_lowdim_runner.py`, `franka_assembly_image_runner.py`,
+`pick_and_place_cup_image_runner.py`, `dataset/kitchen_mjl_lowdim_dataset.py` and
+`scripts/generate_bet_blockpush.py`. `env_runner/kitchen_lowdim_runner.py` imports it inside its
+methods (`:56-57`), so it imports cleanly and fails when run. Treat all eleven as dead code, not
+as examples to copy.
 
-### 4. Checkpoint Management
-- Automatic checkpoint saving and loading
-- Support for best model selection
-- Training state persistence
+## Design patterns
 
-## Best Practices
+- **Hierarchical configuration.** Task config and workspace config are separate files, composed by
+  Hydra `defaults:` and overridable as `key.subkey=value` on the command line.
+- **Instantiation by `_target_`.** Policies, encoders, datasets and runners are named by import
+  path in YAML, so swapping one is a config edit. The signature has to match the config block.
+- **Normalization in the dataset.** `get_normalizer()` returns a `LinearNormalizer` the workspace
+  installs on the policy, so the checkpoint carries its own normalization statistics.
+- **Checkpoints carry their config.** `BaseWorkspace` writes the config into the payload, which is
+  why `eval.py` can rebuild the workspace from a `.ckpt` alone.
 
-1. **Configuration Management**: Always use task-specific configuration files
-2. **Data Preprocessing**: Ensure proper data normalization and format consistency
-3. **Environment Registration**: Register custom environments with Gym
-4. **Checkpointing**: Save checkpoints regularly and monitor training progress
-5. **Modularity**: Keep components modular and reusable across tasks
+---
 
-## Common Use Cases
-
-1. **Training New Policies**: Create new workspace configurations for custom tasks
-2. **Evaluating Policies**: Use EnvRunner components to test trained policies
-3. **Data Collection**: Implement custom dataset classes for new data sources
-4. **Environment Development**: Add new environments following the existing patterns
+**Next:** [Training and evaluating a diffusion policy](./training-and-eval.md) · [Data formats](./data-formats.md) · [Known issues](./known-issues.md)

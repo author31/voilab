@@ -1,126 +1,106 @@
 # Voilab
 
-A lightweight visualization toolkit for exploring robotics datasets, built on a pre-configured JupyterLab environment with Voila for interactive applications.
+Turn handheld GoPro demonstrations into robot-learning datasets, then inspect, train on, and simulate them.
 
-## Overview
+Voilab is a fork of [UMI](https://github.com/real-stanford/universal_manipulation_interface) (Universal Manipulation Interface). Instead of teleoperating a robot to collect training data, a person holds a 3D-printed gripper with a GoPro on it and performs the task by hand; the recorded video is reverse-engineered into end-effector trajectories using visual-inertial SLAM. This fork rebuilds UMI's pipeline as a YAML-configured service pipeline, swaps conda for [uv](https://docs.astral.sh/uv/), adds GoPro 13 telemetry support, and layers on Jupyter/Voila viewers, diffusion-policy training, and an Isaac Sim simulation path.
 
-Voilab provides a set of tools to interactively view and debug robotics data. The primary workflow is through a custom JupyterLab environment that includes built-in extensions for launching web applications and viewing URDF models directly from the UI.
+```text
+  GoPro MP4s  ->  umi run-slam-pipeline  ->  session artifacts  ->  dataset.zarr.zip
+                                                                          |
+                                                        +-----------------+-----------------+
+                                                        |                                   |
+                                                 diffusion policy                     Isaac Sim
+                                                    training                        rollout / SDG
+```
 
------
+New here? Start with **[Getting started](./docs/getting-started.md)**.
+
+---
 
 ## Documentation
 
-This repository contains several packages. For more detailed information on each, please refer to their respective documentation files:
+### Start here
 
-  - [`packages/umi`](./docs/UMI_README.md): Tools and configurations for running SLAM pipelines with UMI datasets.
-  - [`packages/diffusion_policy`](./docs/diffusion_policy.md): To train the diffusion policy with UMI datasets.
-  - [`diffusion_policy_layers`](./docs/diffusion_policy_layers.md): Overview of the diffusion policy package layers.
-  - [`ros2_integration`](./docs/ros2_integration.md): Overview of the ROS2 integration.
-  - [`Isaac Sim docker setup`](./docs/DOCKER.md): How to setup the Docker containers for Isaac Sim.
+| Doc | What it covers |
+|---|---|
+| [Getting started](./docs/getting-started.md) | Install the toolchain and run your first GoPro-to-dataset pipeline end to end |
+| [Repository map](./docs/repository-map.md) | What every directory is for, and which parts are live, dead, or missing from git |
+| [Project status](./docs/project-status.md) | What is finished, what is under development, and why rollout is moving to ROS 2 |
+| [Known issues](./docs/known-issues.md) | Ranked register of broken configs, silent data corruption, dead code and footguns |
 
+### Environment and tooling
 
------
+| Doc | What it covers |
+|---|---|
+| [uv workspace](./docs/uv-workspace.md) | The uv workspace, dependency declaration, daily commands, and Makefile targets |
+| [CLI reference](./docs/cli-reference.md) | Every `umi` and `voilab` command, with flags, defaults and failure modes |
 
-## Getting Started
+### The SLAM pipeline
 
-### Installation
+| Doc | What it covers |
+|---|---|
+| [Pipeline overview](./docs/pipeline-overview.md) | How the YAML-driven SLAM pipeline is assembled and what each stage reads, writes and skips |
+| [Pipeline configuration](./docs/pipeline-config.md) | Pipeline YAML reference: stage keys, merge and propagation rules, and per-stage settings |
+| [Data formats](./docs/data-formats.md) | Session directory tree and the schema of every artifact the pipeline writes |
+| [Versus upstream UMI](./docs/vs-upstream-umi.md) | Why this fork's pipeline is structured differently from real-stanford UMI, and what that changes |
 
-Voilab uses `uv` for dependency management. You can install everything needed with:
+### Camera, SLAM and calibration
+
+| Doc | What it covers |
+|---|---|
+| [GoPro telemetry](./docs/gopro-telemetry.md) | GPMF telemetry extraction with py-gpmf-parser, and the `imu_data.json` ORB-SLAM3 consumes |
+| [GoPro 9 to GoPro 13](./docs/gopro9-to-gopro13.md) | Camera-specific constants inventory and the checklist for migrating off the HERO9 defaults |
+| [ORB-SLAM3](./docs/orb-slam3.md) | How ORB-SLAM3 runs as a Docker subprocess, and how to read and write its settings file |
+| [Calibration with OpenICC](./docs/calibration-openicc.md) | Measure GoPro intrinsics, IMU noise and camera-IMU extrinsics for ORB-SLAM3 |
+
+### Downstream
+
+| Doc | What it covers |
+|---|---|
+| [Visualization](./docs/visualization.md) | The Jupyter/Voila viewers for inspecting sessions, replay buffers and ArUco detections |
+| [Training and evaluation](./docs/training-and-eval.md) | Train a diffusion policy from a `dataset.zarr.zip`, locally or on SLURM, and evaluate it |
+| [Simulation and Docker](./docs/simulation-and-docker.md) | Isaac Sim data generation and rollout, the object-pose handoff, and the container images |
+
+### Reference notes
+
+| Doc | What it covers |
+|---|---|
+| [Diffusion policy layers](./docs/diffusion_policy_layers.md) | Layer-by-layer tour of the training package: what each layer owns, and which upstream modules this fork removed |
+| [ROS 2 integration design](./docs/ros2_integration_design.md) | The three-layer ROS 2 stack in the training package, its real class signatures, and its known defects |
+
+---
+
+## Quickstart
+
+**Before you run this:** Linux with Docker (stage 2 runs ORB-SLAM3 in a container and pulls ~1 GB on first use), plus `make install-ffmpeg install-exiftool` for the video and metadata tools. Full prerequisites: [Getting started](./docs/getting-started.md).
 
 ```bash
-# Install uv (if not already installed) and project dependencies
-make install
+# 1. Install uv and all dependencies (dev extra needed for the viewers)
+make install-dev
 
-# Or manually:
-uv sync
+# 2. Check the two CLIs are on the path
+uv run umi --help
+uv run voilab --help
+
+# 3. Run the pipeline on a session directory of GoPro clips
+# my_session/ = a folder of GoPro .MP4 clips (one slow room sweep + gripper-calibration clips + demos).
+# No footage yet? Getting started links a downloadable example session — it is GoPro 9
+# footage, so run that one with official_gopro9_pipeline_config.yaml instead.
+uv run umi run-slam-pipeline umi_pipeline_configs/gopro13_fisheye_2-7k_pipeline_config.yaml \
+    --session-dir /abs/path/to/my_session
+
+# 4. Open dataset.zarr.zip
+uv run voilab launch-viewer
+uv run voilab launch-dataset-visualizer   # or: review the session (SLAM, ArUco, per-demo quality)
 ```
 
-## Core Workflow: JupyterLab Environment
+Run every command from the repository root — relative paths inside the shipped configs resolve against the current working directory. Full walkthrough: [Getting started](./docs/getting-started.md).
 
-The main functionalities of Voilab are accessed through a customized JupyterLab instance, which includes pre-installed extensions for visualization.
+---
 
-### 1. Launch the Environment
+## Contributing
 
-Start the JupyterLab server using the following command:
-
-```bash
-make launch-jupyterlab
-```
-
-This will open a JupyterLab interface in your web browser.
-
-### 2. Launching Interactive Applications (Voila)
-
-The interactive visualization tools are built as Jupyter notebooks that can be run as standalone web applications using Voila.
-
-**Usage**:
-
-1.  In the JupyterLab file browser (left panel), navigate to the `nbs/` directory.
-2.  Right-click on an application notebook (e.g., `replay_buffer_viewer.ipynb`).
-3.  Select **"Open with -\> voila"** from the context menu. This will open the application in a new browser tab.
-
-#### Example: Replay Buffer Viewer
-
-  - **Location**: `nbs/replay_buffer_viewer.ipynb`
-  - **Goal**: An interactive tool for exploring UMI-style datasets for debugging, validation, and quick data analysis.
-  - **Features**:
-      - Interactive slider to navigate through time-series data.
-      - Visualizes RGB camera streams.
-      - Displays robot end-effector positions, orientations, and gripper states.
-      - Supports both `.zarr.zip` and `.zarr` datasets.
-  ![Replay Buffer Viewer](./media/replay_buffer_viewer.gif)
-
-#### Example: ArUco Tag Viewer
-
-  - **Location**: `nbs/aruco_detection_viewer.ipynb`
-  - **Goal**: An interactive tool to detect and visualize ArUco markers in the camera data from a dataset. This is useful for validating marker detection quality, camera calibration, and pose estimation.
-  - **Features**:
-      - Interactive slider to navigate through time-series data.
-      - Performs ArUco marker detection on each image frame.
-  ![ArUco Tag Viewer](./media/aruco_tag_viewer.png)
-
-#### Example: Dataset Visualizer
-
-  - **Location**: `nbs/dataset_visualizer.ipynb`
-  - **Goal**: A visualization tool for data collectors to review and refine their collected human demonstrations. Helps identify issues such as lost SLAM frames, low ArUco detection rates, and trajectory anomalies before final processing.
-  - **Features**:
-      - **Pipeline Status**: Overview of which UMI processing stages have completed
-      - **Demo Quality Metrics**: Detection rates, lost frames, and trajectory quality for each demo
-      - **Trajectory & Video**: Side-by-side 3D camera trajectory visualization and frame-by-frame video preview
-      - **ArUco Tags**: ArUco marker detection viewer with detection statistics and marker overlays
-  - **CLI Usage**:
-    ```bash
-    # Launch the dataset visualizer web app
-    uv run voilab launch-dataset-visualizer
-    ```
-  - **Python Usage**:
-    ```python
-    from voilab.applications.dataset_visualizer import show
-    show("/path/to/session/directory")
-    ```
-
-### 3. Viewing Robot Models (Built-in URDF Viewer)
-
-The JupyterLab environment comes with a built-in viewer for Universal Robot Description Format (URDF) files.
-
-**Usage**:
-
-1.  Use the file browser to locate a `.urdf` file.
-2.  Double-click the file to open it in a new tab with an interactive 3D viewer.
-
-An example model for the Franka Emika Panda robot is provided in `assets/franka_panda`. You can test the viewer by opening `assets/franka_panda/franka_panda.urdf`.
-
-![URDF Viewer](./media/urdf_viewer.png)
-
------
-
-## How to Contribute
-
-Follow the established pattern when adding new applications:
-
-1.  **Notebook interface**: Create `.ipynb` files in `nbs/` for interactive development. Ensure they can be rendered correctly with Voila.
-2.  **Core logic**: Implement visualization components in `src/voilab/applications/`.
-3.  **Utilities**: Add reusable data loading/processing in `src/voilab/utils/`.
-4.  **CLI integration**: (Optional) Register new commands in the voilab CLI following existing patterns.
-
-Use `uv sync` to manage dependencies and test changes.
+- **Pipeline stage**: subclass `BaseService` in `packages/umi/src/umi/services/`, then reference it by dotted path from a config in `umi_pipeline_configs/`. See [Pipeline overview](./docs/pipeline-overview.md).
+- **Viewer**: put the logic in `src/voilab/applications/`, data loading in `src/voilab/utils/`, and a notebook entry point in `nbs/`. See [Visualization](./docs/visualization.md).
+- **Dependencies**: add them with `uv add --package <member>` so `uv.lock` stays in sync; the lockfile is committed. See [uv workspace](./docs/uv-workspace.md).
+- **Docs**: one topic per file under `docs/`, and add the row to the index above.
